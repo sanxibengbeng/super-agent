@@ -1,0 +1,5 @@
+.DS_Store
+*.code-workspace
+.kiro/skills
+super-agent-workspaces/
+docs/
