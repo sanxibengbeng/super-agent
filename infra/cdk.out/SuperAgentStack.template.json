@@ -1,0 +1,825 @@
+{
+ "Description": "Super Agent Platform — single EC2 deployment with Aurora PostgreSQL, Redis, and Node.js",
+ "Parameters": {
+  "KeyPairName": {
+   "Type": "String",
+   "Default": "super-agent-key",
+   "Description": "EC2 Key Pair name for SSH access"
+  },
+  "AdminEmail": {
+   "Type": "String",
+   "Default": "admin@example.com",
+   "Description": "Email for the initial admin user in Cognito"
+  },
+  "CognitoDomainPrefix": {
+   "Type": "String",
+   "Default": "super-agent",
+   "Description": "Cognito Hosted UI domain prefix (must be globally unique)"
+  },
+  "SsmParameterValueawsservicecanonicalubuntuserver2204stablecurrentarm64hvmebsgp2amiidC96584B6F00A464EAD1953AFF4B05118Parameter": {
+   "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+   "Default": "/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id"
+  },
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Resources": {
+  "EC2SG244E8056": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Super Agent EC2",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "SSH",
+      "FromPort": 22,
+      "IpProtocol": "tcp",
+      "ToPort": 22
+     },
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "HTTP",
+      "FromPort": 80,
+      "IpProtocol": "tcp",
+      "ToPort": 80
+     },
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "HTTPS",
+      "FromPort": 443,
+      "IpProtocol": "tcp",
+      "ToPort": 443
+     },
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Backend API (dev)",
+      "FromPort": 3000,
+      "IpProtocol": "tcp",
+      "ToPort": 3000
+     }
+    ],
+    "VpcId": "vpc-0e2fba1652d62d600"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/EC2SG/Resource"
+   }
+  },
+  "AuroraDBSGA5A9CCF8": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Aurora PostgreSQL",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "255.255.255.255/32",
+      "Description": "Disallow all traffic",
+      "FromPort": 252,
+      "IpProtocol": "icmp",
+      "ToPort": 86
+     }
+    ],
+    "VpcId": "vpc-0e2fba1652d62d600"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/AuroraDBSG/Resource"
+   }
+  },
+  "AuroraDBSGfromSuperAgentStackEC2SG9B98C05654326A3F3E89": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "PostgreSQL from EC2",
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "AuroraDBSGA5A9CCF8",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EC2SG244E8056",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/AuroraDBSG/from SuperAgentStackEC2SG9B98C056:5432"
+   }
+  },
+  "SuperAgentUserPoolB12B014C": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "verified_email",
+       "Priority": 1
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": true
+    },
+    "AutoVerifiedAttributes": [
+     "email"
+    ],
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "Policies": {
+     "PasswordPolicy": {
+      "MinimumLength": 8,
+      "RequireLowercase": true,
+      "RequireNumbers": true,
+      "RequireSymbols": false,
+      "RequireUppercase": true
+     }
+    },
+    "Schema": [
+     {
+      "Mutable": true,
+      "Name": "email",
+      "Required": true
+     },
+     {
+      "Mutable": true,
+      "Name": "name",
+      "Required": false
+     },
+     {
+      "AttributeDataType": "String",
+      "Mutable": true,
+      "Name": "orgId"
+     },
+     {
+      "AttributeDataType": "String",
+      "Mutable": true,
+      "Name": "role"
+     }
+    ],
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "super-agent-users",
+    "UsernameAttributes": [
+     "email"
+    ],
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentUserPool/Resource"
+   }
+  },
+  "SuperAgentUserPoolCognitoDomain5FB62E7D": {
+   "Type": "AWS::Cognito::UserPoolDomain",
+   "Properties": {
+    "Domain": {
+     "Ref": "CognitoDomainPrefix"
+    },
+    "UserPoolId": {
+     "Ref": "SuperAgentUserPoolB12B014C"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentUserPool/CognitoDomain/Resource"
+   }
+  },
+  "SuperAgentUserPoolSuperAgentAppClientBB986A03": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "openid",
+     "email",
+     "profile"
+    ],
+    "CallbackURLs": [
+     "http://localhost:5173/auth/callback"
+    ],
+    "ClientName": "super-agent-web",
+    "ExplicitAuthFlows": [
+     "ALLOW_USER_SRP_AUTH",
+     "ALLOW_REFRESH_TOKEN_AUTH"
+    ],
+    "GenerateSecret": false,
+    "LogoutURLs": [
+     "http://localhost:5173/login"
+    ],
+    "PreventUserExistenceErrors": "ENABLED",
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "UserPoolId": {
+     "Ref": "SuperAgentUserPoolB12B014C"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentUserPool/SuperAgentAppClient/Resource"
+   }
+  },
+  "AdminUser": {
+   "Type": "AWS::Cognito::UserPoolUser",
+   "Properties": {
+    "DesiredDeliveryMediums": [
+     "EMAIL"
+    ],
+    "UserAttributes": [
+     {
+      "Name": "email",
+      "Value": {
+       "Ref": "AdminEmail"
+      }
+     },
+     {
+      "Name": "email_verified",
+      "Value": "true"
+     }
+    ],
+    "UserPoolId": {
+     "Ref": "SuperAgentUserPoolB12B014C"
+    },
+    "Username": {
+     "Ref": "AdminEmail"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/AdminUser"
+   }
+  },
+  "SuperAgentDBSubnetsE19DDB1B": {
+   "Type": "AWS::RDS::DBSubnetGroup",
+   "Properties": {
+    "DBSubnetGroupDescription": "Subnets for SuperAgentDB database",
+    "SubnetIds": [
+     "subnet-08276f403daf9d6f2",
+     "subnet-01764d61fff89e728",
+     "subnet-02ca56a0e9c145490",
+     "subnet-0f73026cf876a1fd1"
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentDB/Subnets/Default"
+   }
+  },
+  "SuperAgentStackSuperAgentDBSecret6011900C3fdaad7efa858a3daf9490cf0a702aeb": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": {
+     "Fn::Join": [
+      "",
+      [
+       "Generated by the CDK for stack: ",
+       {
+        "Ref": "AWS::StackName"
+       }
+      ]
+     ]
+    },
+    "GenerateSecretString": {
+     "ExcludeCharacters": " %+~`#$&*()|[]{}:;<>?!'/@\"\\",
+     "GenerateStringKey": "password",
+     "PasswordLength": 30,
+     "SecretStringTemplate": "{\"username\":\"superagent\"}"
+    },
+    "Name": "super-agent/db-credentials"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentDB/Secret/Resource"
+   }
+  },
+  "SuperAgentDBSecretAttachmentD97AC268": {
+   "Type": "AWS::SecretsManager::SecretTargetAttachment",
+   "Properties": {
+    "SecretId": {
+     "Ref": "SuperAgentStackSuperAgentDBSecret6011900C3fdaad7efa858a3daf9490cf0a702aeb"
+    },
+    "TargetId": {
+     "Ref": "SuperAgentDB8D804A88"
+    },
+    "TargetType": "AWS::RDS::DBCluster"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentDB/Secret/Attachment/Resource"
+   }
+  },
+  "SuperAgentDB8D804A88": {
+   "Type": "AWS::RDS::DBCluster",
+   "Properties": {
+    "CopyTagsToSnapshot": true,
+    "DBClusterParameterGroupName": "default.aurora-postgresql16",
+    "DBSubnetGroupName": {
+     "Ref": "SuperAgentDBSubnetsE19DDB1B"
+    },
+    "DatabaseName": "super_agent",
+    "Engine": "aurora-postgresql",
+    "EngineVersion": "16.4",
+    "MasterUserPassword": {
+     "Fn::Join": [
+      "",
+      [
+       "{{resolve:secretsmanager:",
+       {
+        "Ref": "SuperAgentStackSuperAgentDBSecret6011900C3fdaad7efa858a3daf9490cf0a702aeb"
+       },
+       ":SecretString:password::}}"
+      ]
+     ]
+    },
+    "MasterUsername": "superagent",
+    "Port": 5432,
+    "ServerlessV2ScalingConfiguration": {
+     "MaxCapacity": 4,
+     "MinCapacity": 0.5
+    },
+    "StorageEncrypted": true,
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "AuroraDBSGA5A9CCF8",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Snapshot",
+   "DeletionPolicy": "Snapshot",
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentDB/Resource"
+   }
+  },
+  "SuperAgentDBWriter1B962398": {
+   "Type": "AWS::RDS::DBInstance",
+   "Properties": {
+    "DBClusterIdentifier": {
+     "Ref": "SuperAgentDB8D804A88"
+    },
+    "DBInstanceClass": "db.serverless",
+    "Engine": "aurora-postgresql",
+    "PromotionTier": 0,
+    "PubliclyAccessible": true
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentDB/Writer/Resource"
+   }
+  },
+  "SuperAgentEC2Role7A832478": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ec2.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/AmazonSSMManagedInstanceCore"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentEC2Role/Resource"
+   }
+  },
+  "SuperAgentEC2RoleDefaultPolicy582F8E01": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": "s3:*",
+       "Effect": "Allow",
+       "Resource": [
+        "arn:aws:s3:::super-agent-*",
+        "arn:aws:s3:::super-agent-*/*"
+       ]
+      },
+      {
+       "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Ref": "SuperAgentDBSecretAttachmentD97AC268"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Ref": "SuperAgentDBSecretAttachmentD97AC268"
+           },
+           "*"
+          ]
+         ]
+        },
+        "arn:aws:secretsmanager:us-west-2:975049886833:secret:super-agent/db-credentials*"
+       ]
+      },
+      {
+       "Action": [
+        "cognito-idp:UpdateUserPoolClient",
+        "cognito-idp:DescribeUserPoolClient"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SuperAgentUserPoolB12B014C",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+       ],
+       "Effect": "Allow",
+       "Resource": "arn:aws:logs:us-west-2:975049886833:log-group:/super-agent/*"
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "AvatarBucket9BCAEBB3",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "AvatarBucket9BCAEBB3",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "SuperAgentEC2RoleDefaultPolicy582F8E01",
+    "Roles": [
+     {
+      "Ref": "SuperAgentEC2Role7A832478"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentEC2Role/DefaultPolicy/Resource"
+   }
+  },
+  "AvatarBucket9BCAEBB3": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "BucketName": "super-agent-avatars-975049886833",
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/AvatarBucket/Resource"
+   }
+  },
+  "SuperAgentInstanceInstanceProfile4955B195": {
+   "Type": "AWS::IAM::InstanceProfile",
+   "Properties": {
+    "Roles": [
+     {
+      "Ref": "SuperAgentEC2Role7A832478"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentInstance/InstanceProfile"
+   }
+  },
+  "SuperAgentInstance195B0517": {
+   "Type": "AWS::EC2::Instance",
+   "Properties": {
+    "AvailabilityZone": "us-west-2a",
+    "BlockDeviceMappings": [
+     {
+      "DeviceName": "/dev/sda1",
+      "Ebs": {
+       "Encrypted": true,
+       "Iops": 3000,
+       "VolumeSize": 100,
+       "VolumeType": "gp3"
+      }
+     }
+    ],
+    "IamInstanceProfile": {
+     "Ref": "SuperAgentInstanceInstanceProfile4955B195"
+    },
+    "ImageId": {
+     "Ref": "SsmParameterValueawsservicecanonicalubuntuserver2204stablecurrentarm64hvmebsgp2amiidC96584B6F00A464EAD1953AFF4B05118Parameter"
+    },
+    "InstanceType": "m6g.large",
+    "KeyName": {
+     "Ref": "KeyPairName"
+    },
+    "SecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "EC2SG244E8056",
+       "GroupId"
+      ]
+     }
+    ],
+    "SubnetId": "subnet-08276f403daf9d6f2",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "SuperAgentStack/SuperAgentInstance"
+     }
+    ],
+    "UserData": {
+     "Fn::Base64": "#!/bin/bash\n#!/bin/bash\nset -euo pipefail\n\n# =============================================================================\n# Super Agent Platform — EC2 Bootstrap Script (Ubuntu 22.04 ARM64)\n# Installs: Node.js 22, PostgreSQL client, Redis 7, Nginx, Certbot, Claude Code CLI\n# Database: Aurora PostgreSQL (managed, not installed locally)\n# =============================================================================\n\nexport DEBIAN_FRONTEND=noninteractive\n\necho \">>> Updating system packages...\"\napt-get update -y\napt-get upgrade -y\n\n# =============================================================================\n# Node.js 22 (via NodeSource)\n# =============================================================================\necho \">>> Installing Node.js 22...\"\ncurl -fsSL https://deb.nodesource.com/setup_22.x | bash -\napt-get install -y nodejs\nnpm install -g npm@latest\n\n# =============================================================================\n# PostgreSQL client only (for psql CLI — DB is Aurora)\n# =============================================================================\necho \">>> Installing PostgreSQL client...\"\nsh -c 'echo \"deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main\" > /etc/apt/sources.list.d/pgdg.list'\ncurl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg\napt-get update -y\napt-get install -y postgresql-client-16\n\n# =============================================================================\n# AWS CLI (for fetching secrets)\n# =============================================================================\necho \">>> Installing AWS CLI...\"\napt-get install -y unzip jq\ncurl -fsSL \"https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip\" -o /tmp/awscliv2.zip\nunzip -q /tmp/awscliv2.zip -d /tmp\n/tmp/aws/install\nrm -rf /tmp/aws /tmp/awscliv2.zip\n\n# =============================================================================\n# CloudWatch Agent (for streaming application logs)\n# =============================================================================\necho \">>> Installing CloudWatch Agent...\"\ncurl -fsSL \"https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb\" -o /tmp/amazon-cloudwatch-agent.deb\ndpkg -i /tmp/amazon-cloudwatch-agent.deb\nrm -f /tmp/amazon-cloudwatch-agent.deb\n\n# CloudWatch Agent config\nmkdir -p /opt/aws/amazon-cloudwatch-agent/etc\ncat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_CONFIG'\n{\n  \"agent\": {\n    \"run_as_user\": \"root\",\n    \"region\": \"us-west-2\"\n  },\n  \"logs\": {\n    \"logs_collected\": {\n      \"files\": {\n        \"collect_list\": [\n          {\n            \"file_path\": \"/opt/super-agent/logs/backend.log\",\n            \"log_group_name\": \"/super-agent/backend\",\n            \"log_stream_name\": \"{instance_id}/backend\",\n            \"retention_in_days\": 30\n          },\n          {\n            \"file_path\": \"/opt/super-agent/logs/backend-error.log\",\n            \"log_group_name\": \"/super-agent/backend-errors\",\n            \"log_stream_name\": \"{instance_id}/backend-errors\",\n            \"retention_in_days\": 30\n          },\n          {\n            \"file_path\": \"/var/log/nginx/access.log\",\n            \"log_group_name\": \"/super-agent/nginx-access\",\n            \"log_stream_name\": \"{instance_id}/nginx-access\",\n            \"retention_in_days\": 14\n          },\n          {\n            \"file_path\": \"/var/log/nginx/error.log\",\n            \"log_group_name\": \"/super-agent/nginx-errors\",\n            \"log_stream_name\": \"{instance_id}/nginx-errors\",\n            \"retention_in_days\": 14\n          }\n        ]\n      }\n    }\n  }\n}\nCW_CONFIG\n\n# Start CloudWatch Agent\n/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \\\n  -a fetch-config -m ec2 \\\n  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s\n\nsystemctl enable amazon-cloudwatch-agent\n\n# =============================================================================\n# Redis 7\n# =============================================================================\necho \">>> Installing Redis...\"\napt-get install -y redis-server\n\n# Configure Redis with password\nsed -i 's/^# requirepass .*/requirepass super-agent-redis-password/' /etc/redis/redis.conf\nsed -i 's/^requirepass .*/requirepass super-agent-redis-password/' /etc/redis/redis.conf\nsystemctl restart redis-server\nsystemctl enable redis-server\n\n# =============================================================================\n# Nginx (reverse proxy)\n# =============================================================================\necho \">>> Installing Nginx...\"\napt-get install -y nginx certbot python3-certbot-nginx\n\n# Generate self-signed SSL cert (for HTTPS with IP — replace with real cert later)\nmkdir -p /etc/nginx/ssl\nopenssl req -x509 -nodes -days 365 -newkey rsa:2048 \\\n  -keyout /etc/nginx/ssl/selfsigned.key \\\n  -out /etc/nginx/ssl/selfsigned.crt \\\n  -subj \"/CN=super-agent\"\n\n# =============================================================================\n# Claude Code CLI (for Claude Agent SDK)\n# =============================================================================\necho \">>> Installing Claude Code CLI...\"\nnpm install -g @anthropic-ai/claude-code || true\n\n# =============================================================================\n# Application directory\n# =============================================================================\necho \">>> Setting up application directory...\"\nmkdir -p /opt/super-agent\nmkdir -p /opt/super-agent/workspaces\nmkdir -p /opt/super-agent/logs\nchown -R ubuntu:ubuntu /opt/super-agent\n\n# =============================================================================\n# Nginx configuration\n# =============================================================================\ncat > /etc/nginx/sites-available/super-agent << 'NGINX_CONF'\n# Redirect HTTP to HTTPS\nserver {\n    listen 80 default_server;\n    server_name _;\n    return 301 https://$host$request_uri;\n}\n\nserver {\n    listen 443 ssl default_server;\n    server_name _;\n\n    ssl_certificate /etc/nginx/ssl/selfsigned.crt;\n    ssl_certificate_key /etc/nginx/ssl/selfsigned.key;\n\n    # Frontend static files\n    root /opt/super-agent/super-agent-platform/dist;\n    index index.html;\n\n    # API proxy\n    location /api/ {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_read_timeout 300s;\n        proxy_send_timeout 300s;\n        client_max_body_size 50M;\n    }\n\n    # WebSocket proxy\n    location /ws/ {\n        proxy_pass http://127.0.0.1:3000;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_read_timeout 86400s;\n    }\n\n    # SPA fallback\n    location / {\n        try_files $uri $uri/ /index.html;\n    }\n}\nNGINX_CONF\n\nln -sf /etc/nginx/sites-available/super-agent /etc/nginx/sites-enabled/super-agent\nrm -f /etc/nginx/sites-enabled/default\nnginx -t\nsystemctl restart nginx\nsystemctl enable nginx\n\n# =============================================================================\n# Systemd service for the backend\n# =============================================================================\ncat > /etc/systemd/system/super-agent-backend.service << 'SERVICE'\n[Unit]\nDescription=Super Agent Backend\nAfter=network.target redis-server.service\n\n[Service]\nType=simple\nUser=ubuntu\nWorkingDirectory=/opt/super-agent/super-agent-backend\nEnvironmentFile=/opt/super-agent/.env\nExecStart=/usr/bin/node dist/index.js\nRestart=always\nRestartSec=5\nStandardOutput=append:/opt/super-agent/logs/backend.log\nStandardError=append:/opt/super-agent/logs/backend-error.log\n\n[Install]\nWantedBy=multi-user.target\nSERVICE\n\nsystemctl daemon-reload\n\n# =============================================================================\n# Helper script: fetch Aurora credentials from Secrets Manager and build DATABASE_URL\n# =============================================================================\ncat > /opt/super-agent/fetch-db-url.sh << 'FETCHSCRIPT'\n#!/bin/bash\n# Fetches Aurora credentials from Secrets Manager and prints the DATABASE_URL.\n# Usage: source <(./fetch-db-url.sh <SECRET_ARN>)\n#   or:  ./fetch-db-url.sh <SECRET_ARN>   (prints the URL)\n\nSECRET_ARN=\"${1:?Usage: fetch-db-url.sh <SECRET_ARN>}\"\nREGION=\"${AWS_REGION:-us-west-2}\"\n\nSECRET_JSON=$(aws secretsmanager get-secret-value \\\n  --secret-id \"$SECRET_ARN\" \\\n  --region \"$REGION\" \\\n  --query SecretString \\\n  --output text)\n\nDB_USER=$(echo \"$SECRET_JSON\" | jq -r '.username')\nDB_PASS=$(echo \"$SECRET_JSON\" | jq -r '.password')\nDB_HOST=$(echo \"$SECRET_JSON\" | jq -r '.host')\nDB_PORT=$(echo \"$SECRET_JSON\" | jq -r '.port')\nDB_NAME=$(echo \"$SECRET_JSON\" | jq -r '.dbname // \"super_agent\"')\n\n# URL-encode the password (handles special chars)\nENCODED_PASS=$(python3 -c \"import urllib.parse; print(urllib.parse.quote('$DB_PASS', safe=''))\")\n\necho \"postgresql://${DB_USER}:${ENCODED_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public\"\nFETCHSCRIPT\n\nchmod +x /opt/super-agent/fetch-db-url.sh\nchown ubuntu:ubuntu /opt/super-agent/fetch-db-url.sh\n\n# =============================================================================\n# Placeholder .env (to be filled after deployment)\n# =============================================================================\ncat > /opt/super-agent/.env << 'ENVFILE'\n# Server\nPORT=3000\nHOST=0.0.0.0\nNODE_ENV=production\nLOG_LEVEL=info\n\n# Database (Aurora PostgreSQL — run fetch-db-url.sh to get this)\nDATABASE_URL=CHANGE_ME\n\n# Redis\nREDIS_HOST=localhost\nREDIS_PORT=6379\nREDIS_PASSWORD=super-agent-redis-password\n\n# Cognito (fill these in)\nCOGNITO_USER_POOL_ID=CHANGE_ME\nCOGNITO_CLIENT_ID=CHANGE_ME\nCOGNITO_REGION=us-west-2\nCOGNITO_DOMAIN=CHANGE_ME\n\n# AWS (uses EC2 instance role — no keys needed)\nAWS_REGION=us-west-2\n\n# S3\nS3_BUCKET_NAME=super-agent-avatars-CHANGE_ME\nS3_AVATARS_BUCKET=super-agent-avatars-CHANGE_ME\nS3_PRESIGNED_URL_EXPIRES=3600\nENABLE_AVATAR_GENERATION=true\n\n# CORS (set to your domain after DNS setup)\nCORS_ORIGIN=*\n\n# Claude Agent SDK\nCLAUDE_CODE_USE_BEDROCK=1\nCLAUDE_MODEL=claude-haiku-4-5-20251001\nAGENT_WORKSPACE_BASE_DIR=/opt/super-agent/workspaces\n\n# Langfuse (optional)\n# LANGFUSE_SECRET_KEY=\n# LANGFUSE_PUBLIC_KEY=\n# LANGFUSE_BASE_URL=\nENVFILE\n\nchown ubuntu:ubuntu /opt/super-agent/.env\nchmod 600 /opt/super-agent/.env\n\necho \">>> Bootstrap complete.\"\necho \">>> Next: SSH in, run ./fetch-db-url.sh <SECRET_ARN> to get DATABASE_URL, update .env, then run deploy.\"\n"
+    }
+   },
+   "DependsOn": [
+    "SuperAgentEC2RoleDefaultPolicy582F8E01",
+    "SuperAgentEC2Role7A832478"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentInstance/Resource"
+   }
+  },
+  "SuperAgentEIP": {
+   "Type": "AWS::EC2::EIP",
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/SuperAgentEIP"
+   }
+  },
+  "EIPAssoc": {
+   "Type": "AWS::EC2::EIPAssociation",
+   "Properties": {
+    "AllocationId": {
+     "Fn::GetAtt": [
+      "SuperAgentEIP",
+      "AllocationId"
+     ]
+    },
+    "InstanceId": {
+     "Ref": "SuperAgentInstance195B0517"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/EIPAssoc"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31Ry07DMBD8lt5dA6mQuPaBUE9EKZzR1t0Gt45dedegysq/YydNFAnEacazs+t9FLJYPMn7GXzTXB3Oc6P3Mu4Y1Fmsj7YEDw0yelEhueAVimT8iKiK5EIVvObri3fhkt3/C1tbeyQSW0sMNlVKhil/3pY3WBI5pYG1s61QrraanYzvhL50zmTTyAeycQ1oOw3dlOG5NhotTw2/lYyt8AeScQMMeyBcm0B5/F3YW+RxsM1qKgzmNK5H7uNDYvcYxmwFdRZqwEKNXsZ+STmrhzfwNfKS0wE+m1t7f0daoaGRsXKm216HpTNaXbvDjWz4u/TuqE1uYSHjKqhz32nP2jbz18CXkApbd0B5oruv4lEW8mF2Iq3nPljWDcqqxx8R2bq0OAIAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "SuperAgentStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "InstanceId": {
+   "Value": {
+    "Ref": "SuperAgentInstance195B0517"
+   }
+  },
+  "PublicIP": {
+   "Value": {
+    "Fn::GetAtt": [
+     "SuperAgentEIP",
+     "PublicIp"
+    ]
+   }
+  },
+  "SSHCommand": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "ssh -i ",
+      {
+       "Ref": "KeyPairName"
+      },
+      ".pem ubuntu@",
+      {
+       "Fn::GetAtt": [
+        "SuperAgentEIP",
+        "PublicIp"
+       ]
+      }
+     ]
+    ]
+   }
+  },
+  "AppURL": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "http://",
+      {
+       "Fn::GetAtt": [
+        "SuperAgentEIP",
+        "PublicIp"
+       ]
+      }
+     ]
+    ]
+   }
+  },
+  "AuroraEndpoint": {
+   "Description": "Aurora PostgreSQL writer endpoint",
+   "Value": {
+    "Fn::GetAtt": [
+     "SuperAgentDB8D804A88",
+     "Endpoint.Address"
+    ]
+   }
+  },
+  "DBSecretArn": {
+   "Description": "Secrets Manager ARN for DB credentials",
+   "Value": {
+    "Ref": "SuperAgentDBSecretAttachmentD97AC268"
+   }
+  },
+  "AvatarBucketName": {
+   "Value": {
+    "Ref": "AvatarBucket9BCAEBB3"
+   }
+  },
+  "CognitoUserPoolId": {
+   "Description": "COGNITO_USER_POOL_ID / VITE_COGNITO_USER_POOL_ID",
+   "Value": {
+    "Ref": "SuperAgentUserPoolB12B014C"
+   }
+  },
+  "CognitoClientId": {
+   "Description": "COGNITO_CLIENT_ID / VITE_COGNITO_CLIENT_ID",
+   "Value": {
+    "Ref": "SuperAgentUserPoolSuperAgentAppClientBB986A03"
+   }
+  },
+  "CognitoDomainUrl": {
+   "Description": "COGNITO_DOMAIN / VITE_COGNITO_DOMAIN",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      {
+       "Ref": "CognitoDomainPrefix"
+      },
+      ".auth.us-west-2.amazoncognito.com"
+     ]
+    ]
+   }
+  },
+  "CognitoRegion": {
+   "Description": "COGNITO_REGION / VITE_COGNITO_REGION",
+   "Value": "us-west-2"
+  },
+  "UpdateCognitoCallbackCommand": {
+   "Description": "Run this after deploy to set Cognito callback URLs to the Elastic IP",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "aws cognito-idp update-user-pool-client --user-pool-id ",
+      {
+       "Ref": "SuperAgentUserPoolB12B014C"
+      },
+      " --client-id ",
+      {
+       "Ref": "SuperAgentUserPoolSuperAgentAppClientBB986A03"
+      },
+      " --callback-urls \"http://",
+      {
+       "Fn::GetAtt": [
+        "SuperAgentEIP",
+        "PublicIp"
+       ]
+      },
+      "/auth/callback\" \"http://localhost:5173/auth/callback\" --logout-urls \"http://",
+      {
+       "Fn::GetAtt": [
+        "SuperAgentEIP",
+        "PublicIp"
+       ]
+      },
+      "/login\" \"http://localhost:5173/login\" --allowed-o-auth-flows code --allowed-o-auth-scopes openid email profile --allowed-o-auth-flows-user-pool-client --supported-identity-providers COGNITO --region us-west-2"
+     ]
+    ]
+   }
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

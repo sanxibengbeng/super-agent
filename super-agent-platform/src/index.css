@@ -1,0 +1,164 @@
+@import 'tailwindcss';
+
+:root {
+  font-family:
+    Inter,
+    system-ui,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* Custom animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Flying card animation for casino dashboard */
+@keyframes fly-card {
+  0% {
+    opacity: 0;
+    transform: translate(var(--sx), var(--sy)) rotate(0deg) scale(0.5);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(var(--sx), var(--sy)) rotate(10deg) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(360deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(0, 0) rotate(720deg) scale(0.5);
+  }
+}
+
+.animate-fly-card {
+  animation: fly-card 2.5s ease-in-out infinite;
+}
+
+/* Workflow connection dash animation */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.animate-dash {
+  animation: dash 0.5s linear infinite;
+}
+
+/* Custom scrollbar for quick questions */
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+.scrollbar-thumb-gray-700::-webkit-scrollbar-thumb {
+  background-color: #374151;
+  border-radius: 4px;
+}
+
+.scrollbar-track-transparent::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+/* Canvas styles */
+.react-flow__node {
+  cursor: grab;
+}
+
+.react-flow__node:active {
+  cursor: grabbing;
+}
+
+.react-flow__handle {
+  transition: all 0.2s ease;
+}
+
+.react-flow__handle:hover {
+  transform: scale(1.2);
+}
+
+.react-flow__edge-path {
+  stroke-dasharray: 5;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  animation: dash 0.5s linear infinite;
+}
+
+.react-flow__controls {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+.react-flow__controls button {
+  background-color: #1f2937;
+  border-color: #374151;
+  color: #9ca3af;
+}
+
+.react-flow__controls button:hover {
+  background-color: #374151;
+  color: #f3f4f6;
+}
+
+.react-flow__minimap {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+/* Selection styles */
+.react-flow__selection {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border: 1px solid rgba(59, 130, 246, 0.5) !important;
+}
+
+.react-flow__nodesselection-rect {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border: 1px solid rgba(59, 130, 246, 0.5) !important;
+}

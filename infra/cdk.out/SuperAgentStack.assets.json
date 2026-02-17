@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "3cb69f1a7d5bada7a720576869734b4c6ab1c3870dfa73d93e30cfc5f7311e34": {
+      "displayName": "SuperAgentStack Template",
+      "source": {
+        "path": "SuperAgentStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "975049886833-us-west-2-a2c0762d": {
+          "bucketName": "cdk-hnb659fds-assets-975049886833-us-west-2",
+          "objectKey": "3cb69f1a7d5bada7a720576869734b4c6ab1c3870dfa73d93e30cfc5f7311e34.json",
+          "region": "us-west-2",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::975049886833:role/cdk-hnb659fds-file-publishing-role-975049886833-us-west-2"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}
