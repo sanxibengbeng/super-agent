@@ -20,6 +20,7 @@ export interface BusinessScope {
   icon: string | null;
   color: string | null;
   isDefault: boolean;
+  visibility: 'open' | 'restricted';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,6 +67,7 @@ const mockBusinessScopes: BusinessScope[] = [
     icon: '👥',
     color: '#4CAF50',
     isDefault: true,
+    visibility: 'open' as const,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
   },
@@ -77,6 +79,7 @@ const mockBusinessScopes: BusinessScope[] = [
     icon: '💻',
     color: '#2196F3',
     isDefault: true,
+    visibility: 'open' as const,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
   },
@@ -88,6 +91,7 @@ const mockBusinessScopes: BusinessScope[] = [
     icon: '📢',
     color: '#FF9800',
     isDefault: true,
+    visibility: 'open' as const,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
   },
@@ -99,6 +103,7 @@ const mockBusinessScopes: BusinessScope[] = [
     icon: '💰',
     color: '#9C27B0',
     isDefault: true,
+    visibility: 'open' as const,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
   },
@@ -110,6 +115,7 @@ const mockBusinessScopes: BusinessScope[] = [
     icon: '🎧',
     color: '#E91E63',
     isDefault: true,
+    visibility: 'open' as const,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
   },
@@ -189,6 +195,7 @@ export const MockBusinessScopeService = {
       icon: input.icon ?? null,
       color: input.color ?? null,
       isDefault: input.isDefault ?? false,
+      visibility: 'open',
       createdAt: now,
       updatedAt: now,
     };

@@ -7,6 +7,15 @@
     <title>super-agent-platform</title>
   </head>
   <body>
+    <script>
+      // Prevent flash of wrong theme before React hydrates
+      (function() {
+        var t = localStorage.getItem('theme');
+        // Default to dark if no preference saved (matches ThemeProvider default)
+        var dark = t === 'light' ? false : (t === 'dark' || !t || matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react'
-import { Briefcase, LayoutGrid, Spade, Plus } from 'lucide-react'
+import { Briefcase, LayoutGrid, Spade, Plus, Shield } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from '@/i18n'
 import { DepartmentSection, CommandCenter } from '@/components'
+import { AgentCard } from '@/components/AgentCard'
+import { ScopeAccessPanel } from '@/components/ScopeAccessPanel'
 import { useAgents } from '@/services/useAgents'
 import { useBusinessScopes } from '@/services/useBusinessScopes'
+import { useAuth } from '@/services/AuthContext'
 import type { Agent, SystemStats } from '@/types'
+import type { BusinessScope } from '@/services/businessScopeService'
 
 type DashboardView = 'classic' | 'casino'
 
@@ -64,6 +68,10 @@ export function Dashboard() {
   const [view, setView] = useState<DashboardView>('classic')
   const { agents, isLoading: agentsLoading } = useAgents({ pollInterval: 5000 })
   const { businessScopes, isLoading: scopesLoading } = useBusinessScopes()
+  const { user } = useAuth()
+  const [accessScope, setAccessScope] = useState<BusinessScope | null>(null)
+
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin'
 
   const stats = useMemo(() => calculateStats(agents), [agents])
   
@@ -141,13 +149,32 @@ export function Dashboard() {
                 : DEFAULT_COLORS[index % DEFAULT_COLORS.length]
               
               return (
-                <DepartmentSection
-                  key={scope.id}
-                  name={scope.name}
-                  icon={scope.icon ? <span>{scope.icon}</span> : <Briefcase className="w-4 h-4 text-white" />}
-                  color={bgColor}
-                  agents={scopeAgents}
-                />
+                <div key={scope.id}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className={`w-8 h-8 rounded-lg ${bgColor} flex items-center justify-center`}>
+                      {scope.icon ? <span>{scope.icon}</span> : <Briefcase className="w-4 h-4 text-white" />}
+                    </div>
+                    <h3 className="text-white font-semibold">{scope.name}</h3>
+                    <span className="text-gray-500 text-sm">({scopeAgents.length})</span>
+                    {scope.visibility === 'restricted' && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500/20 text-yellow-400 rounded">Restricted</span>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => setAccessScope(scope)}
+                        className="ml-auto p-1.5 text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
+                        title="Manage scope access"
+                      >
+                        <Shield className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mb-6">
+                    {scopeAgents.map((agent) => (
+                      <AgentCard key={agent.id} agent={agent} />
+                    ))}
+                  </div>
+                </div>
               )
             })}
             
@@ -161,6 +188,20 @@ export function Dashboard() {
               />
             )}
           </div>
+      )}
+
+      {/* Scope Access Control Modal */}
+      {accessScope && (
+        <ScopeAccessPanel
+          scopeId={accessScope.id}
+          scopeName={accessScope.name}
+          visibility={accessScope.visibility}
+          isAdmin={isAdmin}
+          onClose={() => setAccessScope(null)}
+          onVisibilityChange={(v) => {
+            setAccessScope((prev) => prev ? { ...prev, visibility: v } : null)
+          }}
+        />
       )}
     </div>
   )

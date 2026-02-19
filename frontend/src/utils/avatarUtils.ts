@@ -5,7 +5,6 @@
  * Supports S3 keys, external URLs, and fallback characters.
  */
 
-import { getRestApiConfig } from '@/services/api/restClient';
 
 /**
  * Checks if the avatar value is an S3 key (generated image)
@@ -36,11 +35,12 @@ export function getAvatarDisplayUrl(avatar: string | null | undefined): string |
   
   // S3 key - construct backend URL
   if (isS3AvatarKey(avatar)) {
-    const { baseUrl } = getRestApiConfig();
     // The avatar field stores the full S3 key like "avatars/123-abc.png"
     // The backend endpoint is /api/avatars/* which expects just the filename
-    // Extract just the filename from the S3 key
     const filename = avatar.replace('avatars/', '');
+    // Use relative URL so requests go through the Vite proxy in dev,
+    // and work correctly in production behind the same origin.
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
     return `${baseUrl}/api/avatars/${filename}`;
   }
   

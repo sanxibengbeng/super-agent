@@ -16,6 +16,7 @@ import { devServerManager } from '../services/dev-server-manager.js';
 import { sanitizeEvent } from '../services/output-sanitizer.js';
 import { generateQuickQuestions } from '../services/quick-questions.service.js';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
+import { scopeAccessService } from '../services/scopeAccess.service.js';
 import {
   chatStreamRequestSchema,
   createChatSessionSchema,
@@ -122,6 +123,11 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (request: FastifyRequest<StreamChatRequest>, reply: FastifyReply) => {
       const data = validateSchema(chatStreamRequestSchema, request.body);
+
+      // Enforce scope access if a business_scope_id is provided
+      if (data.business_scope_id) {
+        await scopeAccessService.requireAccess(request.user!, data.business_scope_id, 'viewer');
+      }
 
       await chatService.streamChat(reply, request.user!.orgId, request.user!.id, {
         agentId: data.agent_id,

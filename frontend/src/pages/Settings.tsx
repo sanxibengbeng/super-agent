@@ -1,21 +1,23 @@
 /**
  * Settings Page
- * Tabs: Members, Organization, API Keys
+ * Tabs: Members, Organization, API Keys, Appearance
  */
 
 import { useState } from 'react';
-import { Users, Building2, Key, AlertCircle, X } from 'lucide-react';
+import { Users, Building2, Key, AlertCircle, Palette } from 'lucide-react';
 import { MembersTab } from './settings/MembersTab';
 import { OrganizationTab } from './settings/OrganizationTab';
 import { ApiKeysTab } from './settings/ApiKeysTab';
+import { AppearanceTab } from './settings/AppearanceTab';
 import { useAuth } from '@/services/AuthContext';
 
-type Tab = 'members' | 'organization' | 'api-keys';
+type Tab = 'members' | 'organization' | 'api-keys' | 'appearance';
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'members', label: 'Members', icon: <Users className="w-4 h-4" /> },
   { id: 'organization', label: 'Organization', icon: <Building2 className="w-4 h-4" /> },
   { id: 'api-keys', label: 'API Keys', icon: <Key className="w-4 h-4" /> },
+  { id: 'appearance', label: 'Appearance', icon: <Palette className="w-4 h-4" /> },
 ];
 
 export function Settings() {
@@ -60,6 +62,7 @@ export function Settings() {
       {activeTab === 'members' && <MembersTab isAdmin={isAdmin} currentUserId={user?.id ?? ''} />}
       {activeTab === 'organization' && <OrganizationTab isOwner={user?.role === 'owner'} />}
       {activeTab === 'api-keys' && <ApiKeysTab isAdmin={isAdmin} />}
+      {activeTab === 'appearance' && <AppearanceTab />}
     </div>
   );
 }

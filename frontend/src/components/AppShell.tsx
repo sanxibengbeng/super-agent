@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, ChevronUp, ChevronDown } from 'lucide-react'
+import { LogOut, ChevronUp, ChevronDown, Sun, Moon, Monitor } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { AdminMenu } from './AdminMenu'
 import { useTranslation } from '@/i18n'
 import { useAuth } from '@/services/AuthContext'
 import { shouldUseRestApi } from '@/services/api/index'
+import { useTheme } from '@/services/ThemeContext'
 
 interface AppShellProps {
   children: ReactNode
@@ -32,6 +33,15 @@ export function AppShell({ children }: AppShellProps) {
   const { t } = useTranslation()
   const { user, logout } = useAuth()
   const isRestMode = shouldUseRestApi()
+  const { theme, setTheme } = useTheme()
+
+  const cycleTheme = () => {
+    const next = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark'
+    setTheme(next)
+  }
+
+  const themeIcon = theme === 'dark' ? <Moon className="w-4 h-4" /> : theme === 'light' ? <Sun className="w-4 h-4" /> : <Monitor className="w-4 h-4" />
+  const themeLabel = theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'System'
 
   const pageTitle = getPageTitle(location.pathname, t)
 
@@ -97,6 +107,14 @@ export function AppShell({ children }: AppShellProps) {
                   </button>
                 </>
               )}
+              <button
+                onClick={cycleTheme}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                title={`Theme: ${themeLabel} (click to cycle)`}
+              >
+                {themeIcon}
+                <span className="text-xs">{themeLabel}</span>
+              </button>
               <button
                 onClick={() => setIsHeaderCollapsed(true)}
                 className="p-1 text-slate-500 hover:text-white rounded transition-colors"

@@ -19,6 +19,7 @@ interface ApiBusinessScope {
   icon: string | null;
   color: string | null;
   is_default: boolean;
+  visibility: string;
   created_at: string;
   updated_at: string;
 }
@@ -58,6 +59,7 @@ export interface BusinessScope {
   icon: string | null;
   color: string | null;
   isDefault: boolean;
+  visibility: 'open' | 'restricted';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -120,6 +122,7 @@ function mapApiBusinessScopeToBusinessScope(apiScope: ApiBusinessScope): Busines
     icon: apiScope.icon,
     color: apiScope.color,
     isDefault: apiScope.is_default,
+    visibility: (apiScope.visibility as 'open' | 'restricted') || 'open',
     createdAt: new Date(apiScope.created_at),
     updatedAt: new Date(apiScope.updated_at),
   };

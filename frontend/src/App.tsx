@@ -5,6 +5,7 @@ import { Dashboard, Chat, WorkflowEditor, Agents, Tools, AgentConfigurator, Task
 import { Settings } from '@/pages/Settings'
 import { AuthCallback } from '@/pages/AuthCallback'
 import { AuthProvider } from '@/services/AuthContext'
+import { ThemeProvider } from '@/services/ThemeContext'
 
 function AppContent() {
   return (
@@ -45,23 +46,25 @@ function AppContent() {
 function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <TranslationProvider>
-          <ToastProvider>
-            <AuthProvider>
-              <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/*" element={
-                  <ProtectedRoute>
-                    <AppContent />
-                  </ProtectedRoute>
-                } />
-              </Routes>
-            </AuthProvider>
-          </ToastProvider>
-        </TranslationProvider>
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <TranslationProvider>
+            <ToastProvider>
+              <AuthProvider>
+                <Routes>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/auth/callback" element={<AuthCallback />} />
+                  <Route path="/*" element={
+                    <ProtectedRoute>
+                      <AppContent />
+                    </ProtectedRoute>
+                  } />
+                </Routes>
+              </AuthProvider>
+            </ToastProvider>
+          </TranslationProvider>
+        </BrowserRouter>
+      </ThemeProvider>
     </ErrorBoundary>
   )
 }

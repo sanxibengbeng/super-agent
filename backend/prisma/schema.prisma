@@ -48,6 +48,7 @@ model organizations {
   scope_memories             scope_memories[]
   scope_briefings            scope_briefings[]
   app_data                   app_data[]
+  scope_memberships          scope_memberships[]
   @@index([slug])
   @@index([plan_type])
   @@index([created_at(sort: Desc)])
@@ -108,6 +109,8 @@ model business_scopes {
   created_at      DateTime @default(now()) @db.Timestamptz
   updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
 
+  visibility      String   @default("open")
+
   organization  organizations  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   agents        agents[]
   workflows     workflows[]
@@ -118,12 +121,35 @@ model business_scopes {
   im_channel_bindings im_channel_bindings[]
   scope_memories      scope_memories[]
   scope_briefings     scope_briefings[]
+  scope_memberships   scope_memberships[]
 
   @@unique([organization_id, name], name: "unique_scope_name_per_org")
   @@index([organization_id])
   @@index([name])
   @@index([is_default])
   @@index([organization_id, name])
+}
+
+// ============================================================================
+// Scope Memberships Table - scope-level access control
+// ============================================================================
+model scope_memberships {
+  id                String   @id @default(uuid()) @db.Uuid
+  organization_id   String   @db.Uuid
+  business_scope_id String   @db.Uuid
+  user_id           String   @db.Uuid
+  role              String   @default("viewer")
+  created_at        DateTime @default(now()) @db.Timestamptz
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization   organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
+
+  @@unique([business_scope_id, user_id])
+  @@index([organization_id])
+  @@index([business_scope_id])
+  @@index([user_id])
+  @@index([business_scope_id, user_id])
 }
 
 // ============================================================================

@@ -8,6 +8,8 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { businessScopeService } from '../services/businessScope.service.js';
 import { aiService } from '../services/ai.service.js';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
+import { requireScopeAccess } from '../middleware/scopeAccess.js';
+import { scopeAccessService } from '../services/scopeAccess.service.js';
 import {
   createBusinessScopeSchema,
   updateBusinessScopeSchema,
@@ -131,6 +133,15 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
         pagination
       );
 
+      // Filter scopes by user access
+      const accessibleIds = await scopeAccessService.getAccessibleScopeIds(request.user!);
+      if (accessibleIds !== 'all') {
+        const idSet = new Set(accessibleIds);
+        result.data = result.data.filter((s: { id: string }) => idSet.has(s.id));
+        result.pagination.total = result.data.length;
+        result.pagination.totalPages = Math.ceil(result.data.length / (pagination.limit ?? 20));
+      }
+
       return reply.status(200).send(result);
     }
   );
@@ -184,6 +195,9 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
     },
     async (request: FastifyRequest<GetBusinessScopeByIdRequest>, reply: FastifyReply) => {
       const { id } = validateSchema(idParamSchema, request.params);
+
+      // Enforce scope-level access
+      await scopeAccessService.requireAccess(request.user!, id, 'viewer');
 
       const businessScope = await businessScopeService.getBusinessScopeById(
         id,
@@ -333,6 +347,9 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
       const { id } = validateSchema(idParamSchema, request.params);
       const data = validateSchema(updateBusinessScopeSchema, request.body);
 
+      // Require scope admin or member access to update
+      await scopeAccessService.requireAccess(request.user!, id, 'member');
+
       const businessScope = await businessScopeService.updateBusinessScope(
         id,
         data,
@@ -381,6 +398,9 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
     },
     async (request: FastifyRequest<DeleteBusinessScopeRequest>, reply: FastifyReply) => {
       const { id } = validateSchema(idParamSchema, request.params);
+
+      // Require scope admin access to delete
+      await scopeAccessService.requireAccess(request.user!, id, 'admin');
 
       await businessScopeService.deleteBusinessScope(id, request.user!.orgId);
 
@@ -622,6 +642,7 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
     },
     async (request: FastifyRequest<GetBusinessScopeByIdRequest>, reply: FastifyReply) => {
       const { id } = validateSchema(idParamSchema, request.params);
+      await scopeAccessService.requireAccess(request.user!, id, 'viewer');
       const agents = await businessScopeService.getScopeAgentsWithSkills(id, request.user!.orgId);
       return reply.status(200).send(agents);
     }
@@ -674,6 +695,7 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
     },
     async (request: FastifyRequest<GetBusinessScopeByIdRequest>, reply: FastifyReply) => {
       const { id } = validateSchema(idParamSchema, request.params);
+      await scopeAccessService.requireAccess(request.user!, id, 'viewer');
       const skills = await businessScopeService.getScopeSkills(id, request.user!.orgId);
       return reply.status(200).send(skills);
     }

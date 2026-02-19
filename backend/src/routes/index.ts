@@ -56,6 +56,7 @@ import { enterpriseSkillsRoutes, enterpriseSkillPublishRoutes } from './enterpri
 import { imChannelAdminRoutes, imWebhookRoutes } from './im.routes.js';
 import { scopeMemoryRoutes } from './scope-memory.routes.js';
 import { briefingRoutes } from './briefing.routes.js';
+import { scopeMembershipRoutes } from './scopeMemberships.routes.js';
 
 /**
  * Register all API routes on the Fastify instance.
@@ -182,6 +183,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   // Scope Memory Routes (persistent knowledge per scope)
   await fastify.register(scopeMemoryRoutes, { prefix: '/api/business-scopes' });
+
+  // Scope Membership Routes (scope-level access control)
+  await fastify.register(scopeMembershipRoutes, { prefix: '/api/business-scopes' });
 
   // Scope Briefings Routes (AI-generated insights)
   await fastify.register(briefingRoutes);

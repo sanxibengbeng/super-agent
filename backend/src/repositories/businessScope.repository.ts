@@ -18,6 +18,7 @@ export interface BusinessScopeEntity {
   icon: string | null;
   color: string | null;
   is_default: boolean;
+  visibility: string;
   config_version: number;
   created_at: Date;
   updated_at: Date;
