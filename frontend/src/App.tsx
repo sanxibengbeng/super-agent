@@ -4,6 +4,7 @@ import { AppShell, ErrorBoundary, ToastProvider, ProtectedRoute, SkillMarketplac
 import { Dashboard, Chat, WorkflowEditor, Agents, Tools, AgentConfigurator, TaskAuditLog, TaskExecutionCenter, MCPConfigurator, KnowledgeManager, InfrastructureConfigurator, Login, CreateBusinessScope, Marketplace, AppRunner } from '@/pages'
 import { Settings } from '@/pages/Settings'
 import { AuthCallback } from '@/pages/AuthCallback'
+import { InviteAccept } from '@/pages/InviteAccept'
 import { AuthProvider } from '@/services/AuthContext'
 import { ThemeProvider } from '@/services/ThemeContext'
 
@@ -54,6 +55,7 @@ function App() {
                 <Routes>
                   <Route path="/login" element={<Login />} />
                   <Route path="/auth/callback" element={<AuthCallback />} />
+                  <Route path="/invite/:token" element={<InviteAccept />} />
                   <Route path="/*" element={
                     <ProtectedRoute>
                       <AppContent />

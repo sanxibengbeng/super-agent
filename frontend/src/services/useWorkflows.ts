@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useSyncExternalStore, useEffect } from 'react'
 import type { Workflow, WorkflowCategory, WorkflowImportResult } from '@/types'
 import { WorkflowService, WorkflowServiceError } from './workflowService'
-import { getAuthToken } from './api/restClient'
 import { shouldUseRestApi } from './api/index'
+import { getLocalToken } from './auth'
 
 export interface UseWorkflowsState {
   workflows: Workflow[]
@@ -66,7 +66,7 @@ if (!initialFetchStarted) {
   initialFetchStarted = true
   // For REST API, only fetch if we have a token (user is logged in)
   // For mock, fetch immediately
-  if (!shouldUseRestApi() || getAuthToken()) {
+  if (!shouldUseRestApi() || localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')) {
     void fetchWorkflowsFromService()
   }
 }
@@ -84,8 +84,12 @@ export function useWorkflows(): UseWorkflowsReturn {
     isMountedRef.current = true
     
     // For REST API, fetch data when component mounts (user should be logged in by now)
-    if (shouldUseRestApi() && getAuthToken() && state.workflows.length === 0 && !state.isLoading) {
+    const hasToken = getLocalToken() || localStorage.getItem('cognito_id_token');
+    if (shouldUseRestApi() && hasToken && state.workflows.length === 0) {
       void fetchWorkflowsFromService()
+    } else if (!hasToken || !shouldUseRestApi()) {
+      // No token or not using REST — don't stay in loading state
+      setWorkflowsState({ isLoading: false, error: null })
     }
     
     return () => {

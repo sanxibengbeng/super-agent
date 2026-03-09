@@ -120,7 +120,7 @@ export interface QuickQuestion {
 
 // Workflow Types
 export type WorkflowCategory = 'hr' | 'deployment' | 'marketing' | 'support'
-export type NodeType = 'trigger' | 'agent' | 'human' | 'action' | 'end'
+export type NodeType = 'trigger' | 'agent' | 'human' | 'action' | 'condition' | 'document' | 'codeArtifact' | 'resource' | 'loop' | 'parallel' | 'start' | 'end'
 
 export interface Position {
   x: number
@@ -143,6 +143,8 @@ export interface Connection {
   id: string
   from: string
   to: string
+  sourceHandle?: string
+  targetHandle?: string
   animated?: boolean
 }
 

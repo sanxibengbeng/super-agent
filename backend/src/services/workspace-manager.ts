@@ -14,7 +14,7 @@
  * scope/agent/skill changes on the next conversation turn.
  */
 
-import { mkdir, rm, readFile, writeFile, access, readdir, stat, cp } from 'fs/promises';
+import { mkdir, rm, readFile, writeFile, access, readdir, stat, cp, symlink } from 'fs/promises';
 import { join, relative, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
@@ -93,6 +93,14 @@ export interface ScopeForWorkspace {
   skills: SkillForWorkspace[];
   mcpServers?: McpServerForWorkspace[];
   plugins?: PluginForWorkspace[];
+  documentGroups?: DocGroupForWorkspace[];
+}
+
+export interface DocGroupForWorkspace {
+  id: string;
+  name: string;
+  storagePath: string;
+  fileCount: number;
 }
 
 /** Manifest stored in each session workspace. */
@@ -163,6 +171,25 @@ export class WorkspaceManager {
 
     // Download S3 skills, then layer in built-in skills (won't overwrite S3 ones)
     const skillsDir = join(workspacePath, '.claude', 'skills');
+
+    // Create document group symlinks
+    const docGroups = scope.documentGroups ?? [];
+    if (docGroups.length > 0) {
+      const docsDir = join(workspacePath, 'documents');
+      await mkdir(docsDir, { recursive: true });
+      for (const group of docGroups) {
+        const linkName = group.name.replace(/[/\\:*?"<>|]/g, '-');
+        const linkPath = join(docsDir, linkName);
+        try {
+          await symlink(group.storagePath, linkPath);
+        } catch (err: any) {
+          if (err.code !== 'EEXIST') {
+            console.error(`Failed to symlink doc group "${group.name}":`, err.message);
+          }
+        }
+      }
+    }
+
     for (const skill of scope.skills) {
       try {
         await this.downloadSkill(skill, skillsDir);
@@ -311,6 +338,23 @@ export class WorkspaceManager {
     // Inject scope memories
     const { scopeMemoryRepository } = await import('../repositories/scope-memory.repository.js');
     const memories = await scopeMemoryRepository.findForContext(scope.id);
+
+    // Inject document groups (Knowledge Base)
+    const docGroups = scope.documentGroups ?? [];
+    if (docGroups.length > 0) {
+      lines.push('');
+      lines.push('## Knowledge Base', '');
+      lines.push('Reference documents are available in the `documents/` directory. These are **READ-ONLY**.');
+      lines.push('- NEVER modify, delete, or create files inside `documents/`.');
+      lines.push('- Use grep or ripgrep to search within these files when you need reference information.');
+      lines.push('');
+      lines.push('Available document groups:');
+      for (const g of docGroups) {
+        lines.push(`- \`documents/${g.name.replace(/[/\\:*?"<>|]/g, '-')}\` (${g.fileCount} file${g.fileCount !== 1 ? 's' : ''})`);
+      }
+      lines.push('');
+    }
+
     if (memories.length > 0) {
       lines.push('');
       lines.push('## Scope Memory', '');

@@ -132,7 +132,7 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
 
     if (isImage) {
       // Fetch as blob for images
-      const token = localStorage.getItem('cognito_id_token')
+      const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
       const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
       fetch(`${baseUrl}/api/chat/sessions/${sessionId}/workspace/file/raw?path=${encodeURIComponent(path)}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -332,7 +332,7 @@ function AppPreviewTab({ path, sessionId }: { path: string; sessionId: string })
   const [refreshCount, setRefreshCount] = useState(0)
   const [status, setStatus] = useState<'starting' | 'running' | 'error'>('starting')
   const [errorMsg, setErrorMsg] = useState('')
-  const token = localStorage.getItem('cognito_id_token')
+  const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
   const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
   // Determine if this is a Vite/React app (has package.json sibling) or plain HTML
@@ -431,7 +431,7 @@ function AppPreviewTab({ path, sessionId }: { path: string; sessionId: string })
 
 function PublishedAppPreviewTab({ url, name }: { url: string; name: string }) {
   const [refreshCount, setRefreshCount] = useState(0)
-  const token = localStorage.getItem('cognito_id_token')
+  const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
   const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
   const fullUrl = `${baseUrl}${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token || '')}&_r=${refreshCount}`
 

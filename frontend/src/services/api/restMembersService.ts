@@ -34,10 +34,10 @@ export const RestMembersService = {
   inviteMember: (email: string, role: MemberRole) =>
     restClient.post<Member>('/api/organizations/members/invite', { invited_email: email, role }),
 
-  provisionMember: (username: string, password: string, role: MemberRole) =>
+  provisionMember: (username: string, password: string, role: MemberRole, fullName?: string) =>
     restClient.post<{ userId: string; username: string; role: string; membershipId: string }>(
       '/api/organizations/members/provision',
-      { username, password, role },
+      { username, password, role, fullName },
     ),
 
   // Backend uses PUT /members/:id

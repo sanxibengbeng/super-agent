@@ -281,7 +281,7 @@ export class BusinessScopeService {
    * @throws AppError.notFound if business scope doesn't exist
    */
   async deleteBusinessScope(id: string, organizationId: string): Promise<boolean> {
-    const deleted = await businessScopeRepository.delete(id, organizationId);
+    const deleted = await businessScopeRepository.softDelete(id, organizationId);
 
     if (!deleted) {
       throw AppError.notFound(`Business scope with ID ${id} not found`);

@@ -6,7 +6,7 @@
  */
 
 import { restClient } from './restClient';
-import type { Workflow, WorkflowCategory, WorkflowNode, Connection } from '@/types';
+import type { Workflow, WorkflowCategory, WorkflowNode, Connection, NodeType } from '@/types';
 import { ServiceError } from '@/utils/errorHandling';
 
 /**
@@ -99,15 +99,22 @@ function parseConnections(connections: unknown): Connection[] {
       id: typeof c.id === 'string' ? c.id : `conn-${index}`,
       from: typeof c.from === 'string' ? c.from : '',
       to: typeof c.to === 'string' ? c.to : '',
+      sourceHandle: typeof c.sourceHandle === 'string' ? c.sourceHandle : undefined,
+      targetHandle: typeof c.targetHandle === 'string' ? c.targetHandle : undefined,
       animated: typeof c.animated === 'boolean' ? c.animated : undefined,
     }));
   }
   return [];
 }
 
-function isValidNodeType(value: unknown): value is 'trigger' | 'agent' | 'human' | 'action' | 'end' {
-  return value === 'trigger' || value === 'agent' || value === 'human' || 
-         value === 'action' || value === 'end';
+const VALID_NODE_TYPES = new Set([
+  'trigger', 'agent', 'human', 'action', 'condition', 'end',
+  'document', 'codeArtifact', 'resource', 'loop', 'parallel', 'start',
+  'group', 'memo', 'humanApproval',
+]);
+
+function isValidNodeType(value: unknown): value is NodeType {
+  return typeof value === 'string' && VALID_NODE_TYPES.has(value);
 }
 
 /**

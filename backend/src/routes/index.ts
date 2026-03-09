@@ -31,6 +31,7 @@ import { FastifyInstance } from 'fastify';
 import { agentRoutes } from './agents.routes.js';
 import { taskRoutes } from './tasks.routes.js';
 import { workflowRoutes } from './workflows.routes.js';
+import { checkpointRoutes } from './checkpoint.routes.js';
 import { executionRoutes } from './execution.routes.js';
 import { documentRoutes } from './documents.routes.js';
 import { fileRoutes } from './files.routes.js';
@@ -57,6 +58,7 @@ import { imChannelAdminRoutes, imWebhookRoutes } from './im.routes.js';
 import { scopeMemoryRoutes } from './scope-memory.routes.js';
 import { briefingRoutes } from './briefing.routes.js';
 import { scopeMembershipRoutes } from './scopeMemberships.routes.js';
+import { documentGroupRoutes, scopeDocGroupRoutes } from './document-groups.routes.js';
 
 /**
  * Register all API routes on the Fastify instance.
@@ -111,6 +113,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // Workflow Management Routes
   // Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6
   await fastify.register(workflowRoutes, { prefix: '/api/workflows' });
+
+  // Workflow Checkpoint Routes (async pause/resume)
+  await fastify.register(checkpointRoutes, { prefix: '/api/workflows' });
 
   // Workflow Execution Routes
   // Requirements: 1.1, 7.1, 9.2 (Real Workflow Execution spec)
@@ -186,6 +191,10 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   // Scope Membership Routes (scope-level access control)
   await fastify.register(scopeMembershipRoutes, { prefix: '/api/business-scopes' });
+
+  // Document Group Routes (RAG knowledge base)
+  await fastify.register(documentGroupRoutes, { prefix: '/api/document-groups' });
+  await fastify.register(scopeDocGroupRoutes, { prefix: '/api/business-scopes' });
 
   // Scope Briefings Routes (AI-generated insights)
   await fastify.register(briefingRoutes);

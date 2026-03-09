@@ -12,6 +12,7 @@
 export const ANTHROPIC_TO_BEDROCK_MODEL_MAP: Record<string, string> = {
   'claude-sonnet-4-5-20250929': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
   'claude-haiku-4-5-20251001': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+  'claude-sonnet-4-6':'us.anthropic.claude-sonnet-4-6'
 };
 
 /**

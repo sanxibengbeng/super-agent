@@ -220,7 +220,7 @@ class SessionStreamManager {
       this.notify()
 
       // Connect to the reconnect SSE endpoint
-      const token = localStorage.getItem('cognito_id_token')
+      const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
       const headers: Record<string, string> = {}
       if (token) headers['Authorization'] = `Bearer ${token}`
 

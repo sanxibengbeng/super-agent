@@ -177,7 +177,7 @@ export function AppRunner() {
   const [deleting, setDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
-  const token = localStorage.getItem('cognito_id_token')
+  const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
   const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
   useEffect(() => {

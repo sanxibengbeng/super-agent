@@ -47,11 +47,14 @@ const TOKEN_KEYS = {
   expiresAt: 'cognito_expires_at',
 } as const;
 
+/**
+ * Returns the id_token if still valid, or null if expired.
+ * For automatic refresh, use getValidIdToken() instead.
+ */
 export function getIdToken(): string | null {
   const expiresAt = localStorage.getItem(TOKEN_KEYS.expiresAt);
   if (expiresAt && Date.now() > Number(expiresAt)) {
-    // Token expired — clear everything
-    clearTokens();
+    // Token expired — don't clear yet, refresh might save us
     return null;
   }
   return localStorage.getItem(TOKEN_KEYS.idToken);
@@ -59,6 +62,77 @@ export function getIdToken(): string | null {
 
 export function getAccessToken(): string | null {
   return localStorage.getItem(TOKEN_KEYS.accessToken);
+}
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(TOKEN_KEYS.refreshToken);
+}
+
+// Prevent concurrent refresh calls
+let refreshPromise: Promise<string | null> | null = null;
+
+/**
+ * Returns a valid id_token, refreshing silently if expired.
+ * Falls back to null (user must re-login) if refresh also fails.
+ */
+export async function getValidIdToken(): Promise<string | null> {
+  // If current token is still valid, return it
+  const current = getIdToken();
+  if (current) return current;
+
+  // Try refreshing with the refresh_token
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    clearTokens();
+    return null;
+  }
+
+  // Deduplicate concurrent refresh attempts
+  if (!refreshPromise) {
+    refreshPromise = refreshTokens(refreshToken).finally(() => {
+      refreshPromise = null;
+    });
+  }
+
+  return refreshPromise;
+}
+
+/**
+ * Uses the refresh_token to get new id/access tokens from Cognito.
+ */
+async function refreshTokens(refreshToken: string): Promise<string | null> {
+  try {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: COGNITO_CLIENT_ID,
+      refresh_token: refreshToken,
+    });
+
+    const response = await fetch(`https://${COGNITO_DOMAIN}/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      clearTokens();
+      return null;
+    }
+
+    const tokens = await response.json();
+    // Cognito refresh response doesn't include a new refresh_token,
+    // so we keep the existing one by not overwriting it
+    storeTokens({
+      id_token: tokens.id_token,
+      access_token: tokens.access_token,
+      expires_in: tokens.expires_in,
+    });
+
+    return tokens.id_token;
+  } catch {
+    clearTokens();
+    return null;
+  }
 }
 
 function storeTokens(tokens: { id_token: string; access_token: string; refresh_token?: string; expires_in: number }) {

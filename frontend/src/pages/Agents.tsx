@@ -12,7 +12,7 @@ export function Agents() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { agents, isLoading, error, getAgentById, updateAgent, deleteAgent } = useAgents({ pollInterval: 5000 })
-  const { businessScopes } = useBusinessScopes()
+  const { businessScopes, deleteBusinessScope, refetch: refetchScopes } = useBusinessScopes()
 
   // Get agent ID and scope ID from URL params
   const selectedAgentId = useMemo(() => searchParams.get('id'), [searchParams])
@@ -51,6 +51,22 @@ export function Agents() {
       const success = await deleteAgent(agentId)
       if (success) { setSelectedAgent(null); navigate('/agents', { replace: true }) }
     }
+  }
+
+  const handleDeleteScope = async (scopeId: string) => {
+    if (!window.confirm('Are you sure you want to delete this business scope? Agents will be unlinked but not deleted.')) return
+    const success = await deleteBusinessScope(scopeId)
+    if (success) {
+      navigate('/agents', { replace: true })
+    }
+  }
+
+  const handleAddAgentToScope = async (agentId: string, scopeId: string) => {
+    await updateAgent(agentId, { businessScopeId: scopeId } as Partial<Agent>)
+  }
+
+  const handleRemoveAgentFromScope = async (agentId: string) => {
+    await updateAgent(agentId, { businessScopeId: null } as unknown as Partial<Agent>)
   }
 
   const handleToggleAgentStatus = async (agentId: string, newStatus: AgentStatus) => {
@@ -121,7 +137,14 @@ export function Agents() {
             onToggleStatus={handleToggleAgentStatus}
           />
         ) : showScope ? (
-          <ScopeProfile scope={selectedScope} agents={agents.filter(a => a.department === selectedScopeId)} />
+          <ScopeProfile
+            scope={selectedScope}
+            agents={agents.filter(a => a.department === selectedScopeId)}
+            allAgents={agents}
+            onDeleteScope={handleDeleteScope}
+            onAddAgent={handleAddAgentToScope}
+            onRemoveAgent={handleRemoveAgentFromScope}
+          />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center p-6">
             <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mb-4">

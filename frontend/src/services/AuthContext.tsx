@@ -1,18 +1,22 @@
 /**
- * Authentication Context (Cognito)
+ * Authentication Context
  *
- * Provides authentication state using Cognito Hosted UI tokens.
- * The id_token is sent as Bearer token to the backend for verification.
+ * Supports both Cognito and local auth modes.
+ * Detects mode from backend /api/auth/config on startup.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import {
-  getIdToken,
-  isAuthenticated as checkAuth,
-  logout as cognitoLogout,
-  parseIdToken,
-  redirectToLogin,
-} from './cognito';
+  getAuthConfig,
+  getCachedAuthMode,
+  getValidToken,
+  getLocalToken,
+  clearLocalToken,
+  localLogin,
+  localRegister,
+  localLogout,
+  type AuthMode,
+} from './auth';
 import { restClient } from './api/restClient';
 import { shouldUseRestApi } from './api/index';
 
@@ -29,7 +33,9 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: () => Promise<void>;
+  authMode: AuthMode;
+  login: (username?: string, password?: string) => Promise<void>;
+  register: (username: string, password: string, fullName?: string) => Promise<void>;
   logout: () => void;
   error: string | null;
   clearError: () => void;
@@ -44,65 +50,109 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authMode, setAuthMode] = useState<AuthMode>('local');
   const [error, setError] = useState<string | null>(null);
 
-  // Check for existing Cognito session on mount
+  // Detect auth mode and load existing session on mount
   useEffect(() => {
-    const loadUser = async () => {
+    const init = async () => {
       if (!shouldUseRestApi()) {
         setIsLoading(false);
         return;
       }
 
-      const token = getIdToken();
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
-
       try {
-        // Fetch full user profile from backend (which verifies the Cognito token)
+        const cfg = await getAuthConfig();
+        setAuthMode(cfg.authMode);
+
+        const token = await getValidToken();
+        if (!token) {
+          setIsLoading(false);
+          return;
+        }
+
         const userData = await restClient.get<User>('/api/auth/me');
         setUser(userData);
       } catch {
-        // Token might be invalid — try parsing locally as fallback
-        const claims = parseIdToken(token);
-        if (claims) {
-          setUser({
-            id: claims.sub as string,
-            email: (claims.email as string) || '',
-            name: (claims.name as string) || (claims.email as string) || '',
-            organizationId: (claims['custom:orgId'] as string) || '',
-            organizationName: '',
-            role: (claims['custom:role'] as string) || 'owner',
-          });
-        }
+        // No valid session
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadUser();
+    init();
   }, []);
 
-  const login = useCallback(async () => {
+  const login = useCallback(async (username?: string, password?: string) => {
     setError(null);
-    await redirectToLogin();
+    const mode = getCachedAuthMode();
+
+    if (mode === 'cognito') {
+      const { redirectToLogin } = await import('./cognito');
+      await redirectToLogin();
+      return;
+    }
+
+    // Local mode
+    if (!username || !password) {
+      setError('Username and password are required');
+      return;
+    }
+
+    try {
+      const result = await localLogin(username, password);
+      setUser({
+        id: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        organizationId: result.user.organizationId,
+        organizationName: '',
+        role: result.user.role,
+      });
+    } catch (err: any) {
+      setError(err.message || 'Login failed');
+    }
+  }, []);
+
+  const register = useCallback(async (username: string, password: string, fullName?: string) => {
+    setError(null);
+    try {
+      const result = await localRegister(username, password, fullName);
+      setUser({
+        id: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        organizationId: result.user.organizationId,
+        organizationName: '',
+        role: result.user.role,
+      });
+    } catch (err: any) {
+      setError(err.message || 'Registration failed');
+    }
   }, []);
 
   const logout = useCallback(() => {
     setUser(null);
     setError(null);
-    cognitoLogout();
+    const mode = getCachedAuthMode();
+    if (mode === 'cognito') {
+      import('./cognito').then(({ logout: cognitoLogout }) => cognitoLogout());
+    } else {
+      localLogout();
+    }
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
 
+  const isAuthenticated = Boolean(user) || (getCachedAuthMode() === 'local' ? Boolean(getLocalToken()) : false);
+
   const value: AuthContextType = {
     user,
     isLoading,
-    isAuthenticated: Boolean(user) || checkAuth(),
+    isAuthenticated,
+    authMode,
     login,
+    register,
     logout,
     error,
     clearError,

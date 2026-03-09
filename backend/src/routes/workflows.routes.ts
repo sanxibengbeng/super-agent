@@ -8,7 +8,6 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { workflowService, type GeneratedWorkflowPlan, type WorkflowPatch } from '../services/workflow.service.js';
 import { workflowGeneratorService } from '../services/workflow-generator.service.js';
 import { workflowExecutorV2, type WorkflowV2Plan, type WorkflowProgressEvent } from '../services/workflow-executor-v2.js';
-import { workflowOrchestrator, type OrchestratorPlan, type OrchestratorEvent } from '../services/workflow-orchestrator.js';
 import { agentService } from '../services/agent.service.js';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
 import type { ConversationEvent } from '../services/claude-agent.service.js';
@@ -899,17 +898,21 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
         metadata?: Record<string, unknown>;
       }>;
 
-      // Build V2 plan from stored workflow data
+      // Build V2 plan from stored workflow data — filter out start/end/trigger nodes
+      const PASSTHROUGH_TYPES = new Set(['trigger', 'start', 'end']);
       const plan: WorkflowV2Plan = {
         title: workflow.name,
-        nodes: nodes.map(n => ({
-          id: n.id,
-          title: n.title || n.label || n.id,
-          type: (n.type as 'agent' | 'action' | 'condition' | 'document' | 'codeArtifact') || 'agent',
-          prompt: n.prompt || (n.metadata?.prompt as string) || n.title || n.label || n.id,
-          dependentTasks: n.dependentTasks || (n.metadata?.dependentTasks as string[]),
-          agentId: n.agentId || (n.metadata?.agentId as string),
-        })),
+        nodes: nodes
+          .filter(n => !PASSTHROUGH_TYPES.has(n.type))
+          .map(n => ({
+            id: n.id,
+            title: n.title || n.label || n.id,
+            type: (n.type as WorkflowV2Plan['nodes'][0]['type']) || 'agent',
+            prompt: n.prompt || (n.metadata?.prompt as string) || n.title || n.label || n.id,
+            dependentTasks: n.dependentTasks || (n.metadata?.dependentTasks as string[]),
+            agentId: n.agentId || (n.metadata?.agentId as string),
+            checkpointConfig: n.metadata?.checkpointConfig as Record<string, unknown> | undefined,
+          })),
         edges: ((workflow.connections || []) as Array<{ source?: string; target?: string; from?: string; to?: string }>).map(c => ({
           source: c.source || c.from || '',
           target: c.target || c.to || '',
@@ -942,6 +945,7 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
           request.user!.orgId,
           businessScopeId,
           request.user!.id,
+          { workflowId: id },
         );
 
         for await (const event of generator) {
@@ -969,128 +973,4 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
     }
   );
 
-  // =========================================================================
-  // POST /api/workflows/:id/execute-orchestrated
-  // Reliable node-by-node workflow execution with progress tracking.
-  // The orchestrator walks the DAG, executing one node at a time.
-  // Agent nodes → Claude session. Action nodes → direct execution.
-  // =========================================================================
-  fastify.post<{
-    Params: { id: string };
-    Body: {
-      businessScopeId: string;
-      variables?: Array<{ name: string; value: string; description?: string }>;
-    };
-  }>(
-    '/:id/execute-orchestrated',
-    {
-      preHandler: [authenticate],
-      schema: {
-        description: 'Execute workflow with reliable node-by-node orchestration (SSE stream)',
-        tags: ['Workflows'],
-        security: [{ bearerAuth: [] }],
-        params: {
-          type: 'object',
-          required: ['id'],
-          properties: { id: { type: 'string', format: 'uuid' } },
-        },
-        body: {
-          type: 'object',
-          required: ['businessScopeId'],
-          properties: {
-            businessScopeId: { type: 'string', format: 'uuid' },
-            variables: { type: 'array' },
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const { id } = request.params;
-      const { businessScopeId, variables } = request.body;
-
-      // Load workflow
-      const workflow = await workflowService.getWorkflowById(id, request.user!.orgId);
-      const nodes = workflow.nodes as Array<{
-        id: string; title?: string; label?: string; type: string;
-        prompt?: string; dependentTasks?: string[]; agentId?: string;
-        metadata?: Record<string, unknown>;
-      }>;
-      const connections = (workflow.connections || []) as Array<{
-        source?: string; target?: string; from?: string; to?: string;
-        label?: string; sourceHandle?: string;
-      }>;
-
-      // Build orchestrator plan
-      const plan: OrchestratorPlan = {
-        title: workflow.name,
-        nodes: nodes.map(n => ({
-          id: n.id,
-          title: n.title || n.label || n.id,
-          type: (n.type as OrchestratorPlan['nodes'][0]['type']) || 'agent',
-          prompt: n.prompt || (n.metadata?.prompt as string) || n.title || n.label || n.id,
-          agentId: n.agentId || (n.metadata?.agentId as string),
-          conditionExpression: n.metadata?.conditionExpression as string | undefined,
-          actionConfig: n.metadata?.actionConfig as Record<string, unknown> | undefined,
-          maxRetries: (n.metadata?.maxRetries as number) || undefined,
-        })),
-        edges: connections.map(c => ({
-          source: c.source || c.from || '',
-          target: c.target || c.to || '',
-          label: c.label,
-          sourceHandle: c.sourceHandle,
-        })),
-        variables: variables || [],
-      };
-
-      // Set SSE headers
-      reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-        'Access-Control-Allow-Origin': '*',
-      });
-
-      let clientDisconnected = false;
-      reply.raw.on('close', () => { clientDisconnected = true; });
-
-      const heartbeat = setInterval(() => {
-        if (!clientDisconnected) {
-          try { reply.raw.write(formatSSEEvent({ data: JSON.stringify({ type: 'heartbeat' }) })); }
-          catch { /* disconnected */ }
-        }
-      }, 15_000);
-
-      try {
-        const generator = workflowOrchestrator.execute(
-          plan,
-          request.user!.orgId,
-          businessScopeId,
-          request.user!.id,
-        );
-
-        for await (const event of generator) {
-          if (clientDisconnected) break;
-          reply.raw.write(formatSSEEvent({ data: JSON.stringify(event) }));
-        }
-      } catch (error) {
-        if (!clientDisconnected) {
-          reply.raw.write(formatSSEEvent({
-            data: JSON.stringify({
-              type: 'error',
-              message: error instanceof Error ? error.message : 'Orchestrated execution failed',
-            }),
-          }));
-        }
-      } finally {
-        clearInterval(heartbeat);
-        if (!clientDisconnected) {
-          try {
-            reply.raw.write(formatSSEEvent({ data: '[DONE]' }));
-            reply.raw.end();
-          } catch { /* disconnected */ }
-        }
-      }
-    }
-  );
 }

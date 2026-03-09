@@ -125,6 +125,8 @@ export interface WorkflowExecution {
   abortedByUser?: boolean;
   /** Node executions */
   nodeExecutions?: WorkflowNodeExecution[];
+  /** Error message (if failed) */
+  error?: string;
   /** Workflow app ID */
   appId?: string;
   /** Creation timestamp */

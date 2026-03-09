@@ -8,9 +8,11 @@ import {
   BookOpen,
   Settings,
   Users,
+  LogOut,
   X,
 } from 'lucide-react'
 import { useTranslation } from '@/i18n'
+import { useAuth } from '@/services/AuthContext'
 
 interface AdminMenuProps {
   isOpen: boolean
@@ -23,11 +25,13 @@ interface MenuItemConfig {
   labelKey: string
   path?: string
   action?: () => void
+  hidden?: boolean
 }
 
 export function AdminMenu({ isOpen, onClose }: AdminMenuProps) {
   const navigate = useNavigate()
   const { t, currentLanguage, setLanguage } = useTranslation()
+  const { logout } = useAuth()
   const menuRef = useRef<HTMLDivElement>(null)
 
   const toggleLanguage = () => {
@@ -46,36 +50,50 @@ export function AdminMenu({ isOpen, onClose }: AdminMenuProps) {
       icon: <Server className="w-4 h-4" />,
       labelKey: 'admin.mcpConfig',
       path: '/config/mcp',
+      hidden: true,
     },
     {
       id: 'skill',
       icon: <Sparkles className="w-4 h-4" />,
       labelKey: 'admin.skillConfig',
       path: '/config/skills',
+      hidden: true,
     },
     {
       id: 'restApi',
       icon: <Code className="w-4 h-4" />,
       labelKey: 'admin.restApiConfig',
       path: '/config/rest-api',
+      hidden: true,
     },
     {
       id: 'knowledge',
       icon: <BookOpen className="w-4 h-4" />,
       labelKey: 'admin.knowledgeBase',
       path: '/config/knowledge',
+      hidden: true,
     },
     {
       id: 'framework',
       icon: <Settings className="w-4 h-4" />,
       labelKey: 'admin.frameworkSettings',
       path: '/config/framework',
+      hidden: true,
     },
     {
       id: 'settings',
       icon: <Users className="w-4 h-4" />,
       labelKey: 'admin.settings',
       path: '/settings',
+    },
+    {
+      id: 'logout',
+      icon: <LogOut className="w-4 h-4" />,
+      labelKey: 'admin.logout',
+      action: () => {
+        onClose()
+        logout()
+      },
     },
   ]
 
@@ -142,21 +160,27 @@ export function AdminMenu({ isOpen, onClose }: AdminMenuProps) {
 
       {/* Menu Items */}
       <div className="py-2">
-        {menuItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => handleItemClick(item)}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors text-left"
-            aria-label={item.id === 'language' ? 'Language Sync' : undefined}
-          >
-            {item.icon}
-            <span className="text-sm">{t(item.labelKey)}</span>
-            {item.id === 'language' && (
-              <span className="ml-auto text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">
-                {currentLanguage === 'en' ? 'EN' : '中文'}
-              </span>
-            )}
-          </button>
+        {menuItems.filter((item) => !item.hidden).map((item) => (
+          <div key={item.id}>
+            {item.id === 'logout' && <div className="border-t border-gray-700 my-1" />}
+            <button
+              onClick={() => handleItemClick(item)}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left ${
+                item.id === 'logout'
+                  ? 'text-red-400 hover:bg-red-900/30 hover:text-red-300'
+                  : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+              }`}
+              aria-label={item.id === 'language' ? 'Language Sync' : undefined}
+            >
+              {item.icon}
+              <span className="text-sm">{t(item.labelKey)}</span>
+              {item.id === 'language' && (
+                <span className="ml-auto text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">
+                  {currentLanguage === 'en' ? 'EN' : '中文'}
+                </span>
+              )}
+            </button>
+          </div>
         ))}
       </div>
     </div>

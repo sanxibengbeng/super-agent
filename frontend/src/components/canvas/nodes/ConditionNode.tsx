@@ -129,33 +129,25 @@ export const ConditionNode = memo(function ConditionNode(props: NodeProps) {
       </div>
 
       {/* Source Handles (bottom - true/false branches) */}
-      <div className="absolute -bottom-2 left-0 right-0 flex justify-around px-8">
-        <div className="relative">
-          <Handle
-            type="source"
-            position={Position.Bottom}
-            id="true"
-            className="!w-3 !h-3 !bg-green-500 !border-2 !border-gray-700 hover:!bg-green-400 transition-colors !relative !transform-none !left-0 !top-0"
-          />
-          <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] text-green-400">
-            Yes
-          </span>
-        </div>
-        <div className="relative">
-          <Handle
-            type="source"
-            position={Position.Bottom}
-            id="false"
-            className="!w-3 !h-3 !bg-red-500 !border-2 !border-gray-700 hover:!bg-red-400 transition-colors !relative !transform-none !left-0 !top-0"
-          />
-          <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] text-red-400">
-            No
-          </span>
-        </div>
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="true"
+        className="!w-3 !h-3 !bg-green-500 !border-2 !border-gray-700 hover:!bg-green-400 transition-colors"
+        style={{ left: '35%' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="false"
+        className="!w-3 !h-3 !bg-red-500 !border-2 !border-gray-700 hover:!bg-red-400 transition-colors"
+        style={{ left: '65%' }}
+      />
+      {/* Branch labels */}
+      <div className="flex justify-around px-8 pb-0.5 pointer-events-none">
+        <span className="text-[10px] text-green-400">Yes</span>
+        <span className="text-[10px] text-red-400">No</span>
       </div>
-      
-      {/* Extra padding for branch labels */}
-      <div className="h-4" />
     </div>
   );
 });

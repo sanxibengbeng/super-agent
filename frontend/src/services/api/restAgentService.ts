@@ -67,7 +67,7 @@ function mapAgentToApiRequest(agent: Partial<Agent>): Record<string, unknown> {
   if (agent.scope !== undefined) request.scope = agent.scope;
   if (agent.systemPrompt !== undefined) request.system_prompt = agent.systemPrompt;
   if (agent.modelConfig !== undefined) request.model_config = agent.modelConfig;
-  if (agent.businessScopeId !== undefined) request.business_scope_id = agent.businessScopeId;
+  if ('businessScopeId' in agent) request.business_scope_id = agent.businessScopeId || null;
   
   return request;
 }

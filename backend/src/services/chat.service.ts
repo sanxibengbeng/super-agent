@@ -35,6 +35,7 @@ import {
   type ScopeForWorkspace,
   type McpServerForWorkspace,
   type PluginForWorkspace,
+  type DocGroupForWorkspace,
 } from './workspace-manager.js';
 import {
   businessScopeService as defaultBusinessScopeService,
@@ -52,6 +53,7 @@ import {
 } from './langfuse.service.js';
 import { processConversationEvent, flushActiveSubAgents, type ConversationHookContext } from './conversation-hooks.js';
 import { sanitizeEvent } from './output-sanitizer.js';
+import { agentCoreService } from './agentcore.service.js';
 
 export type { SSEEvent };
 export { formatSSEEvent };
@@ -444,21 +446,39 @@ export class ChatService {
     let currentSpeaker: { displayName: string; avatar: string | null } | null = null;
 
     try {
-      const conversationGenerator = this.claudeAgentService.runConversation(
-        {
-          agentId: agentConfig.id,
-          sessionId: options.sessionId,
-          claudeSessionId,
-          message: options.message,
-          organizationId,
-          userId,
-          workspacePath,
-        },
-        agentConfig,
-        skills,
-        pluginPaths.length > 0 ? pluginPaths : undefined,
-        Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      );
+      // Choose execution backend: AgentCore (container-isolated) or local subprocess
+      const useAgentCore = config.agentcore.enabled && useScopeFlow && options.businessScopeId;
+
+      const conversationGenerator = useAgentCore
+        ? agentCoreService.runConversation(
+            {
+              scopeId: options.businessScopeId!,
+              organizationId,
+              userId,
+              agentId: agentConfig.id,
+              sessionId: options.sessionId,
+              claudeSessionId,
+              message: options.message,
+              systemPrompt: agentConfig.systemPrompt ?? undefined,
+              mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+            },
+            agentConfig,
+          )
+        : this.claudeAgentService.runConversation(
+            {
+              agentId: agentConfig.id,
+              sessionId: options.sessionId,
+              claudeSessionId,
+              message: options.message,
+              organizationId,
+              userId,
+              workspacePath,
+            },
+            agentConfig,
+            skills,
+            pluginPaths.length > 0 ? pluginPaths : undefined,
+            Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+          );
 
       const timeoutMs = config.claude.responseTimeoutMs;
 
@@ -663,6 +683,16 @@ export class ChatService {
     // Load scope-level plugins (Claude Code plugins to clone into workspace)
     const scopePlugins = await this.loadScopePlugins(scopeId);
 
+    // Load document groups assigned to this scope
+    const { documentGroupRepository: docGroupRepo } = await import('../repositories/document-group.repository.js');
+    const rawDocGroups = await docGroupRepo.getGroupsForScope(scopeId);
+    const docGroups = rawDocGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      storagePath: g.storage_path,
+      fileCount: g.files?.length ?? 0,
+    }));
+
     // Build scope data for workspace manager
     const scopeForWorkspace: ScopeForWorkspace = {
       id: scope.id,
@@ -711,6 +741,7 @@ export class ChatService {
       skills,
       mcpServers: scopeMcpServers,
       plugins: scopePlugins,
+      documentGroups: docGroups,
     };
 
     // Get or create session

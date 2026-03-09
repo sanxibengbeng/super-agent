@@ -822,6 +822,10 @@ export const translations: TranslationData = {
     en: 'Members & Permissions',
     cn: '成员与权限'
   },
+  'admin.logout': {
+    en: 'Log Out',
+    cn: '退出登录'
+  },
 
   // Common Actions
   'common.save': {

@@ -20,6 +20,8 @@ import {
   Webhook,
   Calendar,
   Sparkles,
+  PanelLeftOpen,
+  PanelLeftClose,
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useWorkflows, useWorkflowExecution } from '@/services';
@@ -38,11 +40,13 @@ import type { Workflow as WorkflowType, WorkflowImportResult } from '@/types';
 import type { WorkflowVariable } from '@/types/workflow-plan';
 import { createCanvasNode } from '@/lib/canvas/nodes';
 import { getAuthToken } from '@/services/api/restClient';
+import { ExecutionDetailModal } from '@/components/ExecutionDetailModal';
+import { RunWorkflowModal } from '@/components/RunWorkflowModal';
 
 // Default colors for business scope tabs
 const SCOPE_COLORS = [
   'bg-blue-600',
-  'bg-green-600',
+  'bg-emerald-700',
   'bg-purple-600',
   'bg-orange-600',
   'bg-pink-600',
@@ -78,6 +82,8 @@ function workflowToCanvasData(workflow: WorkflowType): CanvasData {
     id: conn.id,
     source: conn.from,
     target: conn.to,
+    sourceHandle: conn.sourceHandle,
+    targetHandle: conn.targetHandle,
     type: 'custom',
     animated: conn.animated,
   }));
@@ -93,6 +99,13 @@ function mapLegacyNodeType(type: string): CanvasNodeType {
     agent: 'agent',
     human: 'humanApproval',
     action: 'action',
+    condition: 'condition',
+    document: 'document',
+    codeArtifact: 'codeArtifact',
+    resource: 'resource',
+    loop: 'loop',
+    parallel: 'parallel',
+    start: 'start',
     end: 'end',
   };
   return mapping[type] || 'action';
@@ -119,6 +132,8 @@ function canvasDataToWorkflow(
     id: edge.id,
     from: edge.source,
     to: edge.target,
+    sourceHandle: edge.sourceHandle,
+    targetHandle: edge.targetHandle,
     animated: edge.animated,
   }));
 
@@ -133,12 +148,12 @@ function mapCanvasNodeTypeToLegacy(type: CanvasNodeType): import('@/types').Node
     action: 'action',
     end: 'end',
     trigger: 'trigger',
-    condition: 'action',
-    document: 'action',
-    codeArtifact: 'action',
-    resource: 'action',
-    loop: 'action',
-    parallel: 'action',
+    condition: 'condition',
+    document: 'document',
+    codeArtifact: 'codeArtifact',
+    resource: 'resource',
+    loop: 'loop',
+    parallel: 'parallel',
     group: 'action',
     memo: 'action',
   };
@@ -200,9 +215,11 @@ export function WorkflowEditor() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
 
   const [showWebhookPanel, setShowWebhookPanel] = useState(false);
   const [showSchedulePanel, setShowSchedulePanel] = useState(false);
+  const [workflowListCollapsed, setWorkflowListCollapsed] = useState(false);
 
   const [showCopilotPanel, setShowCopilotPanel] = useState(true);
   const [copilotSuccess, setCopilotSuccess] = useState<string | null>(null);
@@ -394,9 +411,29 @@ export function WorkflowEditor() {
   // Handle run workflow — stream V2 execution into copilot chat
   const [isRunningV2, setIsRunningV2] = useState(false);
   const [v2NodeStates, setV2NodeStates] = useState<Map<string, NodeExecutionState>>(new Map());
+  const [showRunModal, setShowRunModal] = useState(false);
   
-  const handleRunWorkflow = useCallback(async () => {
+  // Get input variables from start node
+  const getStartNodeVariables = useCallback(() => {
+    const startNode = canvasData.nodes.find(n => n.type === 'start');
+    const meta = startNode?.data?.metadata as { inputVariables?: Array<Record<string, unknown>> } | undefined;
+    return (meta?.inputVariables || []) as import('@/types/canvas/metadata').WorkflowVariableDefinition[];
+  }, [canvasData]);
+
+  const handleRunClick = useCallback(() => {
     if (!selectedWorkflow || isRunningV2 || !activeScopeId) return;
+    const vars = getStartNodeVariables();
+    if (vars.length > 0) {
+      setShowRunModal(true);
+    } else {
+      // No variables — run immediately
+      executeWorkflow([]);
+    }
+  }, [selectedWorkflow, isRunningV2, activeScopeId, getStartNodeVariables]);
+
+  const executeWorkflow = useCallback(async (runtimeVariables: import('@/types/canvas/metadata').WorkflowVariableDefinition[]) => {
+    if (!selectedWorkflow || isRunningV2 || !activeScopeId) return;
+    setShowRunModal(false);
     
     // Open copilot panel and start execution message
     setShowCopilotPanel(true);
@@ -417,16 +454,13 @@ export function WorkflowEditor() {
         },
         body: JSON.stringify({
           businessScopeId: activeScopeId,
-          variables: (() => {
-            const startNode = canvasData.nodes.find(n => n.type === 'start');
-            const meta = startNode?.data?.metadata as { inputVariables?: Array<{ variableId: string; name: string; value: unknown[]; description?: string }> } | undefined;
-            return (meta?.inputVariables || []).map(v => ({
-              variableId: v.variableId,
-              name: v.name,
-              value: Array.isArray(v.value) ? v.value.map(val => typeof val === 'string' ? val : (val as { text?: string })?.text || '').join(', ') : '',
-              description: v.description,
-            }));
-          })(),
+          variables: runtimeVariables.map(v => ({
+            variableId: v.variableId,
+            name: v.name,
+            value: Array.isArray(v.value) ? v.value.map(val => typeof val === 'string' ? val : (val as { text?: string })?.text || '').join(', ') : '',
+            description: v.description,
+            required: v.required ?? false,
+          })),
         }),
       });
 
@@ -516,8 +550,13 @@ export function WorkflowEditor() {
       copilotRef.current?.finishExecution(msgId, false, err instanceof Error ? err.message : 'Execution failed');
     } finally {
       setIsRunningV2(false);
+      // Refresh execution history after run completes
+      // Delay slightly to ensure the backend has finished writing the final status
+      if (selectedWorkflow?.id) {
+        setTimeout(() => loadHistory(selectedWorkflow.id), 1000);
+      }
     }
-  }, [selectedWorkflow, isRunningV2, activeScopeId, canvasData]);
+  }, [selectedWorkflow, isRunningV2, activeScopeId]);
 
   // Handle abort workflow
   const handleAbortWorkflow = useCallback(async () => {
@@ -664,44 +703,65 @@ export function WorkflowEditor() {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Workflow List Sidebar */}
-        <div className="w-64 border-r border-gray-800 p-4 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-400">Workflows</h3>
+        {workflowListCollapsed ? (
+          <div className="flex flex-col items-center py-3 px-1 border-r border-gray-800 bg-gray-900/50">
             <button
-              onClick={() => setShowCreateModal(true)}
-              className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-blue-400 transition-colors"
-              title={t('workflow.create')}
+              onClick={() => setWorkflowListCollapsed(false)}
+              className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+              title="Expand workflow list"
             >
-              <Plus className="w-4 h-4" />
+              <PanelLeftOpen className="w-4 h-4" />
             </button>
           </div>
-          <div className="space-y-1">
-            {workflowNames.length > 0 ? (
-              workflowNames.map((name: string) => {
-                const isSelected = selectedWorkflow?.name === name;
-                return (
-                  <button
-                    key={name}
-                    onClick={() => handleWorkflowNameSelect(name)}
-                    className={`
-                      w-full text-left px-3 py-2 rounded-md transition-all text-sm
-                      ${isSelected 
-                        ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' 
-                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                      }
-                    `}
-                  >
-                    {name}
-                  </button>
-                );
-              })
-            ) : (
-              <p className="text-sm text-gray-500 px-3 py-2">
-                No workflows in this scope
-              </p>
-            )}
+        ) : (
+          <div className="w-48 border-r border-gray-800 p-4 overflow-y-auto flex-shrink-0">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-gray-400">Workflows</h3>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-blue-400 transition-colors"
+                  title={t('workflow.create')}
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setWorkflowListCollapsed(true)}
+                  className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-white transition-colors"
+                  title="Collapse panel"
+                >
+                  <PanelLeftClose className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {workflowNames.length > 0 ? (
+                workflowNames.map((name: string) => {
+                  const isSelected = selectedWorkflow?.name === name;
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => handleWorkflowNameSelect(name)}
+                      className={`
+                        w-full text-left px-3 py-2 rounded-md transition-all text-sm
+                        ${isSelected 
+                          ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' 
+                          : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                        }
+                      `}
+                    >
+                      {name}
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-gray-500 px-3 py-2">
+                  No workflows in this scope
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Canvas Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -839,9 +899,9 @@ export function WorkflowEditor() {
                     </button>
                   ) : (
                     <button
-                      onClick={handleRunWorkflow}
+                      onClick={handleRunClick}
                       disabled={canvasData.nodes.length === 0}
-                      className="flex items-center gap-2 px-4 py-1.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md transition-colors text-sm font-medium"
+                      className="flex items-center gap-2 px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md transition-colors text-sm font-medium"
                     >
                       <Play className="w-4 h-4" />
                       Run
@@ -914,15 +974,16 @@ export function WorkflowEditor() {
                         history.map((exec) => (
                           <div
                             key={exec.executionId}
-                            className={`p-3 rounded-lg border ${
+                            className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                               exec.status === 'finish'
-                                ? 'border-green-500/30 bg-green-500/10'
+                                ? 'border-green-500/30 bg-green-500/10 hover:bg-green-500/15'
                                 : exec.status === 'failed'
-                                ? 'border-red-500/30 bg-red-500/10'
+                                ? 'border-red-500/30 bg-red-500/10 hover:bg-red-500/15'
                                 : exec.status === 'executing'
-                                ? 'border-blue-500/30 bg-blue-500/10'
-                                : 'border-gray-700 bg-gray-800/50'
+                                ? 'border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/15'
+                                : 'border-gray-700 bg-gray-800/50 hover:bg-gray-800/70'
                             }`}
+                            onClick={() => setSelectedExecutionId(exec.executionId)}
                           >
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-xs font-medium text-white">
@@ -945,7 +1006,7 @@ export function WorkflowEditor() {
                             </div>
                             {exec.nodeExecutions && (
                               <div className="mt-2 text-xs text-gray-500">
-                                {exec.nodeExecutions.filter(n => n.status === 'finish').length}/
+                                {exec.nodeExecutions.filter(n => n.status === 'finish' || n.status === 'completed').length}/
                                 {exec.nodeExecutions.length} nodes completed
                               </div>
                             )}
@@ -1042,6 +1103,23 @@ export function WorkflowEditor() {
           workflowName={selectedWorkflow.name}
           onClose={() => setShowDeleteConfirm(false)}
           onConfirm={handleDeleteWorkflow}
+        />
+      )}
+
+      {selectedExecutionId && (
+        <ExecutionDetailModal
+          executionId={selectedExecutionId}
+          onClose={() => setSelectedExecutionId(null)}
+        />
+      )}
+
+      {showRunModal && selectedWorkflow && (
+        <RunWorkflowModal
+          workflowName={selectedWorkflow.name}
+          workflowId={selectedWorkflow.id}
+          variables={getStartNodeVariables()}
+          onRun={executeWorkflow}
+          onClose={() => setShowRunModal(false)}
         />
       )}
     </div>

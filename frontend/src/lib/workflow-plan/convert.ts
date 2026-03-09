@@ -175,6 +175,15 @@ export function workflowPlanToCanvasData(plan: WorkflowPlan): CanvasData {
   }
 
   // Create edges based on dependencies
+  // For condition nodes, we need to assign sourceHandle: 'true' and 'false'
+  // Track how many edges have been created from each condition node
+  const conditionHandleIndex = new Map<string, number>();
+  
+  // Build a set of condition task IDs for quick lookup
+  const conditionTaskIds = new Set(
+    plan.tasks.filter(t => t.type === 'condition').map(t => t.id)
+  );
+
   for (const task of plan.tasks) {
     const targetNodeId = taskIdToNodeId.get(task.id);
     if (!targetNodeId) continue;
@@ -183,10 +192,19 @@ export function workflowPlanToCanvasData(plan: WorkflowPlan): CanvasData {
       const sourceNodeId = taskIdToNodeId.get(depTaskId);
       if (!sourceNodeId) continue;
       
+      // Determine sourceHandle for condition nodes
+      let sourceHandle: string | undefined;
+      if (conditionTaskIds.has(depTaskId)) {
+        const idx = conditionHandleIndex.get(depTaskId) ?? 0;
+        sourceHandle = idx === 0 ? 'true' : 'false';
+        conditionHandleIndex.set(depTaskId, idx + 1);
+      }
+
       const edge: CanvasEdge = {
-        id: `edge_${sourceNodeId}_${targetNodeId}`,
+        id: `edge_${sourceNodeId}_${sourceHandle ?? 'default'}_${targetNodeId}`,
         source: sourceNodeId,
         target: targetNodeId,
+        sourceHandle,
         type: 'custom',
       };
       

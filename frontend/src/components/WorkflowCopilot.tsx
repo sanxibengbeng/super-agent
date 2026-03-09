@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useImperativeHandle, forwardRef } from 'react'
 import { Send, Loader2, User, Bot, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import {
   workflowPlanToCanvasData,
   canvasDataToWorkflowPlan,
@@ -341,7 +342,22 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
       if (event.type === 'log' && event.content) {
         appendStep(msgId, { type: 'execution_log', content: String(event.content) })
       } else if (event.type === 'step_start' && event.taskId) {
-        appendStep(msgId, { type: 'execution_node', taskId: event.taskId, taskTitle: event.taskTitle, status: 'started', message: event.message })
+        // Only add a new step if this taskId doesn't already have one
+        setMessages(prev => prev.map(m => {
+          if (m.id !== msgId) return m
+          const existing = m.steps.find(s => s.type === 'execution_node' && (s as ExecutionNodeStep).taskId === event.taskId)
+          if (existing) {
+            // Already have this node — update it back to started (re-execution)
+            const steps = m.steps.map(s =>
+              s.type === 'execution_node' && (s as ExecutionNodeStep).taskId === event.taskId
+                ? { ...s, status: 'started' as const, message: event.message }
+                : s
+            )
+            return { ...m, steps }
+          }
+          // New node — append
+          return { ...m, steps: [...m.steps, { type: 'execution_node' as const, taskId: event.taskId, taskTitle: event.taskTitle, status: 'started' as const, message: event.message }] }
+        }))
       } else if (event.type === 'step_complete' && event.taskId) {
         // Update the existing started step to completed instead of adding a new one
         setMessages(prev => prev.map(m => {
@@ -441,8 +457,34 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
           const newCanvasData = workflowPlanToCanvasData(plan)
           onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
 
+          // Skill gap detection — check if required integrations have matching skills
+          const allSkillNames = new Set(
+            availableAgents.flatMap(a => a.tools?.map(t => t.name.toLowerCase()) ?? [])
+          )
+          const missingIntegrations: Array<{ task: string; integration: string }> = []
+          for (const task of plan.tasks) {
+            for (const integration of task.requiredIntegrations ?? []) {
+              const integrationLower = integration.toLowerCase()
+              const hasMatch = [...allSkillNames].some(
+                s => s.includes(integrationLower) || integrationLower.includes(s)
+              )
+              if (!hasMatch) {
+                missingIntegrations.push({ task: task.title, integration })
+              }
+            }
+          }
+
+          let statusMessage = `Generated workflow "${plan.title}" with ${plan.tasks.length} tasks.`
+          if (missingIntegrations.length > 0) {
+            statusMessage += '\n\n⚠️ **Missing integrations detected:**\n'
+            for (const { task, integration } of missingIntegrations) {
+              statusMessage += `- "${task}" requires **${integration}** — no matching skill found in this scope\n`
+            }
+            statusMessage += '\nInstall the required skills before running this workflow.'
+          }
+
           updateMessage(assistantId, {
-            content: `Generated workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
+            content: statusMessage,
             status: 'done',
           })
         } catch {
@@ -578,8 +620,15 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
                   <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
                 )}
                 {msg.status === 'streaming' && msg.content && (
-                  <div>
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-gray-400 max-h-48 overflow-y-auto">{msg.content}</pre>
+                  <div className="prose prose-invert prose-sm max-w-none max-h-64 overflow-y-auto
+                    prose-headings:text-gray-200 prose-headings:text-sm prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+                    prose-p:text-gray-300 prose-p:text-xs prose-p:my-1 prose-p:leading-relaxed
+                    prose-li:text-gray-300 prose-li:text-xs prose-li:my-0
+                    prose-strong:text-gray-200
+                    prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+                    prose-pre:bg-gray-900/50 prose-pre:rounded-lg prose-pre:p-2 prose-pre:text-[11px]
+                    prose-hr:border-gray-700 prose-hr:my-2">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
                     <Loader2 className="w-3 h-3 animate-spin text-purple-400 mt-1" />
                   </div>
                 )}
@@ -589,7 +638,16 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
                 {msg.status === 'done' && (
                   <div className="flex items-start gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mt-0.5 flex-shrink-0" />
-                    <span>{msg.content}</span>
+                    <div className="prose prose-invert prose-sm max-w-none
+                      prose-headings:text-green-200 prose-headings:text-sm prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+                      prose-p:text-green-300 prose-p:text-xs prose-p:my-1 prose-p:leading-relaxed
+                      prose-li:text-green-300 prose-li:text-xs prose-li:my-0
+                      prose-strong:text-green-200
+                      prose-code:text-green-200 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+                      prose-pre:bg-gray-900/50 prose-pre:rounded-lg prose-pre:p-2 prose-pre:text-[11px]
+                      prose-hr:border-gray-700 prose-hr:my-2">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
                   </div>
                 )}
                 {msg.status === 'error' && (
@@ -598,7 +656,15 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
                     <span>{msg.content}</span>
                   </div>
                 )}
-                {!msg.status && msg.content}
+                {!msg.status && (
+                  <div className="prose prose-invert prose-sm max-w-none
+                    prose-p:text-gray-300 prose-p:text-xs prose-p:my-1
+                    prose-li:text-gray-300 prose-li:text-xs
+                    prose-strong:text-gray-200
+                    prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
+                )}
               </div>
               {msg.role === 'user' && (
                 <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center mt-0.5">

@@ -11,6 +11,7 @@ export interface UseBusinessScopesState {
 export interface UseBusinessScopesReturn extends UseBusinessScopesState {
   refetch: () => Promise<void>
   getBusinessScopeById: (id: string) => Promise<BusinessScope | null>
+  deleteBusinessScope: (id: string) => Promise<boolean>
   clearError: () => void
 }
 
@@ -48,6 +49,21 @@ export function useBusinessScopes(): UseBusinessScopesReturn {
     }
   }, [])
 
+  const deleteBusinessScope = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      await BusinessScopeService.deleteBusinessScope(id)
+      setState(prev => ({
+        ...prev,
+        businessScopes: prev.businessScopes.filter(s => s.id !== id),
+      }))
+      return true
+    } catch (err) {
+      const message = err instanceof BusinessScopeServiceError ? err.message : 'Failed to delete business scope'
+      setState(prev => ({ ...prev, error: message }))
+      return false
+    }
+  }, [])
+
   const clearError = useCallback(() => {
     setState(prev => ({ ...prev, error: null }))
   }, [])
@@ -56,6 +72,7 @@ export function useBusinessScopes(): UseBusinessScopesReturn {
     ...state,
     refetch,
     getBusinessScopeById,
+    deleteBusinessScope,
     clearError,
   }
 }

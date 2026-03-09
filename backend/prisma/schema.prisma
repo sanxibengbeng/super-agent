@@ -48,7 +48,11 @@ model organizations {
   scope_memories             scope_memories[]
   scope_briefings            scope_briefings[]
   app_data                   app_data[]
+  execution_checkpoints      execution_checkpoints[]
   scope_memberships          scope_memberships[]
+  document_groups            document_groups[]
+  document_group_files       document_group_files[]
+  scope_document_groups      scope_document_groups[]
   @@index([slug])
   @@index([plan_type])
   @@index([created_at(sort: Desc)])
@@ -58,14 +62,16 @@ model organizations {
 // Memberships Table - matches Supabase migration 20250108000001
 // ============================================================================
 model memberships {
-  id              String   @id @default(uuid()) @db.Uuid
-  organization_id String   @db.Uuid
-  user_id         String   @db.Uuid
-  role            String   @default("member")
-  status          String   @default("active")
-  invited_email   String?
-  created_at      DateTime @default(now()) @db.Timestamptz
-  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+  id                String    @id @default(uuid()) @db.Uuid
+  organization_id   String    @db.Uuid
+  user_id           String    @db.Uuid
+  role              String    @default("member")
+  status            String    @default("active")
+  invited_email     String?
+  invite_token      String?   @unique
+  invite_expires_at DateTime? @db.Timestamptz
+  created_at        DateTime  @default(now()) @db.Timestamptz
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz
 
   organization organizations @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
@@ -86,6 +92,7 @@ model profiles {
   username               String?  @unique
   full_name              String?
   avatar_url             String?
+  password_hash          String?
   active_organization_id String?  @db.Uuid
   created_at             DateTime @default(now()) @db.Timestamptz
   updated_at             DateTime @default(now()) @updatedAt @db.Timestamptz
@@ -98,16 +105,17 @@ model profiles {
 // Business Scopes Table - matches Supabase migration 20250108000003
 // ============================================================================
 model business_scopes {
-  id              String   @id @default(uuid()) @db.Uuid
-  organization_id String   @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
   name            String
   description     String?
   icon            String?
   color           String?
-  is_default      Boolean  @default(false)
-  config_version  Int      @default(1)
-  created_at      DateTime @default(now()) @db.Timestamptz
-  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+  is_default      Boolean   @default(false)
+  config_version  Int       @default(1)
+  created_at      DateTime  @default(now()) @db.Timestamptz
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz
+  deleted_at      DateTime? @db.Timestamptz
 
   visibility      String   @default("open")
 
@@ -122,12 +130,14 @@ model business_scopes {
   scope_memories      scope_memories[]
   scope_briefings     scope_briefings[]
   scope_memberships   scope_memberships[]
+  scope_document_groups scope_document_groups[]
 
   @@unique([organization_id, name], name: "unique_scope_name_per_org")
   @@index([organization_id])
   @@index([name])
   @@index([is_default])
   @@index([organization_id, name])
+  @@index([deleted_at])
 }
 
 // ============================================================================
@@ -465,6 +475,9 @@ model workflow_executions {
   context         Json      @default("{}")
   trigger_type    String    @default("manual") @db.VarChar(50)
   trigger_id      String?   @db.Uuid
+  paused_at_node  String?
+  current_segment Int       @default(0)
+  segment_plan    Json      @default("[]")
   error_message   String?
   error_stack     String?
   started_at      DateTime  @default(now()) @db.Timestamptz
@@ -475,6 +488,7 @@ model workflow_executions {
   workflow                   workflows                    @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
   organization               organizations                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   node_executions            node_executions[]
+  execution_checkpoints      execution_checkpoints[]
   webhook_call_records       webhook_call_records[]
   schedule_execution_records schedule_execution_records[]
 
@@ -520,6 +534,34 @@ model node_executions {
   @@index([created_at(sort: Desc)])
   @@index([execution_id, status])
   @@index([execution_id, node_id])
+}
+
+// ============================================================================
+// Execution Checkpoints Table - async pause/resume for workflow nodes
+// ============================================================================
+model execution_checkpoints {
+  id                 String    @id @default(uuid()) @db.Uuid
+  execution_id       String    @db.Uuid
+  node_id            String
+  node_title         String?
+  checkpoint_type    String
+  status             String    @default("waiting")
+  config             Json      @default("{}")
+  input_context      Json      @default("{}")
+  result             Json?
+  created_at         DateTime  @default(now()) @db.Timestamptz
+  resolved_at        DateTime? @db.Timestamptz
+  expires_at         DateTime? @db.Timestamptz
+  resolved_by        String?   @db.Uuid
+  resolved_by_source String?
+  organization_id    String    @db.Uuid
+
+  execution    workflow_executions @relation(fields: [execution_id], references: [id], onDelete: Cascade)
+  organization organizations       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([execution_id])
+  @@index([status])
+  @@index([organization_id])
 }
 
 // ============================================================================
@@ -985,4 +1027,65 @@ model app_data {
   @@index([app_id, collection])
   @@index([org_id])
   @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Document Groups — logical collections of reference documents
+// ============================================================================
+model document_groups {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  name            String
+  description     String?
+  storage_path    String
+  created_at      DateTime @default(now()) @db.Timestamptz
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization          organizations           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  files                 document_group_files[]
+  scope_document_groups scope_document_groups[]
+
+  @@unique([organization_id, name], name: "unique_doc_group_name_per_org")
+  @@index([organization_id])
+}
+
+// ============================================================================
+// Document Group Files — individual files within a document group
+// ============================================================================
+model document_group_files {
+  id                String   @id @default(uuid()) @db.Uuid
+  document_group_id String   @db.Uuid
+  organization_id   String   @db.Uuid
+  original_filename String
+  stored_filename   String
+  file_size         BigInt   @default(0)
+  mime_type         String   @default("application/octet-stream")
+  uploaded_by       String?  @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz
+
+  document_group document_groups @relation(fields: [document_group_id], references: [id], onDelete: Cascade)
+  organization   organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([document_group_id])
+  @@index([organization_id])
+}
+
+// ============================================================================
+// Scope ↔ Document Group assignments
+// ============================================================================
+model scope_document_groups {
+  id                String   @id @default(uuid()) @db.Uuid
+  organization_id   String   @db.Uuid
+  business_scope_id String   @db.Uuid
+  document_group_id String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz
+
+  organization   organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
+  document_group document_groups @relation(fields: [document_group_id], references: [id], onDelete: Cascade)
+
+  @@unique([business_scope_id, document_group_id])
+  @@index([organization_id])
+  @@index([business_scope_id])
+  @@index([document_group_id])
 }

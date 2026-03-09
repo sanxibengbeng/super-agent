@@ -237,8 +237,28 @@ export class OrganizationService {
       filters as Partial<MembershipEntity>
     );
 
+    // Enrich with profile data (name, email)
+    const { prisma } = await import('../config/database.js');
+    const userIds = members.map((m) => m.user_id).filter(Boolean);
+    const profiles = userIds.length
+      ? await prisma.profiles.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, username: true, full_name: true },
+        })
+      : [];
+    const profileMap = new Map(profiles.map((p) => [p.id, p]));
+
+    const enrichedMembers = members.map((m) => {
+      const profile = profileMap.get(m.user_id);
+      return {
+        ...m,
+        email: profile?.username ?? m.invited_email ?? null,
+        name: profile?.full_name ?? null,
+      };
+    });
+
     return {
-      data: members,
+      data: enrichedMembers,
       pagination: {
         page,
         limit,

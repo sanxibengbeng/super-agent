@@ -6,6 +6,8 @@
  */
 
 import { ServiceError, httpStatusToErrorCode } from '@/utils/errorHandling';
+import { getValidToken } from '@/services/auth';
+import { clearLocalToken } from '@/services/auth';
 
 // API base URL - configurable via environment variable
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
@@ -27,10 +29,14 @@ export function setAuthToken(token: string | null): void {
 }
 
 /**
- * Gets the current authentication token (Cognito id_token)
+ * Gets the current authentication token (local JWT or Cognito id_token)
  */
 export function getAuthToken(): string | null {
-  // Check expiry
+  // Check local auth token first
+  const localToken = localStorage.getItem('local_auth_token');
+  if (localToken) return localToken;
+
+  // Fall back to Cognito token with expiry check
   const expiresAt = localStorage.getItem('cognito_expires_at');
   if (expiresAt && Date.now() > Number(expiresAt)) {
     clearAuthToken();
@@ -43,11 +49,11 @@ export function getAuthToken(): string | null {
  * Clears the authentication token
  */
 export function clearAuthToken(): void {
+  localStorage.removeItem('local_auth_token');
   localStorage.removeItem('cognito_id_token');
   localStorage.removeItem('cognito_access_token');
   localStorage.removeItem('cognito_refresh_token');
   localStorage.removeItem('cognito_expires_at');
-  // Also clear legacy key
   localStorage.removeItem('auth_token');
 }
 
@@ -96,7 +102,7 @@ async function request<T>(
 
   // Add auth token if available and not skipped
   if (!options.skipAuth) {
-    const token = getAuthToken();
+    const token = await getValidToken();
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -134,6 +140,13 @@ async function request<T>(
     const data = await response.json();
 
     if (!response.ok) {
+      // Auto-redirect to login on 401 (expired/invalid token)
+      if (response.status === 401) {
+        clearLocalToken();
+        clearAuthToken();
+        window.location.href = '/login';
+        throw mapApiError(response.status, data);
+      }
       throw mapApiError(response.status, data);
     }
 

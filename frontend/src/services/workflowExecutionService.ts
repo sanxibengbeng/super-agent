@@ -124,8 +124,8 @@ export const RestWorkflowExecutionService = {
     const baseUrl = this.getBaseUrl();
     const url = `${baseUrl}/api${endpoint}`;
 
-    // Get auth token from localStorage (Cognito id_token)
-    const token = localStorage.getItem('cognito_id_token');
+    // Get auth token from localStorage
+    const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token');
 
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -297,7 +297,9 @@ export const RestWorkflowExecutionService = {
         nodeId: ne.node_id,
         nodeType: ne.node_type,
         status: ne.status as ActionStatus,
+        errorMessage: (ne as Record<string, unknown>).error_message as string | undefined,
       })),
+      error: exec.error_message,
       createdAt: exec.created_at,
       updatedAt: exec.completed_at || exec.created_at,
     }));

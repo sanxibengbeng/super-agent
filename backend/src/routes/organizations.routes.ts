@@ -7,6 +7,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { organizationService } from '../services/organization.service.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
+import { config } from '../config/index.js';
 import {
   createOrganizationSchema,
   updateOrganizationSchema,
@@ -497,6 +498,40 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
     async (request: FastifyRequest<InviteMemberRequest>, reply: FastifyReply) => {
       const data = validateSchema(inviteMemberSchema, request.body);
       const membership = await organizationService.inviteMember(data, request.user!.orgId);
+
+      // Generate invite token and send email
+      const crypto = await import('crypto');
+      const { prisma } = await import('../config/database.js');
+      const { sendInviteEmail, isEmailConfigured } = await import('../services/email.service.js');
+
+      const inviteToken = crypto.randomBytes(32).toString('hex');
+      const inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+      await prisma.memberships.update({
+        where: { id: membership.id },
+        data: { invite_token: inviteToken, invite_expires_at: inviteExpiresAt },
+      });
+
+      // Send email if SMTP is configured
+      if (isEmailConfigured()) {
+        try {
+          const org = await prisma.organizations.findUnique({ where: { id: request.user!.orgId } });
+          const inviterProfile = await prisma.profiles.findUnique({ where: { id: request.user!.id } });
+          await sendInviteEmail({
+            to: data.invited_email,
+            inviterName: inviterProfile?.full_name || request.user!.email || 'A team member',
+            organizationName: org?.name || 'your organization',
+            inviteToken,
+            role: data.role || 'member',
+          });
+        } catch (emailErr) {
+          request.log.error({ err: emailErr }, 'Failed to send invite email');
+          // Don't fail the invite — the membership is created, admin can share the link manually
+        }
+      } else {
+        request.log.warn('SMTP not configured — invite created but no email sent');
+      }
+
       return reply.status(201).send(membership);
     }
   );
@@ -739,15 +774,16 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
 
   /**
    * POST /api/organizations/members/provision
-   * Admin-only: create a Cognito user with a generated password (no email required).
-   * The user is immediately verified and can sign in.
+   * Admin-only: create a user with credentials.
+   * In cognito mode, creates via Cognito Admin API.
+   * In local mode, creates directly in DB with password hash.
    */
-  fastify.post<{ Body: { username: string; password: string; role: string } }>(
+  fastify.post<{ Body: { username: string; password: string; role: string; fullName?: string } }>(
     '/members/provision',
     {
       preHandler: [authenticate, requireRole('owner', 'admin')],
       schema: {
-        description: 'Provision a new user with username/password (no email verification)',
+        description: 'Provision a new user with username/password',
         tags: ['Memberships'],
         security: [{ bearerAuth: [] }],
         body: {
@@ -756,33 +792,41 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
           properties: {
             username: { type: 'string', minLength: 3 },
             password: { type: 'string', minLength: 8 },
-            role: { type: 'string', enum: ['admin', 'member', 'viewer'] },
+            role: { type: 'string', enum: ['owner', 'admin', 'member', 'viewer'] },
+            fullName: { type: 'string' },
           },
         },
       },
     },
     async (request, reply) => {
-      const { username, password, role } = request.body;
-      const { adminCreateUser, adminDeleteUser } = await import('../services/cognito-admin.service.js');
+      const { username, password, role, fullName } = request.body;
       const { prisma } = await import('../config/database.js');
 
-      // 1. Create Cognito user (pre-verified, permanent password)
-      const { sub } = await adminCreateUser(username, password, request.user!.orgId, role);
+      // Check if username already exists
+      const existing = await prisma.profiles.findUnique({ where: { username } });
+      if (existing) {
+        return reply.status(409).send({ error: 'Username already exists' });
+      }
 
-      try {
-        // 2. Create profile in DB
-        await prisma.profiles.create({
+      if (config.authMode === 'local') {
+        // Local mode: create directly in DB with bcrypt hash
+        const bcrypt = await import('bcryptjs');
+        const { v4: uuidv4 } = await import('uuid');
+        const passwordHash = await bcrypt.hash(password, 10);
+        const userId = uuidv4();
+
+        const profile = await prisma.profiles.create({
           data: {
-            id: sub,
+            id: userId,
             username,
-            full_name: username,
+            full_name: fullName || username,
+            password_hash: passwordHash,
           },
         });
 
-        // 3. Create membership
         const membership = await prisma.memberships.create({
           data: {
-            user_id: sub,
+            user_id: userId,
             organization_id: request.user!.orgId,
             role,
             status: 'active',
@@ -791,15 +835,46 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
         });
 
         return reply.status(201).send({
-          userId: sub,
+          userId,
           username,
           role,
           membershipId: membership.id,
         });
-      } catch (err) {
-        // Rollback Cognito user if DB write fails
-        await adminDeleteUser(username).catch(() => {});
-        throw err;
+      } else {
+        // Cognito mode: create via Cognito Admin API
+        const { adminCreateUser, adminDeleteUser } = await import('../services/cognito-admin.service.js');
+
+        const { sub } = await adminCreateUser(username, password, request.user!.orgId, role);
+
+        try {
+          await prisma.profiles.create({
+            data: {
+              id: sub,
+              username,
+              full_name: fullName || username,
+            },
+          });
+
+          const membership = await prisma.memberships.create({
+            data: {
+              user_id: sub,
+              organization_id: request.user!.orgId,
+              role,
+              status: 'active',
+              invited_email: username,
+            },
+          });
+
+          return reply.status(201).send({
+            userId: sub,
+            username,
+            role,
+            membershipId: membership.id,
+          });
+        } catch (err) {
+          await adminDeleteUser(username).catch(() => {});
+          throw err;
+        }
       }
     }
   );

@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # =============================================================================
-# Super Agent Platform — EC2 Bootstrap Script (Ubuntu 22.04 ARM64)
+# Super Agent Platform - EC2 Bootstrap Script (Ubuntu 22.04 ARM64)
 # Installs: Node.js 22, PostgreSQL client, Redis 7, Nginx, Certbot, Claude Code CLI
-# Database: Aurora PostgreSQL (managed, not installed locally)
+# Database: RDS PostgreSQL (managed, not installed locally)
 # =============================================================================
 
 export DEBIAN_FRONTEND=noninteractive
@@ -99,9 +99,12 @@ CW_CONFIG
 systemctl enable amazon-cloudwatch-agent
 
 # =============================================================================
-# Redis 7
+# Redis 7 (from official Redis repo for 7.x)
 # =============================================================================
-echo ">>> Installing Redis..."
+echo ">>> Installing Redis 7..."
+curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" > /etc/apt/sources.list.d/redis.list
+apt-get update -y
 apt-get install -y redis-server
 
 # Configure Redis with password
@@ -225,13 +228,13 @@ SERVICE
 systemctl daemon-reload
 
 # =============================================================================
-# Helper script: fetch Aurora credentials from Secrets Manager and build DATABASE_URL
+# Helper script: fetch RDS credentials from Secrets Manager and build DATABASE_URL
 # =============================================================================
 cat > /opt/super-agent/fetch-db-url.sh << 'FETCHSCRIPT'
 #!/bin/bash
-# Fetches Aurora credentials from Secrets Manager and prints the DATABASE_URL.
-# Usage: source <(./fetch-db-url.sh <SECRET_ARN>)
-#   or:  ./fetch-db-url.sh <SECRET_ARN>   (prints the URL)
+# Fetches RDS credentials from Secrets Manager and prints the DATABASE_URL.
+# Output includes ?sslmode=no-verify for the pg Node.js driver (RDS requires SSL).
+# Usage: ./fetch-db-url.sh <SECRET_ARN>
 
 SECRET_ARN="${1:?Usage: fetch-db-url.sh <SECRET_ARN>}"
 REGION="${AWS_REGION:-us-west-2}"
@@ -251,7 +254,7 @@ DB_NAME=$(echo "$SECRET_JSON" | jq -r '.dbname // "super_agent"')
 # URL-encode the password (handles special chars)
 ENCODED_PASS=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DB_PASS', safe=''))")
 
-echo "postgresql://${DB_USER}:${ENCODED_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
+echo "postgresql://${DB_USER}:${ENCODED_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=no-verify"
 FETCHSCRIPT
 
 chmod +x /opt/super-agent/fetch-db-url.sh
@@ -267,7 +270,7 @@ HOST=0.0.0.0
 NODE_ENV=production
 LOG_LEVEL=info
 
-# Database (Aurora PostgreSQL — run fetch-db-url.sh to get this)
+# Database (RDS PostgreSQL — run fetch-db-url.sh to get this)
 DATABASE_URL=CHANGE_ME
 
 # Redis

@@ -288,22 +288,46 @@ export class EnterpriseSkillService {
     await mkdir(permanentDir, { recursive: true });
     await cp(skillSourceDir, permanentDir, { recursive: true });
 
-    // Create skill DB record
-    const skill = await skillService.createSkill(organizationId, {
-      name: options.skillName,
-      display_name: displayName,
-      description: description ?? `Published from chat session`,
-      version: '1.0.0',
-      tags: ['workspace-published'],
-      metadata: {
-        source: 'workspace',
-        sessionId: options.sessionId,
-        localPath: permanentDir,
-        publishedAt: new Date().toISOString(),
-      },
-    });
+    // Create or update skill DB record
+    let skill: any;
+    const existingSkill = await skillService.findByName(organizationId, options.skillName);
+    if (existingSkill) {
+      // Update existing skill with new content
+      skill = await skillService.updateSkill(organizationId, existingSkill.id, {
+        display_name: displayName,
+        description: description ?? existingSkill.description ?? `Published from chat session`,
+        version: existingSkill.version ?? '1.0.0',
+        metadata: {
+          ...(existingSkill.metadata as Record<string, unknown> ?? {}),
+          source: 'workspace',
+          sessionId: options.sessionId,
+          localPath: permanentDir,
+          publishedAt: new Date().toISOString(),
+        },
+      });
+    } else {
+      skill = await skillService.createSkill(organizationId, {
+        name: options.skillName,
+        display_name: displayName,
+        description: description ?? `Published from chat session`,
+        version: '1.0.0',
+        tags: ['workspace-published'],
+        metadata: {
+          source: 'workspace',
+          sessionId: options.sessionId,
+          localPath: permanentDir,
+          publishedAt: new Date().toISOString(),
+        },
+      });
+    }
 
-    // Publish to enterprise catalog
+    // Publish to enterprise catalog (or return existing entry if already published)
+    const existingEntry = await enterpriseSkillRepository.findBySkillId(skill.id, organizationId);
+    if (existingEntry) {
+      const full = await enterpriseSkillRepository.findById(existingEntry.id, organizationId);
+      return toListItem(full!);
+    }
+
     const entry = await enterpriseSkillRepository.publish(organizationId, {
       skillId: skill.id,
       publishedBy: options.userId,

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.90.1",
+    "@tailwindcss/typography": "^0.5.19",
     "@xyflow/react": "^12.6.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.562.0",

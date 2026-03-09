@@ -3,7 +3,7 @@ import { UserPlus, Trash2, ChevronDown, Loader2, AlertCircle, X, Mail, Clock, Ke
 import { useMembers } from '@/services/useMembers';
 import type { MemberRole } from '@/services/api/restMembersService';
 
-const ROLES: MemberRole[] = ['admin', 'member', 'viewer'];
+const ROLES: MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 const ROLE_COLORS: Record<MemberRole, string> = {
   owner: 'bg-purple-500/20 text-purple-300',
@@ -37,6 +37,7 @@ export function MembersTab({ isAdmin, currentUserId }: Props) {
 
   // Provision form state
   const [provUsername, setProvUsername] = useState('');
+  const [provFullName, setProvFullName] = useState('');
   const [provPassword, setProvPassword] = useState(() => generatePassword());
   const [provRole, setProvRole] = useState<MemberRole>('member');
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -64,11 +65,12 @@ export function MembersTab({ isAdmin, currentUserId }: Props) {
   const handleProvision = async () => {
     if (!provUsername.trim() || !provPassword.trim()) return;
     setIsProvisioning(true);
-    const result = await provision(provUsername.trim(), provPassword, provRole);
+    const result = await provision(provUsername.trim(), provPassword, provRole, provFullName.trim() || undefined);
     setIsProvisioning(false);
     if (result) {
       setProvResult({ username: provUsername.trim(), password: provPassword });
       setProvUsername('');
+      setProvFullName('');
       setProvPassword(generatePassword());
       setProvRole('member');
       setMode(null);
@@ -97,10 +99,10 @@ export function MembersTab({ isAdmin, currentUserId }: Props) {
           <p className="text-sm font-medium text-green-400 mb-1">User created successfully</p>
           <p className="text-xs text-gray-400 mb-3">Share these credentials with the user. The password won't be shown again.</p>
           <div className="space-y-2">
-            {[{ label: 'Username', value: provResult.username }, { label: 'Password', value: provResult.password }].map(({ label, value }) => (
+            {[{ label: 'Username', value: provResult.username, masked: false }, { label: 'Password', value: provResult.password, masked: true }].map(({ label, value, masked }) => (
               <div key={label} className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 w-20 shrink-0">{label}</span>
-                <code className="flex-1 px-2 py-1 bg-gray-900 rounded text-xs text-gray-300 font-mono">{value}</code>
+                <code className="flex-1 px-2 py-1 bg-gray-900 rounded text-xs text-gray-300 font-mono">{masked ? '•'.repeat(value.length) : value}</code>
                 <button onClick={() => copyToClipboard(value, label)} className="p-1.5 hover:bg-gray-700 rounded">
                   {copiedField === label ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
                 </button>
@@ -142,6 +144,16 @@ export function MembersTab({ isAdmin, currentUserId }: Props) {
               value={provUsername}
               onChange={(e) => setProvUsername(e.target.value)}
               placeholder="user@company.com"
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Full Name</label>
+            <input
+              type="text"
+              value={provFullName}
+              onChange={(e) => setProvFullName(e.target.value)}
+              placeholder="John Doe"
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500 outline-none"
             />
           </div>

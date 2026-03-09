@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { SuperAgentStack } from '../lib/super-agent-stack';
+import { SuperAgentV2Stack } from '../lib/super-agent-v2-stack';
 
 const app = new cdk.App();
 
-new SuperAgentStack(app, 'SuperAgentStack', {
+new SuperAgentV2Stack(app, 'SuperAgentV2Stack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: 'us-west-2',
+    region: process.env.CDK_DEFAULT_REGION || 'us-west-2',
   },
-  description: 'Super Agent Platform — single EC2 deployment with Aurora PostgreSQL, Redis, and Node.js',
+  description: 'Super Agent Platform - full standalone deployment with hardened security',
 });

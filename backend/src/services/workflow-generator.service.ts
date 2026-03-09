@@ -18,6 +18,7 @@ export interface GeneratedWorkflowTask {
   prompt: string;
   dependentTasks?: string[];
   agentId?: string;
+  requiredIntegrations?: string[];
   config?: Record<string, unknown>;
 }
 
@@ -67,7 +68,8 @@ const WORKFLOW_GENERATOR_SYSTEM_PROMPT = `You are a workflow architect for an AI
       "type": "string (one of the task types below)",
       "prompt": "string (detailed, specific execution instructions — name real systems, concrete thresholds, exact fields)",
       "dependentTasks": ["array of task IDs that must complete before this one"],
-      "agentId": "string (optional, only if an available agent is assigned)"
+      "agentId": "string (optional, only if an available agent is assigned)",
+      "requiredIntegrations": ["array of external services this task needs, e.g. 'SendGrid', 'GitHub API', 'Slack', 'SMTP'. Only include if the task makes external API calls or uses third-party services. Omit for pure AI reasoning tasks."]
     }
   ],
   "variables": [
@@ -92,7 +94,12 @@ This is the most common type. When in doubt, use "agent".
 A deterministic operation described in natural language: API calls, data transformation, database queries, file operations, sending emails/notifications, webhooks. Use this for steps that don't require AI reasoning. The description should clearly state what action to perform — Claude will figure out how to execute it using available skills and tools.
 
 ### condition
-A branching point that evaluates criteria and routes the workflow down different paths. Use this when the workflow needs to take different actions based on a previous step's output (e.g. "if sentiment is negative, escalate; otherwise, auto-respond").
+A branching point that evaluates criteria and routes the workflow down different paths. Use this WHENEVER the workflow needs to take different actions based on a previous step's output or a decision point. Common patterns:
+- Approval/rejection decisions (e.g. "if approved, proceed; if rejected, notify")
+- Threshold checks (e.g. "if score > 80, auto-approve; otherwise, escalate")
+- Classification routing (e.g. "if sentiment is negative, escalate; otherwise, auto-respond")
+- Yes/no decisions, pass/fail checks, any binary or multi-path branching
+IMPORTANT: If the user describes "if X then Y, otherwise Z" or "based on the result, do A or B", you MUST use a condition node — do NOT embed the branching logic inside an action or agent node.
 
 ### document
 Generates a structured document, report, or formatted output. Use this when the primary output of a step is a deliverable document (PDF report, markdown summary, formatted email draft, etc.).
@@ -108,10 +115,12 @@ Generates or executes code. Use this for steps that produce code snippets, scrip
 4. Reference variables in prompts using @{var:variableName} syntax.
 5. Extract user-configurable inputs as variables (e.g. target audience, data source, language).
 6. Task prompts must be detailed, specific, and actionable — name real systems, use concrete values, specify exact fields and formats. NEVER use vague phrases like "submit to the system" or "send to the platform".
-7. If available agents are listed, assign them to tasks where their role is a strong match. Use the agentId field ONLY when an agent's role clearly fits the task. Do NOT force-assign the same agent to every task — leave agentId empty for tasks where no agent is a good fit.
-8. Keep task count reasonable: 3-8 tasks for most workflows. Consolidate related steps into single tasks rather than creating one task per bullet point.
-9. Do NOT invent agent IDs. Only use IDs from the provided available agents list.
-10. When the user provides a very detailed multi-step description, synthesize it into a concise workflow. Group related steps into logical tasks rather than creating a 1:1 mapping of every sub-step.
+7. NEVER reference other tasks by their IDs (e.g. "task-3", "task-6") in any node's prompt text. Instead, always refer to other steps by their descriptive title (e.g. "the Security Validation step", "the result from the Approval Decision step"). Task IDs are internal identifiers used only in the dependentTasks array — they must never appear in human-readable prompt text. This applies to ALL node types: agent, action, condition, document, and codeArtifact.
+8. For condition nodes specifically, describe the evaluation criteria and what true/false means without referencing downstream tasks at all (e.g. "Evaluate whether the approval decision is 'approved'. True = approved, False = rejected or timeout"). The workflow engine handles routing based on the canvas edges.
+9. If available agents are listed, assign them to tasks where their role is a strong match. Use the agentId field ONLY when an agent's role clearly fits the task. Do NOT force-assign the same agent to every task — leave agentId empty for tasks where no agent is a good fit.
+10. Keep task count reasonable: 3-8 tasks for most workflows. Consolidate related steps into single tasks rather than creating one task per bullet point.
+11. Do NOT invent agent IDs. Only use IDs from the provided available agents list.
+12. When the user provides a very detailed multi-step description, synthesize it into a concise workflow. Group related steps into logical tasks rather than creating a 1:1 mapping of every sub-step.
 
 Remember: Ask clarifying questions first if the request is vague. When generating, output ONLY the JSON object.`;
 

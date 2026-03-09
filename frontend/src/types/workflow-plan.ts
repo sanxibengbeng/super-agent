@@ -67,6 +67,7 @@ export const workflowTaskSchema = z.object({
   prompt: z.string().describe('Detailed execution instructions'),
   dependentTasks: z.array(z.string()).optional().describe('Task IDs that must complete first'),
   agentId: z.string().optional().describe('Agent ID for agent tasks'),
+  requiredIntegrations: z.array(z.string()).optional().describe('External services needed (e.g. SendGrid, GitHub API)'),
   config: z.record(z.string(), z.unknown()).optional().describe('Task-specific configuration'),
 });
 

@@ -12,6 +12,7 @@ import type { BusinessScope } from '@/services/businessScopeService'
 import type { MCPServer, Agent } from '@/types'
 import { IMChannelsPanel } from './IMChannelsPanel'
 import { ScopeMemoryPanel } from './ScopeMemoryPanel'
+import { DocGroupsPanel } from './DocGroupsPanel'
 import {
   getAvatarDisplayUrl,
   getAvatarFallback,
@@ -21,6 +22,10 @@ import {
 interface ScopeProfileProps {
   scope: BusinessScope
   agents: Agent[]
+  allAgents?: Agent[]
+  onDeleteScope?: (scopeId: string) => void
+  onAddAgent?: (agentId: string, scopeId: string) => void
+  onRemoveAgent?: (agentId: string) => void
 }
 
 interface ScopeMcpServer {
@@ -277,7 +282,7 @@ function AgentRow({ agent }: { agent: Agent }) {
 /* ------------------------------------------------------------------ */
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
-export function ScopeProfile({ scope, agents }: ScopeProfileProps) {
+export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onAddAgent, onRemoveAgent }: ScopeProfileProps) {
   const { success, error: showError } = useToast()
   const { servers: allServers, getServers } = useMCP()
 
@@ -285,6 +290,7 @@ export function ScopeProfile({ scope, agents }: ScopeProfileProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [isAdding, setIsAdding] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
+  const [showAgentPicker, setShowAgentPicker] = useState(false)
 
   /* ---------- MCP server logic ---------- */
   const loadScopeServers = useCallback(async () => {
@@ -340,6 +346,25 @@ export function ScopeProfile({ scope, agents }: ScopeProfileProps) {
     ? Math.round(agents.reduce((sum, a) => sum + (a.metrics?.responseRate ?? 0), 0) / totalAgents)
     : 0
   const totalSkills = agents.reduce((sum, a) => sum + (a.tools?.length ?? 0), 0)
+
+  // Agents not assigned to this scope (available to add)
+  const scopeAgentIds = new Set(agents.map(a => a.id))
+  const unassignedAgents = allAgents.filter(a => !scopeAgentIds.has(a.id))
+
+  const handleAddAgentToScope = async (agent: Agent) => {
+    if (onAddAgent) {
+      await onAddAgent(agent.id, scope.id)
+      success(`Added "${agent.displayName}" to scope`)
+      setShowAgentPicker(false)
+    }
+  }
+
+  const handleRemoveAgentFromScope = async (agent: Agent) => {
+    if (onRemoveAgent) {
+      await onRemoveAgent(agent.id)
+      success(`Removed "${agent.displayName}" from scope`)
+    }
+  }
 
   const [briefings, setBriefings] = useState<TaskBriefing[]>([])
   const [briefingsLoading, setBriefingsLoading] = useState(true)
@@ -419,6 +444,15 @@ export function ScopeProfile({ scope, agents }: ScopeProfileProps) {
               <p className="text-xs text-gray-400 mt-0.5 truncate">{scope.description}</p>
             )}
           </div>
+          {onDeleteScope && (
+            <button
+              onClick={() => onDeleteScope(scope.id)}
+              className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+              title="Delete scope"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Inline KPI strip */}
@@ -475,16 +509,71 @@ export function ScopeProfile({ scope, agents }: ScopeProfileProps) {
               <Users className="w-3.5 h-3.5 text-gray-500" />
               <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Agents</h3>
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-gray-600">
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500" />{activeCount}</span>
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />{busyCount}</span>
+            <div className="flex items-center gap-2">
+              {onAddAgent && (
+                <button
+                  onClick={() => setShowAgentPicker(!showAgentPicker)}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-600 hover:bg-blue-700 rounded text-white transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add Agent
+                </button>
+              )}
+              <div className="flex items-center gap-2 text-[10px] text-gray-600">
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500" />{activeCount}</span>
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />{busyCount}</span>
+              </div>
             </div>
           </div>
+
+          {/* Agent picker dropdown */}
+          {showAgentPicker && (
+            <div className="border-b border-gray-800 bg-gray-800/50">
+              {unassignedAgents.length === 0 ? (
+                <p className="p-3 text-xs text-gray-400">
+                  {allAgents.length === 0 ? 'No agents available.' : 'All agents are already assigned to this scope.'}
+                </p>
+              ) : (
+                <div className="max-h-40 overflow-y-auto divide-y divide-gray-700/50">
+                  {unassignedAgents.map(agent => (
+                    <button key={agent.id} onClick={() => handleAddAgentToScope(agent)}
+                      className="w-full flex items-center justify-between px-4 py-2 hover:bg-gray-700/50 transition-colors text-left">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-[9px] font-semibold">
+                          {getAvatarFallback(agent.displayName, agent.avatar)}
+                        </div>
+                        <div>
+                          <p className="text-xs text-white">{agent.displayName}</p>
+                          <p className="text-[10px] text-gray-400">{agent.role}</p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {agents.length === 0 ? (
             <div className="py-4 text-center text-xs text-gray-500">No agents</div>
           ) : (
             <div className="divide-y divide-gray-800/50">
-              {agents.map(agent => <AgentRow key={agent.id} agent={agent} />)}
+              {agents.map(agent => (
+                <div key={agent.id} className="flex items-center pr-2">
+                  <div className="flex-1 min-w-0">
+                    <AgentRow agent={agent} />
+                  </div>
+                  {onRemoveAgent && (
+                    <button
+                      onClick={() => handleRemoveAgentFromScope(agent)}
+                      className="p-1 text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+                      title="Remove from scope"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -565,6 +654,13 @@ export function ScopeProfile({ scope, agents }: ScopeProfileProps) {
               ))}
             </div>
           )}
+        </div>
+
+        {/* ============================================================ */}
+        {/*  Knowledge Base (Document Groups)                              */}
+        {/* ============================================================ */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+          <DocGroupsPanel scopeId={scope.id} scopeName={scope.name} />
         </div>
 
         {/* ============================================================ */}

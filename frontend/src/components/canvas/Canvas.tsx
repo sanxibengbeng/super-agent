@@ -78,16 +78,18 @@ function CanvasInner({
     const newNodeIds = initialData.nodes.map(n => n.id).sort().join(',');
     const idsChanged = currentNodeIds !== newNodeIds;
 
-    // Check if node data changed (e.g., title updates from editor panel)
+    // Check if node data changed (e.g., title updates, metadata changes from editor panel)
     let dataChanged = false;
     if (!idsChanged && initialData.nodes.length === nodes.length) {
       for (const newNode of initialData.nodes) {
         const currentNode = nodes.find(n => n.id === newNode.id);
         if (currentNode) {
-          // Compare title and other key data fields
           const currentData = currentNode.data as Record<string, unknown>;
           const newData = newNode.data as Record<string, unknown>;
-          if (currentData.title !== newData.title) {
+          if (
+            currentData.title !== newData.title ||
+            JSON.stringify(currentData.metadata) !== JSON.stringify(newData.metadata)
+          ) {
             dataChanged = true;
             break;
           }
@@ -152,17 +154,22 @@ function CanvasInner({
   const onConnect: OnConnect = useCallback((connection) => {
     if (readonly) return;
     
-    const { source, target } = connection;
+    const { source, target, sourceHandle, targetHandle } = connection;
     if (!source || !target || source === target) return;
 
-    // Check if edge already exists
-    const exists = edges.some(e => e.source === source && e.target === target);
+    // Check if edge already exists (same source + target + handle combo)
+    const exists = edges.some(e => 
+      e.source === source && e.target === target && 
+      (e.sourceHandle ?? null) === (sourceHandle ?? null)
+    );
     if (exists) return;
 
     const newEdge: Edge = {
-      id: `edge_${source}_${target}_${Date.now()}`,
+      id: `edge_${source}_${sourceHandle ?? 'default'}_${target}_${Date.now()}`,
       source,
       target,
+      sourceHandle: sourceHandle ?? undefined,
+      targetHandle: targetHandle ?? undefined,
       type: 'custom',
     };
 
@@ -184,6 +191,13 @@ function CanvasInner({
   const handlePaneClick = useCallback(() => {
     onNodeSelect?.(null);
   }, [onNodeSelect]);
+
+  // Validate connections: source handles can only connect to target handles, no self-loops
+  const isValidConnection = useCallback((connection: { source: string | null; target: string | null; sourceHandle: string | null; targetHandle: string | null }) => {
+    if (!connection.source || !connection.target) return false;
+    if (connection.source === connection.target) return false;
+    return true;
+  }, []);
 
   // Handle node drag stop - snap to grid
   const handleNodeDragStop = useCallback((_event: React.MouseEvent, node: Node) => {
@@ -217,9 +231,9 @@ function CanvasInner({
 
   // Wrap change handlers to mark user changes
   const handleNodesChange = useCallback((changes: any) => {
-    // Only mark as user change for certain change types
+    // Only mark as user change for intentional edits, not React Flow internals
     const isUserChange = changes.some((c: any) => 
-      c.type === 'remove' || c.type === 'position' || c.type === 'dimensions'
+      c.type === 'remove' || (c.type === 'position' && c.dragging)
     );
     if (isUserChange) {
       isUserChangeRef.current = true;
@@ -243,6 +257,7 @@ function CanvasInner({
         onNodesChange={readonly ? undefined : handleNodesChange}
         onEdgesChange={readonly ? undefined : handleEdgesChange}
         onConnect={onConnect}
+        isValidConnection={isValidConnection}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onPaneClick={handlePaneClick}
@@ -250,7 +265,7 @@ function CanvasInner({
         nodeTypes={nodeTypes as NodeTypes}
         edgeTypes={edgeTypes as EdgeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
-        connectionMode={ConnectionMode.Loose}
+        connectionMode={ConnectionMode.Strict}
         selectionMode={SelectionMode.Partial}
         snapToGrid
         snapGrid={[GRID_SIZE, GRID_SIZE]}

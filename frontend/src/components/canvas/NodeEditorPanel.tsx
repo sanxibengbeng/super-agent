@@ -218,13 +218,13 @@ function AgentNodeEditor({
 }) {
   const metadata = node.data.metadata as AgentNodeMeta | undefined;
   const [selectedAgentId, setSelectedAgentId] = useState(metadata?.agentId || '');
-  const [query, setQuery] = useState(metadata?.query || '');
+  const [query, setQuery] = useState(metadata?.query || (metadata as any)?.prompt || '');
 
   // Sync local state when a different node is selected
   useEffect(() => {
     const meta = node.data.metadata as AgentNodeMeta | undefined;
     setSelectedAgentId(meta?.agentId || '');
-    setQuery(meta?.query || '');
+    setQuery(meta?.query || (meta as any)?.prompt || '');
   }, [node.id]);
 
   const handleAgentChange = (agentId: string) => {
@@ -252,9 +252,11 @@ function AgentNodeEditor({
   const handleQueryChange = (value: string) => {
     setQuery(value);
     onUpdate({
+      contentPreview: value,
       metadata: {
         ...metadata,
         query: value,
+        prompt: value,
       },
     });
   };

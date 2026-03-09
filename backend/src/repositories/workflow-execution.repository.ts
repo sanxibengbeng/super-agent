@@ -338,12 +338,24 @@ export class WorkflowExecutionRepository {
         workflow_id: workflowId,
         organization_id: organizationId,
       },
+      include: {
+        node_executions: {
+          select: {
+            id: true,
+            node_id: true,
+            node_type: true,
+            status: true,
+            error_message: true,
+          },
+          orderBy: { created_at: 'asc' },
+        },
+      },
       orderBy: {
         created_at: 'desc',
       },
       skip: options?.skip,
       take: options?.take,
-    });
+    }) as unknown as WorkflowExecutionEntity[];
   }
 
   /**

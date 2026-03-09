@@ -60,9 +60,9 @@ export function useMembers() {
     }
   }, []);
 
-  const provision = useCallback(async (username: string, password: string, role: MemberRole) => {
+  const provision = useCallback(async (username: string, password: string, role: MemberRole, fullName?: string) => {
     try {
-      const result = await RestMembersService.provisionMember(username, password, role);
+      const result = await RestMembersService.provisionMember(username, password, role, fullName);
       // Reload members list to get the full member object
       await load();
       return result;

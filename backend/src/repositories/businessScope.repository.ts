@@ -22,6 +22,7 @@ export interface BusinessScopeEntity {
   config_version: number;
   created_at: Date;
   updated_at: Date;
+  deleted_at: Date | null;
 }
 
 /**
@@ -31,6 +32,61 @@ export interface BusinessScopeEntity {
 export class BusinessScopeRepository extends BaseRepository<BusinessScopeEntity> {
   constructor() {
     super('business_scopes');
+  }
+
+  /**
+   * Override findAll to exclude soft-deleted scopes.
+   */
+  async findAll(
+    organizationId: string,
+    options?: Omit<FindAllOptions<BusinessScopeEntity>, 'where'> & { where?: Partial<BusinessScopeEntity> }
+  ): Promise<BusinessScopeEntity[]> {
+    const { where, ...rest } = options ?? {};
+    return super.findAll(organizationId, {
+      ...rest,
+      where: { ...where, deleted_at: null } as Partial<BusinessScopeEntity>,
+    });
+  }
+
+  /**
+   * Override findById to exclude soft-deleted scopes.
+   */
+  async findById(id: string, organizationId: string, options?: { include?: Record<string, boolean | object> }): Promise<BusinessScopeEntity | null> {
+    const result = await super.findById(id, organizationId, options);
+    if (result && result.deleted_at !== null) return null;
+    return result;
+  }
+
+  /**
+   * Override count to exclude soft-deleted scopes.
+   */
+  async count(organizationId: string, where?: Partial<BusinessScopeEntity>): Promise<number> {
+    return super.count(organizationId, { ...where, deleted_at: null } as Partial<BusinessScopeEntity>);
+  }
+
+  /**
+   * Soft-delete a business scope by setting deleted_at.
+   */
+  async softDelete(id: string, organizationId: string): Promise<boolean> {
+    const existing = await super.findById(id, organizationId);
+    if (!existing || existing.deleted_at !== null) return false;
+
+    await this.getModel().update({
+      where: { id },
+      data: { deleted_at: new Date() },
+    });
+    return true;
+  }
+
+  /**
+   * Override findFirst to exclude soft-deleted scopes.
+   */
+  async findFirst(
+    organizationId: string,
+    where: Partial<BusinessScopeEntity>,
+    options?: { include?: Record<string, boolean | object> }
+  ): Promise<BusinessScopeEntity | null> {
+    return super.findFirst(organizationId, { ...where, deleted_at: null } as Partial<BusinessScopeEntity>, options);
   }
 
   /**

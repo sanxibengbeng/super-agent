@@ -19,11 +19,24 @@ const envSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.string().default('0').transform(Number),
 
-  // Authentication (Cognito)
-  COGNITO_USER_POOL_ID: z.string().min(1, 'COGNITO_USER_POOL_ID is required'),
-  COGNITO_CLIENT_ID: z.string().min(1, 'COGNITO_CLIENT_ID is required'),
+  // Authentication
+  AUTH_MODE: z.enum(['cognito', 'local']).default('local'),
+  COGNITO_USER_POOL_ID: z.string().optional().default(''),
+  COGNITO_CLIENT_ID: z.string().optional().default(''),
   COGNITO_REGION: z.string().default('us-east-1'),
   COGNITO_DOMAIN: z.string().optional(),
+
+  // JWT secret for local auth mode
+  JWT_SECRET: z.string().optional().default('super-agent-local-dev-secret-change-in-production'),
+
+  // SMTP Configuration (for invite emails)
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional().default('587').transform(Number),
+  SMTP_SECURE: z.string().optional().default('false'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().optional().default('noreply@super-agent.local'),
+  APP_URL: z.string().optional().default('http://localhost:5173'),
 
   // Existing user binding — the Cognito sub that maps to the admin profile
   COGNITO_ADMIN_SUB: z.string().optional(),
@@ -59,10 +72,21 @@ const envSchema = z.object({
   CLAUDE_RESPONSE_TIMEOUT_MS: z.string().optional().default('1200000').transform(Number), // 20 min
   CLAUDE_MAX_CONCURRENT_SESSIONS: z.string().optional().default('10').transform(Number),
 
+  // Document Groups
+  DOC_GROUPS_BASE_PATH: z.string().optional().default('/tmp/super-agent-doc-groups'),
+
   // Langfuse Observability
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_BASE_URL: z.string().optional(),
+
+  // AgentCore Runtime (container-isolated agent execution)
+  USE_AGENTCORE: z.string().optional().default('false'),
+  AGENTCORE_BASE_IMAGE: z.string().optional(),
+  AGENTCORE_EXECUTION_ROLE_ARN: z.string().optional(),
+  AGENTCORE_BACKEND_API_URL: z.string().optional(),
+  AGENTCORE_BACKEND_API_KEY: z.string().optional(),
+  AGENTCORE_WORKSPACE_S3_BUCKET: z.string().optional().default('super-agent-workspaces'),
 });
 
 function loadConfig(): z.infer<typeof envSchema> {
@@ -98,6 +122,8 @@ export const config = {
     db: env.REDIS_DB,
   },
 
+  authMode: env.AUTH_MODE,
+
   cognito: {
     userPoolId: env.COGNITO_USER_POOL_ID,
     clientId: env.COGNITO_CLIENT_ID,
@@ -105,6 +131,20 @@ export const config = {
     domain: env.COGNITO_DOMAIN,
     adminSub: env.COGNITO_ADMIN_SUB,
   },
+
+  jwtSecret: env.JWT_SECRET,
+
+  smtp: {
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    secure: env.SMTP_SECURE === 'true',
+    user: env.SMTP_USER,
+    pass: env.SMTP_PASS,
+    from: env.SMTP_FROM,
+    enabled: !!env.SMTP_HOST,
+  },
+
+  appUrl: env.APP_URL,
 
   aws: {
     region: env.AWS_REGION,
@@ -134,11 +174,25 @@ export const config = {
     maxConcurrentSessions: env.CLAUDE_MAX_CONCURRENT_SESSIONS,
   },
 
+  docGroups: {
+    basePath: env.DOC_GROUPS_BASE_PATH,
+  },
+
   langfuse: {
     secretKey: env.LANGFUSE_SECRET_KEY,
     publicKey: env.LANGFUSE_PUBLIC_KEY,
     baseUrl: env.LANGFUSE_BASE_URL,
     enabled: !!(env.LANGFUSE_SECRET_KEY && env.LANGFUSE_PUBLIC_KEY),
+  },
+
+  agentcore: {
+    enabled: env.USE_AGENTCORE === 'true' || env.USE_AGENTCORE === '1',
+    baseImage: env.AGENTCORE_BASE_IMAGE,
+    executionRoleArn: env.AGENTCORE_EXECUTION_ROLE_ARN,
+    backendApiUrl: env.AGENTCORE_BACKEND_API_URL,
+    backendApiKey: env.AGENTCORE_BACKEND_API_KEY,
+    workspaceS3Bucket: env.AGENTCORE_WORKSPACE_S3_BUCKET,
+    region: env.AWS_REGION,
   },
 
   logLevel: env.LOG_LEVEL,
