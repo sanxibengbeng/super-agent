@@ -18,6 +18,10 @@ export const translations: TranslationData = {
     en: 'Agents',
     cn: '智能体'
   },
+  'nav.projects': {
+    en: 'Projects',
+    cn: '项目'
+  },
   'nav.tools': {
     en: 'Tools',
     cn: '工具'
@@ -170,7 +174,7 @@ export const translations: TranslationData = {
     cn: '操作范围'
   },
   'agents.tools': {
-    en: 'Sub-agent Skills',
+    en: 'Skills',
     cn: '子代理技能'
   },
   'agents.systemPrompt': {
@@ -268,7 +272,7 @@ export const translations: TranslationData = {
     cn: '操作范围'
   },
   'agentConfig.assignedTools': {
-    en: 'Sub-agent Skills',
+    en: 'Skills',
     cn: '子代理技能'
   },
   'agentConfig.systemPrompt': {

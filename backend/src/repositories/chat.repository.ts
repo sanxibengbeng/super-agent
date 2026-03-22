@@ -23,6 +23,8 @@ export interface ChatSessionEntity {
   status: SessionStatus;
   sop_context: string | null;
   context: Record<string, unknown>;
+  room_mode: 'single' | 'group';
+  routing_strategy: 'auto' | 'mention' | 'round_robin';
   created_at: Date;
   updated_at: Date;
 }
@@ -34,8 +36,11 @@ export interface ChatMessageEntity {
   id: string;
   organization_id: string;
   session_id: string;
-  type: 'user' | 'ai';
+  type: 'user' | 'agent' | 'ai' | 'system';
   content: string;
+  agent_id: string | null;
+  mention_agent_id: string | null;
+  metadata: Record<string, unknown>;
   created_at: Date;
 }
 
@@ -225,10 +230,15 @@ export class ChatMessageRepository {
   ): Promise<ChatMessageEntity> {
     return prisma.chat_messages.create({
       data: {
-        ...data,
+        session_id: data.session_id,
+        type: data.type,
+        content: data.content,
+        agent_id: data.agent_id ?? undefined,
+        mention_agent_id: data.mention_agent_id ?? undefined,
+        metadata: (data.metadata ?? {}) as Record<string, unknown> & { [key: string]: unknown },
         organization_id: organizationId,
       },
-    }) as Promise<ChatMessageEntity>;
+    }) as unknown as Promise<ChatMessageEntity>;
   }
 
   /**

@@ -23,6 +23,10 @@ export interface BusinessScope {
   visibility: 'open' | 'restricted';
   createdAt: Date;
   updatedAt: Date;
+  scopeType?: string;
+  avatar?: string | null;
+  role?: string | null;
+  systemPrompt?: string | null;
 }
 
 export interface CreateBusinessScopeInput {

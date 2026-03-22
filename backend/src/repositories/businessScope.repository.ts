@@ -20,6 +20,10 @@ export interface BusinessScopeEntity {
   is_default: boolean;
   visibility: string;
   config_version: number;
+  scope_type: string;
+  avatar: string | null;
+  role: string | null;
+  system_prompt: string | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;

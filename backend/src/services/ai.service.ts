@@ -177,6 +177,14 @@ function parseAgentRolesResponse(responseText: string): SuggestedAgentRole[] {
   }
   jsonStr = jsonStr.trim();
 
+  // Sanitize control characters that LLMs sometimes emit inside JSON string values
+  jsonStr = jsonStr.replace(/[\x00-\x1F\x7F]/g, (ch: string) => {
+    if (ch === '\n') return '\\n';
+    if (ch === '\r') return '\\r';
+    if (ch === '\t') return '\\t';
+    return '';
+  });
+
   const parsed = JSON.parse(jsonStr);
   
   if (!Array.isArray(parsed)) {
@@ -282,6 +290,111 @@ export class AIService {
       
       throw new Error(`Failed to generate agent suggestions: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Suggests a single agent from a conversational description.
+   * Used for dynamic agent creation in chat rooms or standalone.
+   */
+  async suggestAgentFromConversation(input: {
+    description: string;
+    businessScopeName?: string;
+    businessScopeDescription?: string;
+    existingAgentRoles?: string[];
+    conversationHistory?: ChatMessage[];
+  }): Promise<{ suggested_agent: SuggestedAgentRole; follow_up_questions: string[]; confidence: number }> {
+    let prompt = `You are an AI team architect. Based on the user's description, design a single AI assistant role.
+
+`;
+    if (input.businessScopeName) {
+      prompt += `Current business domain: ${input.businessScopeName}`;
+      if (input.businessScopeDescription) prompt += ` (${input.businessScopeDescription})`;
+      prompt += '\n';
+    }
+    if (input.existingAgentRoles && input.existingAgentRoles.length > 0) {
+      prompt += `Existing roles in the team: ${input.existingAgentRoles.join(', ')}\n`;
+      prompt += `Design a role that complements (does not duplicate) the existing roles.\n`;
+    }
+    prompt += `\nUser's request: ${input.description}\n`;
+
+    if (input.conversationHistory && input.conversationHistory.length > 0) {
+      prompt += `\nConversation context:\n`;
+      for (const msg of input.conversationHistory.slice(-10)) {
+        prompt += `${msg.role}: ${msg.content}\n`;
+      }
+    }
+
+    prompt += `
+If the description is clear enough, generate the role. If not, provide 1-2 clarifying questions.
+
+Return ONLY valid JSON (no markdown):
+{
+  "suggested_agent": {
+    "name": "kebab-case-english-id",
+    "display_name": "Human readable name (Chinese if domain is Chinese)",
+    "role": "Job title",
+    "description": "1-2 sentence description",
+    "responsibilities": ["resp1", "resp2", "resp3"],
+    "capabilities": ["cap1", "cap2", "cap3"],
+    "system_prompt": "Detailed system prompt for this agent",
+    "suggested_tools": []
+  },
+  "follow_up_questions": [],
+  "confidence": 0.85
+}`;
+
+    const command = new InvokeModelCommand({
+      modelId: NOVA_MODEL_ID,
+      contentType: 'application/json',
+      accept: 'application/json',
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { max_new_tokens: 2048, temperature: 0.7 },
+      }),
+    });
+
+    const response = await bedrockClient.send(command);
+    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+
+    if (!responseBody.output?.message?.content?.[0]) {
+      throw new Error('Invalid response structure from Bedrock');
+    }
+
+    let jsonStr = responseBody.output.message.content[0].text.trim();
+    if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
+    else if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
+    if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
+
+    // Sanitize control characters that LLMs sometimes emit inside JSON string values
+    jsonStr = jsonStr.trim().replace(/[\x00-\x1F\x7F]/g, (ch: string) => {
+      if (ch === '\n') return '\\n';
+      if (ch === '\r') return '\\r';
+      if (ch === '\t') return '\\t';
+      return '';
+    });
+
+    const parsed = JSON.parse(jsonStr);
+    const agent = parsed.suggested_agent;
+
+    return {
+      suggested_agent: {
+        name: String(agent?.name || 'new-agent'),
+        display_name: String(agent?.display_name || 'New Agent'),
+        role: String(agent?.role || ''),
+        description: String(agent?.description || ''),
+        responsibilities: Array.isArray(agent?.responsibilities) ? agent.responsibilities.map(String) : [],
+        capabilities: Array.isArray(agent?.capabilities) ? agent.capabilities.map(String) : [],
+        system_prompt: String(agent?.system_prompt || ''),
+        suggested_tools: Array.isArray(agent?.suggested_tools) ? agent.suggested_tools.map((t: Record<string, unknown>) => ({
+          name: String(t.name || ''),
+          display_name: String(t.display_name || ''),
+          description: String(t.description || ''),
+          skill_md: String(t.skill_md || ''),
+        })) : [],
+      },
+      follow_up_questions: Array.isArray(parsed.follow_up_questions) ? parsed.follow_up_questions.map(String) : [],
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+    };
   }
 
   /**

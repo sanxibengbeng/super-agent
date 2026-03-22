@@ -479,4 +479,80 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
       }
     }
   );
+
+  // ==========================================================================
+  // Agent Scope Binding Routes
+  // ==========================================================================
+
+  /**
+   * GET /api/agents/:id/scopes — Get all scopes an agent belongs to
+   */
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/scopes',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { agentScopeService } = await import('../services/agent-scope.service.js');
+      const assignments = await agentScopeService.getAgentScopes(request.user!.orgId, request.params.id);
+      return reply.status(200).send({ scopes: assignments });
+    }
+  );
+
+  /**
+   * POST /api/agents/:id/scopes — Bind agent to a scope
+   */
+  fastify.post<{ Params: { id: string }; Body: { business_scope_id: string; is_primary?: boolean } }>(
+    '/:id/scopes',
+    { preHandler: [authenticate, requireModifyAccess] },
+    async (request, reply) => {
+      const { agentScopeService } = await import('../services/agent-scope.service.js');
+      const assignment = await agentScopeService.bindAgentToScope(
+        request.user!.orgId,
+        request.params.id,
+        request.body.business_scope_id,
+        request.body.is_primary ?? false,
+        request.user!.id,
+      );
+      return reply.status(201).send(assignment);
+    }
+  );
+
+  /**
+   * DELETE /api/agents/:id/scopes/:scopeId — Unbind agent from a scope
+   */
+  fastify.delete<{ Params: { id: string; scopeId: string } }>(
+    '/:id/scopes/:scopeId',
+    { preHandler: [authenticate, requireModifyAccess] },
+    async (request, reply) => {
+      const { agentScopeService } = await import('../services/agent-scope.service.js');
+      await agentScopeService.unbindAgentFromScope(
+        request.user!.orgId,
+        request.params.id,
+        request.params.scopeId,
+      );
+      return reply.status(204).send();
+    }
+  );
+
+  // ==========================================================================
+  // Conversational Agent Creation
+  // ==========================================================================
+
+  /**
+   * POST /api/agents/suggest-from-conversation — AI-powered single agent suggestion
+   */
+  fastify.post<{ Body: { description: string; business_scope_name?: string; business_scope_description?: string; existing_agent_roles?: string[]; conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }> } }>(
+    '/suggest-from-conversation',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { aiService } = await import('../services/ai.service.js');
+      const result = await aiService.suggestAgentFromConversation({
+        description: request.body.description,
+        businessScopeName: request.body.business_scope_name,
+        businessScopeDescription: request.body.business_scope_description,
+        existingAgentRoles: request.body.existing_agent_roles,
+        conversationHistory: request.body.conversation_history,
+      });
+      return reply.status(200).send(result);
+    }
+  );
 }

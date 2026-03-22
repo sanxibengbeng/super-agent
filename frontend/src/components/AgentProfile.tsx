@@ -20,6 +20,10 @@ import type { Agent, AgentStatus } from '@/types'
 import { useTranslation } from '@/i18n'
 import { getAvatarDisplayUrl, getAvatarFallback, shouldShowAvatarImage } from '@/utils/avatarUtils'
 import { restClient } from '@/services/api/restClient'
+import { DocGroupsPanel } from './DocGroupsPanel'
+import { IMChannelsPanel } from './IMChannelsPanel'
+import { ScopeMemoryPanel } from './ScopeMemoryPanel'
+import { MCPServersPanel } from './MCPServersPanel'
 
 interface AgentProfileProps {
   agent: Agent
@@ -262,6 +266,9 @@ export function AgentProfile({ agent, onConfigure, onRemove, onToggleStatus }: A
         )}
       </div>
 
+      {/* Configuration Panels — same layout as ScopeProfile */}
+      <AgentConfigSections agentId={agent.id} agentName={agent.displayName} scopeId={agent.businessScopeId || undefined} />
+
 
     </div>
   )
@@ -408,4 +415,51 @@ function buildDetailEntries(event: AgentEvent, meta: Record<string, unknown> | n
   }
 
   return entries
+}
+
+
+// ============================================================================
+// Agent Configuration Sections — same layout as ScopeProfile
+// ============================================================================
+
+function AgentConfigSections({ agentId, agentName, scopeId }: { agentId: string; agentName: string; scopeId?: string }) {
+  // Use the scopeId if available, otherwise use agentId as the identifier for panels
+  const effectiveId = scopeId || agentId
+  const effectiveName = agentName
+  const [mcpPanelOpen, setMcpPanelOpen] = useState(false)
+
+  return (
+    <div className="space-y-6">
+      {/* MCP Servers */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+            MCP Servers
+          </h3>
+          <button
+            onClick={() => setMcpPanelOpen(true)}
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            Manage
+          </button>
+        </div>
+        <MCPServersPanel open={mcpPanelOpen} onClose={() => setMcpPanelOpen(false)} sessionId={null} />
+      </div>
+
+      {/* Knowledge Base */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+        <DocGroupsPanel scopeId={effectiveId} scopeName={effectiveName} />
+      </div>
+
+      {/* IM Channels */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+        <IMChannelsPanel scopeId={effectiveId} scopeName={effectiveName} />
+      </div>
+
+      {/* Memory */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+        <ScopeMemoryPanel scopeId={effectiveId} scopeName={effectiveName} />
+      </div>
+    </div>
+  )
 }

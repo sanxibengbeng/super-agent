@@ -1,7 +1,42 @@
 import { FastifyInstance } from 'fastify';
 import { avatarService } from '../services/avatarService.js';
+import { authenticate } from '../middleware/auth.js';
+import multipart from '@fastify/multipart';
 
 export async function avatarRoutes(fastify: FastifyInstance) {
+  // Register multipart for photo upload
+  await fastify.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
+
+  // Upload avatar photo (user-provided image)
+  fastify.post('/avatars/upload', {
+    preHandler: [authenticate],
+  }, async (request, reply) => {
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ error: 'No file uploaded' });
+
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(data.mimetype)) {
+      return reply.code(400).send({ error: 'Invalid file type. Allowed: PNG, JPEG, WebP, GIF' });
+    }
+
+    const buffer = await data.toBuffer();
+    const ext = data.mimetype.split('/')[1] === 'jpeg' ? 'jpg' : data.mimetype.split('/')[1];
+    const filename = `avatars/${Date.now()}-${Math.random().toString(36).substring(2)}.${ext}`;
+
+    const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const s3 = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+    const bucket = process.env.S3_AVATARS_BUCKET || process.env.S3_BUCKET_NAME || 'super-agent-avatars';
+
+    await s3.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: filename,
+      Body: buffer,
+      ContentType: data.mimetype,
+    }));
+
+    return reply.send({ avatarKey: filename });
+  });
+
   // Generate avatar image
   fastify.post('/avatars/generate', {
     schema: {

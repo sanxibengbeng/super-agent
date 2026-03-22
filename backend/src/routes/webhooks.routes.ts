@@ -353,6 +353,7 @@ export async function webhooksRoutes(fastify: FastifyInstance): Promise<void> {
 
         return reply.status(200).send(result);
       } catch (error: any) {
+        request.log.error({ err: error, webhookId: request.params.webhookId }, 'Webhook trigger failed');
         if (error.message === 'Webhook not found') {
           throw AppError.notFound('Webhook not found');
         }
@@ -361,6 +362,75 @@ export async function webhooksRoutes(fastify: FastifyInstance): Promise<void> {
         }
         if (error.message === 'IP address not allowed') {
           throw AppError.forbidden('IP address not allowed');
+        }
+        throw error;
+      }
+    }
+  );
+
+  // ========================================================================
+  // Public Status Query Route (no authentication)
+  // ========================================================================
+
+  /**
+   * GET /v1/webhook/status/:callRecordId
+   * Query webhook call status and workflow execution progress (public endpoint)
+   */
+  fastify.get<{ Params: { callRecordId: string } }>(
+    '/v1/webhook/status/:callRecordId',
+    {
+      schema: {
+        description: 'Query webhook call status and execution progress (public endpoint)',
+        tags: ['Webhooks'],
+        params: {
+          type: 'object',
+          required: ['callRecordId'],
+          properties: {
+            callRecordId: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              callRecordId: { type: 'string' },
+              status: { type: 'string' },
+              errorMessage: { type: ['string', 'null'] },
+              createdAt: { type: 'string', format: 'date-time' },
+              execution: {
+                type: ['object', 'null'],
+                properties: {
+                  status: { type: 'string' },
+                  startedAt: { type: 'string', format: 'date-time' },
+                  completedAt: { type: ['string', 'null'], format: 'date-time' },
+                  nodes: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        nodeId: { type: 'string' },
+                        nodeType: { type: 'string' },
+                        status: { type: 'string' },
+                        progress: { type: 'number' },
+                        startedAt: { type: ['string', 'null'], format: 'date-time' },
+                        completedAt: { type: ['string', 'null'], format: 'date-time' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const result = await webhookService.getCallStatus(request.params.callRecordId);
+        return reply.status(200).send(result);
+      } catch (error: any) {
+        if (error.message === 'Call record not found') {
+          throw AppError.notFound('Call record not found');
         }
         throw error;
       }

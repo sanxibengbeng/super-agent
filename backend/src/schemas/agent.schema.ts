@@ -33,6 +33,8 @@ export const createAgentSchema = z.object({
   scope: z.array(z.unknown()).default([]),
   system_prompt: z.string().optional().nullable(),
   model_config: z.record(z.string(), z.unknown()).default({}),
+  origin: z.enum(['scope_generation', 'manual', 'chat_created', 'cloned', 'imported', 'digital_twin']).default('scope_generation'),
+  is_shared: z.boolean().default(false),
 });
 
 /**

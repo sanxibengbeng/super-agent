@@ -184,6 +184,10 @@ export class BusinessScopeService {
           icon: data.icon ?? null,
           color: data.color ?? null,
           is_default: data.is_default ?? false,
+          scope_type: data.scope_type ?? 'business',
+          avatar: data.avatar ?? null,
+          role: data.role ?? null,
+          system_prompt: data.system_prompt ?? null,
         },
         organizationId
       );
@@ -246,6 +250,10 @@ export class BusinessScopeService {
     if (data.icon !== undefined) updateData.icon = data.icon;
     if (data.color !== undefined) updateData.color = data.color;
     if (data.is_default !== undefined) updateData.is_default = data.is_default;
+    if (data.scope_type !== undefined) updateData.scope_type = data.scope_type;
+    if (data.avatar !== undefined) updateData.avatar = data.avatar;
+    if (data.role !== undefined) updateData.role = data.role;
+    if (data.system_prompt !== undefined) updateData.system_prompt = data.system_prompt;
 
     try {
       const updatedScope = await businessScopeRepository.update(id, organizationId, updateData);

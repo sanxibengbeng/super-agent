@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle, Plus, X, Pencil, Zap } from 'lucide-react'
+import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle, Plus, X, Pencil, Zap, Upload } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { useAgents } from '@/services'
 import { useBusinessScopes } from '@/services/useBusinessScopes'
 import { restClient } from '@/services/api/restClient'
+import { getAvatarDisplayUrl, shouldShowAvatarImage } from '@/utils/avatarUtils'
 import type { Agent, AgentStatus, Tool } from '@/types'
 
 interface FormState {
@@ -65,6 +66,23 @@ export function AgentConfigurator() {
     async function loadAgent() {
       if (!agentId) {
         setError('No agent ID provided')
+        setIsLoading(false)
+        return
+      }
+
+      // "new" means create mode — skip loading
+      if (agentId === 'new') {
+        setAgent(null)
+        setForm({
+          internalName: '',
+          displayName: '',
+          role: '',
+          avatar: '',
+          status: 'active',
+          systemPrompt: '',
+          scope: [],
+          tools: [],
+        })
         setIsLoading(false)
         return
       }
@@ -177,10 +195,42 @@ export function AgentConfigurator() {
     handleInputChange('tools', form.tools.filter(t => t.id !== toolId))
   }
 
+  const isCreateMode = agentId === 'new'
+
   const handleSave = async () => {
-    if (!agent || !agentId) return
+    if (!form.internalName.trim() || !form.displayName.trim()) {
+      showToast('error', 'Name and display name are required')
+      return
+    }
 
     setIsSaving(true)
+
+    if (isCreateMode) {
+      // Create new agent via REST API
+      try {
+        const created = await restClient.post<{ id: string }>('/api/agents', {
+          name: form.internalName,
+          display_name: form.displayName,
+          role: form.role || null,
+          avatar: form.avatar || null,
+          status: form.status,
+          system_prompt: form.systemPrompt || null,
+          scope: form.scope,
+          tools: form.tools,
+          origin: 'manual',
+        })
+        setIsSaving(false)
+        showToast('success', 'Agent created successfully')
+        // Navigate to the new agent's page
+        setTimeout(() => navigate(`/agents?id=${created.id}`), 500)
+      } catch (err) {
+        setIsSaving(false)
+        showToast('error', err instanceof Error ? err.message : 'Failed to create agent')
+      }
+      return
+    }
+
+    if (!agent || !agentId) return
 
     const updatedAgent = await updateAgent(agentId, {
       name: form.internalName,
@@ -204,7 +254,11 @@ export function AgentConfigurator() {
   }
 
   const handleBack = () => {
-    navigate(`/agents?id=${agentId}`)
+    if (isCreateMode) {
+      navigate('/agents')
+    } else {
+      navigate(`/agents?id=${agentId}`)
+    }
   }
 
   if (isLoading) {
@@ -215,7 +269,7 @@ export function AgentConfigurator() {
     )
   }
 
-  if (error || !agent) {
+  if (error || (!agent && !isCreateMode)) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
         <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
@@ -261,9 +315,9 @@ export function AgentConfigurator() {
             </button>
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-white">{agent.displayName}</h1>
-                {(() => {
-                  const scope = businessScopes.find(s => s.id === (agent.businessScopeId || agent.department))
+                <h1 className="text-xl font-bold text-white">{isCreateMode ? 'Create New Agent' : (agent?.displayName ?? '')}</h1>
+                {!isCreateMode && (() => {
+                  const scope = businessScopes.find(s => s.id === (agent?.businessScopeId || agent?.department))
                   return scope ? (
                     <span className="text-sm text-gray-400 border-l border-gray-700 pl-3">
                       {scope.icon} {scope.name}
@@ -271,17 +325,19 @@ export function AgentConfigurator() {
                   ) : null
                 })()}
               </div>
-              <p className="text-sm text-gray-500">{t('agentConfig.title')}</p>
+              <p className="text-sm text-gray-500">{isCreateMode ? 'Configure your new agent' : t('agentConfig.title')}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate(`/agents/config/${agentId}/workshop`)}
-              className="flex items-center gap-2 px-4 py-2 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-600/40 rounded-lg text-yellow-400 transition-colors"
-            >
-              <Zap className="w-4 h-4" />
-              <span>Skill Workshop</span>
-            </button>
+            {!isCreateMode && (
+              <button
+                onClick={() => navigate(`/agents/config/${agentId}/workshop`)}
+                className="flex items-center gap-2 px-4 py-2 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-600/40 rounded-lg text-yellow-400 transition-colors"
+              >
+                <Zap className="w-4 h-4" />
+                <span>Skill Workshop</span>
+              </button>
+            )}
             <button
               onClick={handleSave}
               disabled={isSaving}
@@ -304,15 +360,17 @@ export function AgentConfigurator() {
           {/* Basic Information Section */}
           <SectionHeader title={t('agentConfig.basicInfo')} />
           
-          {/* Agent ID (Read-only) */}
-          <FormField label={t('agentConfig.agentId')}>
-            <input
-              type="text"
-              value={agent.id}
-              readOnly
-              className="w-full px-4 py-2 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-400 cursor-not-allowed"
-            />
-          </FormField>
+          {/* Agent ID (Read-only, hidden in create mode) */}
+          {!isCreateMode && (
+            <FormField label={t('agentConfig.agentId')}>
+              <input
+                type="text"
+                value={agent?.id ?? ''}
+                readOnly
+                className="w-full px-4 py-2 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-400 cursor-not-allowed"
+              />
+            </FormField>
+          )}
 
           {/* Internal Name */}
           <FormField label={t('agentConfig.internalName')}>
@@ -325,28 +383,92 @@ export function AgentConfigurator() {
             />
           </FormField>
 
+          {/* Display Name */}
+          <FormField label="Display Name">
+            <input
+              type="text"
+              value={form.displayName}
+              onChange={(e) => handleInputChange('displayName', e.target.value)}
+              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
+              placeholder="e.g., HR Assistant"
+            />
+          </FormField>
+
+          {/* Role */}
+          <FormField label="Role">
+            <input
+              type="text"
+              value={form.role}
+              onChange={(e) => handleInputChange('role', e.target.value)}
+              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
+              placeholder="e.g., Human Resources Specialist"
+            />
+          </FormField>
+
           {/* Avatar */}
           <FormField label={t('agentConfig.avatar')}>
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center text-xl overflow-hidden">
-                {form.avatar?.startsWith('data:image/') || form.avatar?.startsWith('http') ? (
-                  <img 
-                    src={form.avatar} 
-                    alt="Avatar preview"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  form.avatar || form.displayName.charAt(0) || '?'
-                )}
+                {(() => {
+                  const avatarUrl = getAvatarDisplayUrl(form.avatar)
+                  const showImage = shouldShowAvatarImage(form.avatar) || form.avatar?.startsWith('data:image/') || form.avatar?.startsWith('http')
+                  if (showImage && avatarUrl) {
+                    return (
+                      <img 
+                        src={avatarUrl} 
+                        alt="Avatar preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                          e.currentTarget.parentElement!.textContent = form.displayName.charAt(0) || '?'
+                        }}
+                      />
+                    )
+                  }
+                  return form.avatar || form.displayName.charAt(0) || '?'
+                })()}
               </div>
-              <input
-                type="text"
-                value={form.avatar}
-                onChange={(e) => handleInputChange('avatar', e.target.value)}
-                className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
-                placeholder="Single character or emoji"
-                maxLength={2}
-              />
+              <div className="flex-1 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={form.avatar}
+                  onChange={(e) => handleInputChange('avatar', e.target.value)}
+                  className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors text-sm"
+                  placeholder="avatars/key.png, URL, or character"
+                />
+                <label className="flex items-center gap-1.5 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg cursor-pointer transition-colors text-sm">
+                  <Upload size={14} />
+                  <span>Upload</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      const formData = new FormData()
+                      formData.append('file', file)
+                      const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+                      const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
+                      try {
+                        const res = await fetch(`${baseUrl}/api/avatars/upload`, {
+                          method: 'POST',
+                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                          body: formData,
+                        })
+                        if (!res.ok) throw new Error('Upload failed')
+                        const data = await res.json()
+                        if (data.avatarKey) {
+                          handleInputChange('avatar', data.avatarKey)
+                        }
+                      } catch (err) {
+                        console.error('Avatar upload failed:', err)
+                      }
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+              </div>
             </div>
           </FormField>
 

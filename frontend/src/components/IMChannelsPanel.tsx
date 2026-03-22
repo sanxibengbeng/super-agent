@@ -33,6 +33,8 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
     channel_id: '',
     channel_name: '',
     bot_token: '',
+    webhook_url: '',
+    config: {},
   })
   const [isSaving, setIsSaving] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -44,7 +46,7 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
     setIsSaving(false)
     if (result) {
       setShowForm(false)
-      setFormData({ channel_type: 'slack', channel_id: '', channel_name: '', bot_token: '' })
+      setFormData({ channel_type: 'slack', channel_id: '', channel_name: '', bot_token: '', webhook_url: '', config: {} })
     }
   }
 
@@ -156,15 +158,110 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
 
           {formData.channel_type !== 'webhook' && (
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Bot Token</label>
+              <label className="block text-xs text-gray-400 mb-1">
+                {formData.channel_type === 'feishu' ? 'App Secret' : 'Bot Token'}
+              </label>
               <input
                 type="password"
                 value={formData.bot_token || ''}
                 onChange={e => setFormData(prev => ({ ...prev, bot_token: e.target.value }))}
                 placeholder={formData.channel_type === 'slack' ? 'xoxb-...' :
                              formData.channel_type === 'telegram' ? '123456:ABC-DEF...' :
-                             formData.channel_type === 'feishu' ? 'App Secret' :
+                             formData.channel_type === 'feishu' ? 'cli_a...' :
                              formData.channel_type === 'dingtalk' ? 'App Secret' : 'Bot token'}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {/* Platform-specific config fields */}
+          {formData.channel_type === 'feishu' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">App ID</label>
+                <input
+                  type="text"
+                  value={(formData.config as Record<string, string>)?.app_id || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    config: { ...prev.config, app_id: e.target.value },
+                  }))}
+                  placeholder="cli_a1234567890b"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Verification Token (optional)</label>
+                <input
+                  type="password"
+                  value={(formData.config as Record<string, string>)?.verification_token || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    config: { ...prev.config, verification_token: e.target.value },
+                  }))}
+                  placeholder="Event verification token"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {formData.channel_type === 'slack' && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Signing Secret (optional, for request verification)</label>
+              <input
+                type="password"
+                value={(formData.config as Record<string, string>)?.signing_secret || ''}
+                onChange={e => setFormData(prev => ({
+                  ...prev,
+                  config: { ...prev.config, signing_secret: e.target.value },
+                }))}
+                placeholder="Slack app signing secret"
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {formData.channel_type === 'discord' && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Public Key (for interaction verification)</label>
+              <input
+                type="text"
+                value={(formData.config as Record<string, string>)?.public_key || ''}
+                onChange={e => setFormData(prev => ({
+                  ...prev,
+                  config: { ...prev.config, public_key: e.target.value },
+                }))}
+                placeholder="Discord application public key"
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {formData.channel_type === 'telegram' && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Webhook Secret Token (optional)</label>
+              <input
+                type="password"
+                value={(formData.config as Record<string, string>)?.secret_token || ''}
+                onChange={e => setFormData(prev => ({
+                  ...prev,
+                  config: { ...prev.config, secret_token: e.target.value },
+                }))}
+                placeholder="Secret token for webhook verification"
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {formData.channel_type === 'dingtalk' && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Outgoing Webhook URL (for replies)</label>
+              <input
+                type="text"
+                value={formData.webhook_url || ''}
+                onChange={e => setFormData(prev => ({ ...prev, webhook_url: e.target.value }))}
+                placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
               />
             </div>
@@ -278,11 +375,28 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
 
       {/* Setup Instructions */}
       {bindings.length > 0 && (
-        <div className="bg-gray-800/30 border border-gray-700/50 rounded-lg p-3">
+        <div className="bg-gray-800/30 border border-gray-700/50 rounded-lg p-3 space-y-2">
           <p className="text-xs text-gray-400">
-            <strong className="text-gray-300">Slack setup:</strong> Point your Slack app's Event Subscriptions URL to{' '}
-            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3000')}/api/im/slack/events</code>
-            {' '}and subscribe to <code className="text-blue-400 bg-gray-900 px-1 rounded">message.channels</code> events.
+            <strong className="text-gray-300">Slack:</strong> Set Event Subscriptions URL to{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/slack/events</code>
+            {' '}and subscribe to <code className="text-blue-400 bg-gray-900 px-1 rounded">message.channels</code>.
+          </p>
+          <p className="text-xs text-gray-400">
+            <strong className="text-gray-300">Telegram:</strong> Call{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">setWebhook</code> with URL{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/telegram/webhook</code>
+          </p>
+          <p className="text-xs text-gray-400">
+            <strong className="text-gray-300">Feishu:</strong> Set Event Subscription URL to{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/feishu/events</code>
+          </p>
+          <p className="text-xs text-gray-400">
+            <strong className="text-gray-300">Discord:</strong> Set Interactions Endpoint URL to{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/discord/interactions</code>
+          </p>
+          <p className="text-xs text-gray-400">
+            <strong className="text-gray-300">DingTalk:</strong> Set Robot callback URL to{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/dingtalk/callback</code>
           </p>
         </div>
       )}

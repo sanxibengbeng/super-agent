@@ -174,9 +174,19 @@ export class AgentService {
         scope: data.scope ?? [],
         system_prompt: data.system_prompt ?? null,
         model_config: data.model_config ?? {},
+        origin: data.origin ?? 'scope_generation',
+        is_shared: data.is_shared ?? false,
       },
       organizationId
     );
+
+    // Create scope assignment if agent belongs to a scope
+    if (agent.business_scope_id) {
+      const { agentScopeAssignmentRepository } = await import('../repositories/agent-scope-assignment.repository.js');
+      await agentScopeAssignmentRepository.assign(agent.id, agent.business_scope_id, true).catch((err) => {
+        console.error(`Failed to create scope assignment for agent ${agent.id}:`, err);
+      });
+    }
 
     // Bump scope config version if agent belongs to a scope
     if (agent.business_scope_id) {

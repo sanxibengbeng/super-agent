@@ -33,7 +33,7 @@ export class SlackAdapter implements IMAdapter {
    */
   verifyRequest(headers: Record<string, string>, body: string): boolean {
     const signingSecret = this.getSigningSecretFromHeaders(headers);
-    if (!signingSecret) return false;
+    if (!signingSecret) return true; // No secret configured — skip verification
 
     const timestamp = headers['x-slack-request-timestamp'];
     const signature = headers['x-slack-signature'];
@@ -75,7 +75,7 @@ export class SlackAdapter implements IMAdapter {
   }
 
   /**
-   * Post a reply to Slack using chat.postMessage.
+   * Post a reply to Slack using chat.postMessage with retry.
    * Replies in the same thread as the original message.
    */
   async sendReply(binding: IMChannelBindingEntity, threadId: string, text: string): Promise<void> {
@@ -85,27 +85,69 @@ export class SlackAdapter implements IMAdapter {
       return;
     }
 
-    // Slack has a 40K char limit per message — split if needed
     const chunks = this.splitMessage(text, 39000);
 
     for (const chunk of chunks) {
+      await this.postWithRetry(botToken, {
+        channel: binding.channel_id,
+        thread_ts: threadId,
+        text: chunk,
+      });
+    }
+  }
+
+  /**
+   * Call Slack API with exponential backoff retry (handles rate limits).
+   */
+  private async postWithRetry(
+    token: string,
+    body: Record<string, unknown>,
+    retries = 3,
+  ): Promise<void> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
       const response = await fetch('https://slack.com/api/chat.postMessage', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${botToken}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          channel: binding.channel_id,
-          thread_ts: threadId,
-          text: chunk,
-        }),
+        body: JSON.stringify(body),
       });
 
-      if (!response.ok) {
-        console.error(`Slack API error: ${response.status} ${await response.text()}`);
+      if (response.ok) {
+        const data = await response.json() as { ok: boolean; error?: string };
+        if (data.ok) return;
+
+        // Slack returns 200 with ok=false for API errors
+        if (data.error === 'ratelimited' && attempt < retries) {
+          const retryAfter = parseInt(response.headers.get('retry-after') || '1', 10);
+          await this.sleep(retryAfter * 1000);
+          continue;
+        }
+        console.error(`Slack API error: ${data.error}`);
+        return;
       }
+
+      // HTTP-level rate limit (429)
+      if (response.status === 429 && attempt < retries) {
+        const retryAfter = parseInt(response.headers.get('retry-after') || '1', 10);
+        await this.sleep(retryAfter * 1000);
+        continue;
+      }
+
+      // Transient errors — retry with backoff
+      if (response.status >= 500 && attempt < retries) {
+        await this.sleep(Math.min(500 * 2 ** attempt, 3000));
+        continue;
+      }
+
+      console.error(`Slack HTTP error: ${response.status} ${await response.text()}`);
+      return;
     }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

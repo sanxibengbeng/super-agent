@@ -17,7 +17,8 @@
 
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
-import { claudeAgentService, type AgentConfig, type ConversationEvent } from './claude-agent.service.js';
+import { agentRuntime } from './agent-runtime-factory.js';
+import type { AgentConfig, ConversationEvent } from './agent-runtime.js';
 import { workspaceManager, type ScopeForWorkspace, type SkillForWorkspace } from './workspace-manager.js';
 import { businessScopeService } from './businessScope.service.js';
 import { skillService } from './skill.service.js';
@@ -486,7 +487,7 @@ export class WorkflowOrchestrator {
     // Run the Claude session for this single node
     const textParts: string[] = [];
 
-    const generator = claudeAgentService.runConversation(
+    const generator = agentRuntime.runConversation(
       {
         agentId: agentConfig.id,
         message: fullMessage,

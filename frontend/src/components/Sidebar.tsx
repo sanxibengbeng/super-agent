@@ -6,6 +6,7 @@ import {
   Users,
   Wrench,
   Rocket,
+  FolderKanban,
 } from 'lucide-react'
 import type { NavigationPage } from '@/types'
 import { useTranslation } from '@/i18n'
@@ -43,6 +44,12 @@ const navItems: NavItemConfig[] = [
     path: '/agents',
   },
   {
+    id: 'projects',
+    icon: <FolderKanban className="w-5 h-5" />,
+    tooltipKey: 'nav.projects',
+    path: '/projects',
+  },
+  {
     id: 'tools',
     icon: <Wrench className="w-5 h-5" />,
     tooltipKey: 'nav.tools',
@@ -72,6 +79,7 @@ export function Sidebar({ onAvatarClick, isAdminMenuOpen }: SidebarProps) {
     if (path.startsWith('/chat')) return 'chat'
     if (path.startsWith('/workflow')) return 'workflow'
     if (path.startsWith('/agents')) return 'agents'
+    if (path.startsWith('/projects')) return 'projects'
     if (path.startsWith('/tools')) return 'tools'
     if (path.startsWith('/apps')) return 'apps'
     return 'dashboard'

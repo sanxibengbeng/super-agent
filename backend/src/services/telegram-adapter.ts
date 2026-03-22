@@ -91,6 +91,47 @@ export class TelegramAdapter implements IMAdapter {
     }
     return chunks;
   }
+  /**
+   * Register a webhook URL with Telegram Bot API.
+   * Call this once when a binding is created or the URL changes.
+   */
+  async setWebhook(
+    botToken: string,
+    webhookUrl: string,
+    secretToken?: string,
+  ): Promise<{ ok: boolean; description?: string }> {
+    const body: Record<string, unknown> = { url: webhookUrl };
+    if (secretToken) body.secret_token = secretToken;
+    // Only receive message updates
+    body.allowed_updates = ['message'];
+
+    const response = await fetch(
+      `https://api.telegram.org/bot${botToken}/setWebhook`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+
+    const data = await response.json() as { ok: boolean; description?: string };
+    if (!data.ok) {
+      console.error(`Telegram setWebhook failed: ${data.description}`);
+    }
+    return data;
+  }
+
+  /**
+   * Remove the webhook (useful for cleanup or switching to polling).
+   */
+  async deleteWebhook(botToken: string): Promise<boolean> {
+    const response = await fetch(
+      `https://api.telegram.org/bot${botToken}/deleteWebhook`,
+      { method: 'POST' },
+    );
+    const data = await response.json() as { ok: boolean };
+    return data.ok;
+  }
 }
 
 export const telegramAdapter = new TelegramAdapter();

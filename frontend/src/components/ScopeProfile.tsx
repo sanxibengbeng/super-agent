@@ -421,10 +421,27 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
       {/* ============================================================ */}
       <div className="px-6 pt-6 pb-4 border-b border-gray-800">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-            {scope.icon
-              ? <span className="text-xl">{scope.icon}</span>
-              : <Briefcase className="w-6 h-6 text-white" />}
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0 overflow-hidden">
+            {(() => {
+              const avatarUrl = getAvatarDisplayUrl(scope.avatar)
+              const showImage = shouldShowAvatarImage(scope.avatar)
+              if (showImage && avatarUrl) {
+                return (
+                  <img
+                    src={avatarUrl}
+                    alt={scope.name}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                      e.currentTarget.parentElement!.textContent = scope.icon || scope.name.charAt(0)
+                    }}
+                  />
+                )
+              }
+              return scope.icon
+                ? <span className="text-xl">{scope.icon}</span>
+                : <Briefcase className="w-6 h-6 text-white" />
+            })()}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3">

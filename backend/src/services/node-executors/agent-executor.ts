@@ -15,7 +15,9 @@ import { aiService } from '../ai.service.js';
 import { WorkspaceManager, type SkillForWorkspace } from '../workspace-manager.js';
 import { skillService } from '../skill.service.js';
 import type {
-  ClaudeAgentService,
+  AgentRuntime,
+} from '../agent-runtime.js';
+import type {
   AgentConfig,
 } from '../claude-agent.service.js';
 import { agentStatusService } from '../agent-status.service.js';
@@ -66,16 +68,16 @@ interface AgentNodeMeta {
 export class AgentNodeExecutor extends BaseNodeExecutor {
   readonly supportedTypes: CanvasNodeType[] = ['agent'];
 
-  /** Lazy-loaded Claude Agent Service (avoids circular imports) */
-  private claudeAgentService: ClaudeAgentService | null = null;
+  /** Lazy-loaded agent runtime (avoids circular imports) */
+  private runtime: AgentRuntime | null = null;
   private workspaceManager: WorkspaceManager | null = null;
 
-  private async getClaudeAgentService(): Promise<ClaudeAgentService> {
-    if (!this.claudeAgentService) {
-      const mod = await import('../claude-agent.service.js');
-      this.claudeAgentService = mod.claudeAgentService;
+  private async getAgentRuntime(): Promise<AgentRuntime> {
+    if (!this.runtime) {
+      const mod = await import('../agent-runtime-factory.js');
+      this.runtime = mod.agentRuntime;
     }
-    return this.claudeAgentService;
+    return this.runtime;
   }
 
   private getWorkspaceManager(): WorkspaceManager {
@@ -142,7 +144,7 @@ export class AgentNodeExecutor extends BaseNodeExecutor {
     context: NodeExecutionParams['context'],
   ): Promise<NodeExecutionResult> {
     try {
-      const claudeService = await this.getClaudeAgentService();
+      const runtime = await this.getAgentRuntime();
       const wm = this.getWorkspaceManager();
 
       // Load agent's skills from DB
@@ -167,7 +169,7 @@ export class AgentNodeExecutor extends BaseNodeExecutor {
       const toolUses: Array<{ name: string; input: Record<string, unknown> }> = [];
       let claudeSessionId: string | undefined;
 
-      const conversation = claudeService.runConversation(
+      const conversation = runtime.runConversation(
         {
           agentId,
           message: query,

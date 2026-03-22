@@ -17,7 +17,9 @@
 
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
-import { claudeAgentService, type AgentConfig, type ConversationEvent, type AnyMCPServerConfig } from './claude-agent.service.js';
+import { agentRuntime } from './agent-runtime-factory.js';
+import type { AgentConfig, ConversationEvent } from './agent-runtime.js';
+import type { AnyMCPServerConfig } from './claude-agent.service.js';
 import { createWorkflowProgressServer } from './workflow-progress-mcp.js';
 import { provisionWorkflowWorkspace } from './workflow-workspace.js';
 import { checkpointService, type CheckpointType } from './checkpoint.service.js';
@@ -697,7 +699,7 @@ export class WorkflowExecutorV2 {
     try {
       const userMessage = `Please execute the following workflow. For each step: (1) call workflow_step_start, (2) do the work, (3) call workflow_step_complete or workflow_step_failed.\n\n${missionBrief}`;
 
-      const generator = claudeAgentService.runConversation(
+      const generator = agentRuntime.runConversation(
         {
           agentId: agentConfig.id,
           message: userMessage,

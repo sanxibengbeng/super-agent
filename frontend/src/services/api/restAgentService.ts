@@ -73,7 +73,7 @@ function mapAgentToApiRequest(agent: Partial<Agent>): Record<string, unknown> {
 }
 
 function mapBusinessScopeToDepartment(businessScopeId: string | null): Department {
-  return (businessScopeId || 'it') as Department;
+  return (businessScopeId || '__independent__') as Department;
 }
 
 function parseMetrics(metrics: unknown): AgentMetrics {

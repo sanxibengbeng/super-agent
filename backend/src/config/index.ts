@@ -81,12 +81,18 @@ const envSchema = z.object({
   LANGFUSE_BASE_URL: z.string().optional(),
 
   // AgentCore Runtime (container-isolated agent execution)
-  USE_AGENTCORE: z.string().optional().default('false'),
+  AGENTCORE_RUNTIME_ARN: z.string().optional(),
   AGENTCORE_BASE_IMAGE: z.string().optional(),
   AGENTCORE_EXECUTION_ROLE_ARN: z.string().optional(),
   AGENTCORE_BACKEND_API_URL: z.string().optional(),
   AGENTCORE_BACKEND_API_KEY: z.string().optional(),
   AGENTCORE_WORKSPACE_S3_BUCKET: z.string().optional().default('super-agent-workspaces'),
+
+  // Agent Runtime selection: "claude" (default), "agentcore", or "openclaw"
+  AGENT_RUNTIME: z.enum(['claude', 'agentcore', 'openclaw']).optional().default('claude'),
+
+  // OpenClaw on AgentCore (when AGENT_RUNTIME=openclaw)
+  OPENCLAW_AGENTCORE_RUNTIME_ARN: z.string().optional(),
 });
 
 function loadConfig(): z.infer<typeof envSchema> {
@@ -186,13 +192,19 @@ export const config = {
   },
 
   agentcore: {
-    enabled: env.USE_AGENTCORE === 'true' || env.USE_AGENTCORE === '1',
+    runtimeArn: env.AGENTCORE_RUNTIME_ARN,
     baseImage: env.AGENTCORE_BASE_IMAGE,
     executionRoleArn: env.AGENTCORE_EXECUTION_ROLE_ARN,
     backendApiUrl: env.AGENTCORE_BACKEND_API_URL,
     backendApiKey: env.AGENTCORE_BACKEND_API_KEY,
     workspaceS3Bucket: env.AGENTCORE_WORKSPACE_S3_BUCKET,
     region: env.AWS_REGION,
+  },
+
+  agentRuntime: env.AGENT_RUNTIME,
+
+  openclaw: {
+    agentCoreRuntimeArn: env.OPENCLAW_AGENTCORE_RUNTIME_ARN,
   },
 
   logLevel: env.LOG_LEVEL,

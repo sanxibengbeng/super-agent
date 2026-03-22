@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useContext, useMemo } from 'react'
-import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, Rocket, RefreshCw, ExternalLink, Brain, Download } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, Rocket, RefreshCw, ExternalLink, Brain, Download, Users } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from 'highlight.js'
@@ -13,6 +14,7 @@ import { WorkspaceActions } from '@/components/WorkspaceActions'
 import { ChatProvider, ChatContext } from '@/services/ChatContext'
 import { AgentService } from '@/services/agentService'
 import { BusinessScopeService, type BusinessScope } from '@/services/businessScopeService'
+import { RestChatRoomService } from '@/services/api/restChatRoomService'
 import type { QuickQuestion, Agent } from '@/types'
 import { getAvatarDisplayUrl, getAvatarFallback, shouldShowAvatarImage } from '@/utils/avatarUtils'
 import { restClient } from '@/services/api/restClient'
@@ -470,7 +472,208 @@ function PublishedAppPreviewTab({ url, name }: { url: string; name: string }) {
 }
 
 // ============================================================================
-// Business Scope Selector (required)
+// Unified Chat Selector — single dropdown for scopes + independent agents
+// ============================================================================
+
+interface UnifiedChatSelectorProps {
+  selectedScopeId: string | null
+  selectedAgentId: string | null
+  onSelectScope: (scopeId: string) => void
+  onSelectIndependentAgent: (agentId: string) => void
+}
+
+function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, onSelectIndependentAgent }: UnifiedChatSelectorProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [scopes, setScopes] = useState<BusinessScope[]>([])
+  const [independentAgents, setIndependentAgents] = useState<Agent[]>([])
+  const [search, setSearch] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [scopeList, allAgents] = await Promise.all([
+          BusinessScopeService.getBusinessScopes(),
+          AgentService.getAgents(),
+        ])
+        setScopes(scopeList)
+        setIndependentAgents(allAgents.filter(a => !a.businessScopeId))
+
+        // Auto-select default scope if nothing is selected
+        if (!selectedScopeId && !selectedAgentId && scopeList.length > 0) {
+          const defaultScope = scopeList.find(s => s.isDefault) || scopeList[0]
+          onSelectScope(defaultScope.id)
+        }
+      } catch (err) {
+        console.error('Failed to load scopes/agents:', err)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    void load()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const selectedScope = scopes.find(s => s.id === selectedScopeId)
+  const selectedIndependentAgent = independentAgents.find(a => a.id === selectedAgentId)
+
+  // Determine display label
+  let displayLabel = 'Select scope or agent'
+  let displayIcon: React.ReactNode = <Layers className="w-4 h-4 text-gray-400" />
+  if (selectedScope) {
+    displayLabel = `${selectedScope.icon || ''} ${selectedScope.name}`.trim()
+    displayIcon = <Layers className="w-4 h-4 text-blue-400" />
+  } else if (selectedIndependentAgent) {
+    displayLabel = selectedIndependentAgent.displayName
+    displayIcon = <Bot className="w-4 h-4 text-green-400" />
+  }
+
+  const lowerSearch = search.toLowerCase()
+  const filteredScopes = scopes.filter(s =>
+    s.name.toLowerCase().includes(lowerSearch) ||
+    (s.description || '').toLowerCase().includes(lowerSearch)
+  )
+  const filteredAgents = independentAgents.filter(a =>
+    a.displayName.toLowerCase().includes(lowerSearch) ||
+    (a.role || '').toLowerCase().includes(lowerSearch) ||
+    a.name.toLowerCase().includes(lowerSearch)
+  )
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm">
+        <span className="text-gray-400">Loading...</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg hover:border-gray-600 transition-colors text-sm min-w-[200px]"
+      >
+        {displayIcon}
+        <span className="text-white font-medium truncate max-w-[200px]">{displayLabel}</span>
+        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ml-auto ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 w-80 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-30 overflow-hidden">
+          {/* Search */}
+          <div className="p-2 border-b border-gray-700">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search scopes or agents..."
+              className="w-full px-3 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500"
+              autoFocus
+            />
+          </div>
+
+          <div className="max-h-80 overflow-y-auto">
+            {/* Business Scopes */}
+            {filteredScopes.length > 0 && (
+              <>
+                <div className="px-3 py-1.5 text-xs text-gray-500 font-medium uppercase tracking-wider">
+                  Business Scopes
+                </div>
+                {filteredScopes.map(scope => (
+                  <button
+                    key={scope.id}
+                    onClick={() => { onSelectScope(scope.id); setIsOpen(false); setSearch('') }}
+                    className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors ${
+                      scope.id === selectedScopeId ? 'bg-blue-600/20' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0"
+                        style={{ backgroundColor: scope.color || '#4B5563' }}
+                      >
+                        {scope.icon || scope.name.charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-medium truncate ${scope.id === selectedScopeId ? 'text-blue-400' : 'text-white'}`}>
+                          {scope.name}
+                        </div>
+                        {scope.description && (
+                          <div className="text-xs text-gray-400 truncate">{scope.description}</div>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
+
+            {/* Independent Agents */}
+            {filteredAgents.length > 0 && (
+              <>
+                <div className="px-3 py-1.5 text-xs text-gray-500 font-medium uppercase tracking-wider border-t border-gray-700">
+                  Independent Agents
+                </div>
+                {filteredAgents.map(agent => {
+                  const avatarUrl = getAvatarDisplayUrl(agent.avatar)
+                  const fallbackChar = getAvatarFallback(agent.displayName, agent.avatar)
+                  const showImage = shouldShowAvatarImage(agent.avatar)
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => { onSelectIndependentAgent(agent.id); setIsOpen(false); setSearch('') }}
+                      className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors ${
+                        agent.id === selectedAgentId && !selectedScopeId ? 'bg-blue-600/20' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium overflow-hidden flex-shrink-0 ${
+                          agent.status === 'active' ? 'bg-green-600' : 'bg-gray-600'
+                        }`}>
+                          {showImage && avatarUrl ? (
+                            <img src={avatarUrl} alt={agent.displayName} className="w-full h-full object-cover" />
+                          ) : (
+                            fallbackChar
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-sm font-medium truncate ${
+                            agent.id === selectedAgentId && !selectedScopeId ? 'text-blue-400' : 'text-white'
+                          }`}>
+                            {agent.displayName}
+                          </div>
+                          <div className="text-xs text-gray-400 truncate">{agent.role}</div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </>
+            )}
+
+            {filteredScopes.length === 0 && filteredAgents.length === 0 && (
+              <div className="px-3 py-4 text-sm text-gray-500 text-center">No results found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
+// Business Scope Selector (kept for backward compat, no longer used in header)
 // ============================================================================
 
 interface BusinessScopeSelectorProps {
@@ -596,25 +799,31 @@ interface AgentSelectorProps {
 
 function AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: AgentSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const [agents, setAgents] = useState<Agent[]>([])
+  const [scopeAgents, setScopeAgents] = useState<Agent[]>([])
+  const [independentAgents, setIndependentAgents] = useState<Agent[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!selectedScopeId) {
-      setAgents([])
-      return
-    }
     async function loadAgents() {
       setIsLoadingAgents(true)
       try {
-        const agentList = AgentService.getAgentsByBusinessScope
-          ? await AgentService.getAgentsByBusinessScope(selectedScopeId!)
-          : (await AgentService.getAgents()).filter(a => a.businessScopeId === selectedScopeId)
-        setAgents(agentList)
+        const allAgents = await AgentService.getAgents()
+        // Scope agents: those belonging to the selected scope
+        if (selectedScopeId) {
+          const scoped = AgentService.getAgentsByBusinessScope
+            ? await AgentService.getAgentsByBusinessScope(selectedScopeId)
+            : allAgents.filter(a => a.businessScopeId === selectedScopeId)
+          setScopeAgents(scoped)
+        } else {
+          setScopeAgents([])
+        }
+        // Independent agents: those without a scope
+        setIndependentAgents(allAgents.filter(a => !a.businessScopeId))
       } catch (err) {
         console.error('Failed to load agents:', err)
-        setAgents([])
+        setScopeAgents([])
+        setIndependentAgents([])
       } finally {
         setIsLoadingAgents(false)
       }
@@ -622,13 +831,15 @@ function AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: Agen
     void loadAgents()
   }, [selectedScopeId])
 
+  const allAgents = [...scopeAgents, ...independentAgents]
+
   useEffect(() => {
-    if (selectedAgentId && agents.length > 0 && !agents.find(a => a.id === selectedAgentId)) {
+    if (selectedAgentId && allAgents.length > 0 && !allAgents.find(a => a.id === selectedAgentId)) {
       onAgentChange(null)
     }
-  }, [agents, selectedAgentId, onAgentChange])
+  }, [allAgents, selectedAgentId, onAgentChange])
 
-  const selectedAgent = agents.find(a => a.id === selectedAgentId)
+  const selectedAgent = allAgents.find(a => a.id === selectedAgentId)
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -645,7 +856,6 @@ function AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: Agen
     setIsOpen(false)
   }
 
-  if (!selectedScopeId) return null
   if (isLoadingAgents) {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm">
@@ -653,7 +863,40 @@ function AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: Agen
       </div>
     )
   }
-  if (agents.length === 0) return null
+  if (allAgents.length === 0) return null
+
+  const renderAgentItem = (agent: Agent) => {
+    const avatarUrl = getAvatarDisplayUrl(agent.avatar)
+    const fallbackChar = getAvatarFallback(agent.displayName, agent.avatar)
+    const showImage = shouldShowAvatarImage(agent.avatar)
+    return (
+      <button
+        key={agent.id}
+        onClick={() => handleSelect(agent.id)}
+        className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors
+          ${agent.id === selectedAgentId ? 'bg-blue-600/20' : ''}`}
+      >
+        <div className="flex items-center gap-2">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium overflow-hidden
+            ${agent.status === 'active' ? 'bg-green-600' : 
+              agent.status === 'busy' ? 'bg-yellow-600' : 'bg-gray-600'}`}>
+            {showImage && avatarUrl ? (
+              <img src={avatarUrl} alt={agent.displayName} className="w-full h-full object-cover" />
+            ) : (
+              fallbackChar
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className={`text-sm font-medium truncate
+              ${agent.id === selectedAgentId ? 'text-blue-400' : 'text-white'}`}>
+              {agent.displayName}
+            </div>
+            <div className="text-xs text-gray-400 truncate">{agent.role}</div>
+          </div>
+        </div>
+      </button>
+    )
+  }
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -665,62 +908,53 @@ function AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: Agen
         <Bot className="w-4 h-4 text-gray-400" />
         <span className="text-gray-400">Agent:</span>
         <span className="text-white font-medium">
-          {selectedAgent?.displayName || 'Auto (all agents)'}
+          {selectedAgent?.displayName || (selectedScopeId ? 'Auto (all agents)' : 'Select agent')}
         </span>
         <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full right-0 mt-1 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-20 overflow-hidden max-h-80 overflow-y-auto">
-          <button
-            onClick={() => handleSelect(null)}
-            className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors
-              ${!selectedAgentId ? 'bg-blue-600/20' : ''}`}
-          >
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium bg-gray-600">
-                <Layers className="w-4 h-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={`text-sm font-medium ${!selectedAgentId ? 'text-blue-400' : 'text-white'}`}>
-                  Auto (all agents)
+        <div className="absolute top-full right-0 mt-1 w-72 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-20 overflow-hidden max-h-96 overflow-y-auto">
+          {/* Auto option (only when scope is selected) */}
+          {selectedScopeId && (
+            <button
+              onClick={() => handleSelect(null)}
+              className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors
+                ${!selectedAgentId ? 'bg-blue-600/20' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium bg-gray-600">
+                  <Layers className="w-4 h-4" />
                 </div>
-                <div className="text-xs text-gray-400">Let the scope route to the right agent</div>
-              </div>
-            </div>
-          </button>
-          {agents.map((agent) => {
-            const avatarUrl = getAvatarDisplayUrl(agent.avatar)
-            const fallbackChar = getAvatarFallback(agent.displayName, agent.avatar)
-            const showImage = shouldShowAvatarImage(agent.avatar)
-            return (
-              <button
-                key={agent.id}
-                onClick={() => handleSelect(agent.id)}
-                className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors
-                  ${agent.id === selectedAgentId ? 'bg-blue-600/20' : ''}`}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium overflow-hidden
-                    ${agent.status === 'active' ? 'bg-green-600' : 
-                      agent.status === 'busy' ? 'bg-yellow-600' : 'bg-gray-600'}`}>
-                    {showImage && avatarUrl ? (
-                      <img src={avatarUrl} alt={agent.displayName} className="w-full h-full object-cover" />
-                    ) : (
-                      fallbackChar
-                    )}
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-medium ${!selectedAgentId ? 'text-blue-400' : 'text-white'}`}>
+                    Auto (all agents)
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium truncate
-                      ${agent.id === selectedAgentId ? 'text-blue-400' : 'text-white'}`}>
-                      {agent.displayName}
-                    </div>
-                    <div className="text-xs text-gray-400 truncate">{agent.role}</div>
-                  </div>
+                  <div className="text-xs text-gray-400">Let the scope route to the right agent</div>
                 </div>
-              </button>
-            )
-          })}
+              </div>
+            </button>
+          )}
+
+          {/* Scope agents */}
+          {scopeAgents.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-xs text-gray-500 font-medium uppercase tracking-wider border-t border-gray-700">
+                Scope Agents
+              </div>
+              {scopeAgents.map(renderAgentItem)}
+            </>
+          )}
+
+          {/* Independent agents */}
+          {independentAgents.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-xs text-gray-500 font-medium uppercase tracking-wider border-t border-gray-700">
+                Independent Agents
+              </div>
+              {independentAgents.map(renderAgentItem)}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1080,6 +1314,7 @@ function MessageInput({ onSend, onStop, onUpload, sessionId, disabled = false, i
 
 function ChatInterfaceContent() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const {
     messages,
     quickQuestions,
@@ -1128,6 +1363,7 @@ function ChatInterfaceContent() {
   const [fileTabs, setFileTabs] = useState<FileTab[]>([])
   const [activeTab, setActiveTab] = useState<string>('chat')
   const [showSaveMemory, setShowSaveMemory] = useState(false)
+  const [showCreateRoom, setShowCreateRoom] = useState(false)
 
   const handleFileOpen = useCallback((path: string, name: string) => {
     const preview = isPreviewableFile(name)
@@ -1249,7 +1485,7 @@ function ChatInterfaceContent() {
     )
   }
 
-  const noScopeSelected = !selectedBusinessScopeId
+  const noSelection = !selectedBusinessScopeId && !selectedAgentId
   const hasTabs = fileTabs.length > 0
 
   return (
@@ -1265,18 +1501,30 @@ function ChatInterfaceContent() {
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header with scope/agent selectors */}
+        {/* Header with unified selector */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
           <div className="flex items-center gap-3">
-            <BusinessScopeSelector
+            <UnifiedChatSelector
               selectedScopeId={selectedBusinessScopeId}
-              onScopeChange={setSelectedBusinessScope}
-            />
-            <AgentSelector
               selectedAgentId={selectedAgentId}
-              selectedScopeId={selectedBusinessScopeId}
-              onAgentChange={setSelectedAgent}
+              onSelectScope={(scopeId) => {
+                setSelectedBusinessScope(scopeId)
+                setSelectedAgent(null)
+              }}
+              onSelectIndependentAgent={(agentId) => {
+                // Clear scope when selecting an independent agent
+                setSelectedBusinessScope('')
+                setSelectedAgent(agentId)
+              }}
             />
+            <button
+              onClick={() => setShowCreateRoom(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600/20 border border-purple-500/30 rounded-lg hover:bg-purple-600/30 transition-colors text-sm text-purple-300"
+              title="Create a group chat room with multiple agents"
+            >
+              <Users className="w-4 h-4" />
+              <span>Group Chat</span>
+            </button>
           </div>
           <div className="flex items-center gap-1">
             {backendSessionId && selectedBusinessScopeId && (
@@ -1358,16 +1606,15 @@ function ChatInterfaceContent() {
 
         {/* Tab content */}
         {activeTab === 'chat' ? (
-          noScopeSelected ? (
+          noSelection ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
                 <Layers className="w-16 h-16 text-gray-600 mx-auto mb-4" />
                 <h2 className="text-xl font-semibold text-white mb-2">
-                  Select a Business Scope
+                  Start a Conversation
                 </h2>
                 <p className="text-gray-400 max-w-md">
-                  Choose a business scope from the dropdown above to start chatting.
-                  Agents will be available based on the selected scope.
+                  Choose a business scope or an independent agent from the dropdown above to start chatting.
                 </p>
               </div>
             </div>
@@ -1422,6 +1669,18 @@ function ChatInterfaceContent() {
           onClose={() => setShowSaveMemory(false)}
         />
       )}
+
+      {/* Create Group Chat Room dialog */}
+      {showCreateRoom && (
+        <CreateRoomQuickDialog
+          selectedScopeId={selectedBusinessScopeId}
+          onClose={() => setShowCreateRoom(false)}
+          onCreated={(roomId) => {
+            setShowCreateRoom(false)
+            navigate(`/chat/room/${roomId}`)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -1433,5 +1692,60 @@ export function Chat() {
         <ChatInterfaceContent />
       </div>
     </ChatProvider>
+  )
+}
+
+// ============================================================================
+// Quick Create Room Dialog (inline in Chat page)
+// ============================================================================
+
+function CreateRoomQuickDialog({ selectedScopeId, onClose, onCreated }: {
+  selectedScopeId: string | null;
+  onClose: () => void;
+  onCreated: (roomId: string) => void;
+}) {
+  const [isCreating, setIsCreating] = useState(false)
+
+  const handleCreateFromScope = async () => {
+    if (!selectedScopeId) return
+    setIsCreating(true)
+    try {
+      const room = await RestChatRoomService.createRoomFromScope(selectedScopeId)
+      onCreated(room.id)
+    } catch (err) {
+      console.error('Failed to create room:', err)
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-96 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold text-white mb-4">Create Group Chat Room</h3>
+        <p className="text-sm text-gray-400 mb-6">
+          Create a room with multiple AI agents that can collaborate. Use @mention to talk to specific agents.
+        </p>
+
+        {selectedScopeId ? (
+          <button
+            onClick={handleCreateFromScope}
+            disabled={isCreating}
+            className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white rounded-lg transition-colors text-sm font-medium"
+          >
+            {isCreating ? 'Creating...' : 'Create from current scope (all agents)'}
+          </button>
+        ) : (
+          <p className="text-sm text-yellow-400">Select a business scope first to create a group chat room.</p>
+        )}
+
+        <button
+          onClick={onClose}
+          className="w-full mt-3 px-4 py-2 text-gray-400 hover:text-white text-sm transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   )
 }

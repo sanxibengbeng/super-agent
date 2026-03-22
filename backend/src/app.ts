@@ -2,7 +2,17 @@ import Fastify, { FastifyInstance, FastifyRequest, FastifyReply, FastifyError } 
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
+import { createWriteStream } from 'node:fs';
 import { config } from './config/index.js';
+
+// Tee console output to a log file
+const logFile = createWriteStream('backend.log', { flags: 'a' });
+const origLog = console.log;
+const origError = console.error;
+const origWarn = console.warn;
+console.log = (...args: unknown[]) => { origLog(...args); logFile.write(`[LOG ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
+console.error = (...args: unknown[]) => { origError(...args); logFile.write(`[ERR ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
+console.warn = (...args: unknown[]) => { origWarn(...args); logFile.write(`[WRN ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
 import { errorHandler, registerRequestLogger } from './middleware/index.js';
 import { registerRoutes } from './routes/index.js';
 import { executionWebSocketGateway } from './websocket/index.js';

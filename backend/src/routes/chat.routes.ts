@@ -711,20 +711,39 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       const { id } = validateSchema(idParamSchema, request.params);
       const session = await chatService.getSessionById(id, request.user!.orgId);
 
-      if (!session.business_scope_id) {
+      // Determine the scope ID for workspace path: use business_scope_id,
+      // or fall back to project_id from session context (for project workspaces)
+      const context = session.context as Record<string, unknown> | null;
+      const scopeIdForPath = session.business_scope_id
+        || (context?.project_id as string | undefined)
+        || null;
+
+      if (!scopeIdForPath) {
         return reply.status(200).send({ files: [], workspacePath: null });
       }
 
-      const files = await workspaceManager.listWorkspaceFiles(
-        request.user!.orgId,
-        session.business_scope_id,
-        session.id,
-      );
+      // In agentcore mode, read file tree from S3 (container syncs there).
+      // In other modes, read from local filesystem.
+      const { config: appConfig } = await import('../config/index.js');
+      let files;
+      if (appConfig.agentRuntime === 'agentcore') {
+        files = await workspaceManager.listWorkspaceFilesFromS3(
+          request.user!.orgId,
+          scopeIdForPath,
+          session.id,
+        );
+      } else {
+        files = await workspaceManager.listWorkspaceFiles(
+          request.user!.orgId,
+          scopeIdForPath,
+          session.id,
+        );
+      }
 
       return reply.status(200).send({
         files: files ?? [],
         workspacePath: files ? workspaceManager.getSessionWorkspacePath(
-          request.user!.orgId, session.business_scope_id, session.id,
+          request.user!.orgId, scopeIdForPath, session.id,
         ) : null,
       });
     },
@@ -852,6 +871,19 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       );
 
       if (content === null) {
+        // In agentcore mode, fallback to S3 (file may only exist in the container)
+        const { config: appConfig } = await import('../config/index.js');
+        if (appConfig.agentRuntime === 'agentcore') {
+          const s3Content = await workspaceManager.readWorkspaceFileFromS3(
+            request.user!.orgId,
+            session.business_scope_id,
+            session.id,
+            request.query.path,
+          );
+          if (s3Content !== null) {
+            return reply.status(200).send({ path: request.query.path, content: s3Content });
+          }
+        }
         return reply.status(404).send({ error: 'File not found' });
       }
 

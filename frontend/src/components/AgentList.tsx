@@ -77,16 +77,86 @@ export function AgentList({ agents, selectedAgentId, selectedScopeId, onSelectAg
     return legacyMap[scopeId] || { name: scopeId, icon: <Briefcase className="w-4 h-4 text-white" />, color: 'bg-gray-600' }
   }
 
-  // Get all unique scope IDs from agents
-  const scopeIds = Object.keys(agentsByScope)
+  // Get all unique scope IDs from agents, with __independent__ last
+  // Also include scopes that have zero agents (e.g. digital twins)
+  const agentScopeIds = new Set(Object.keys(agentsByScope))
+  const digitalTwinIds = new Set(businessScopes.filter(s => s.scopeType === 'digital_twin').map(s => s.id))
+
+  const allScopeIds = [
+    // Business scopes that have agents (non-digital-twin)
+    ...Object.keys(agentsByScope).filter(id => id !== '__independent__' && !digitalTwinIds.has(id)),
+    // Business scopes with zero agents (non-digital-twin)
+    ...businessScopes.filter(s => !agentScopeIds.has(s.id) && s.scopeType !== 'digital_twin').map(s => s.id),
+    // Digital twin scopes (with or without agents)
+    ...businessScopes.filter(s => s.scopeType === 'digital_twin').map(s => s.id),
+    // Independent agents last
+    ...(agentsByScope['__independent__'] ? ['__independent__'] : []),
+  ]
+  const scopeIds = allScopeIds
 
   return (
     <div className="h-full overflow-y-auto">
       {scopeIds.map((scopeId) => {
         const scopeAgents = agentsByScope[scopeId] || []
-        if (scopeAgents.length === 0) return null
+        const scope = businessScopes.find(s => s.id === scopeId)
+        // Skip empty scopes unless they are real business scopes (e.g. digital twins)
+        const isRealScope = !!scope
+        if (scopeAgents.length === 0 && !isRealScope) return null
 
-        const scopeInfo = getScopeInfo(scopeId)
+        const isIndependent = scopeId === '__independent__'
+        const isDigitalTwin = scope?.scopeType === 'digital_twin'
+        const scopeInfo = isIndependent
+          ? { name: 'Independent Agents', icon: <Briefcase className="w-4 h-4 text-white" />, color: 'bg-gray-600' }
+          : getScopeInfo(scopeId)
+
+        // Digital twin scopes render as an agent-style card (no sub-agents)
+        if (isDigitalTwin) {
+          const isSelected = selectedScopeId === scopeId && !selectedAgentId
+          const avatarUrl = getAvatarDisplayUrl(scope.avatar ?? null)
+          const avatarFallback = getAvatarFallback(scope.name, scope.avatar)
+          const showImage = shouldShowAvatarImage(scope.avatar ?? null)
+
+          return (
+            <div key={scopeId} className="px-2 mb-1">
+              <button
+                onClick={() => onSelectScope(scopeId)}
+                className={`
+                  w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all
+                  ${isSelected
+                    ? 'bg-blue-600/20 border border-blue-500/50'
+                    : 'hover:bg-gray-800 border border-transparent'
+                  }
+                `}
+              >
+                {/* Avatar */}
+                <div className="relative flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-medium overflow-hidden">
+                    {showImage && avatarUrl ? (
+                      <img
+                        src={avatarUrl}
+                        alt={scope.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                          e.currentTarget.parentElement!.textContent = avatarFallback
+                        }}
+                      />
+                    ) : avatarFallback}
+                  </div>
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 border-2 border-gray-900" />
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-400' : 'text-white'}`}>
+                    {scope.name}
+                  </p>
+                  <p className="text-xs text-gray-400 truncate">{scope.role || 'Digital Twin'}</p>
+                </div>
+              </button>
+            </div>
+          )
+        }
 
         return (
           <div key={scopeId} className="mb-4">

@@ -58,29 +58,16 @@ class IMService {
     }
 
     // 2. Resolve or create session
-    const { sessionId, isNew } = await this.resolveSession(binding, msg);
+    const { sessionId } = await this.resolveSession(binding, msg);
 
     // 3. Process message through ChatService (same code path as web UI)
     const response = await chatService.processMessage({
-      sessionId: isNew ? undefined : sessionId,
+      sessionId,
       businessScopeId: binding.business_scope_id,
       message: msg.text,
       organizationId: binding.organization_id,
       userId: msg.userId,
     });
-
-    // If new session, update the thread mapping with the actual session ID
-    if (isNew && response.sessionId !== sessionId) {
-      // The processMessage created a new session — update our mapping
-      await imThreadSessionRepository.create({
-        binding_id: binding.id,
-        thread_id: msg.threadId,
-        session_id: response.sessionId,
-        im_user_id: msg.userId,
-      }).catch(() => {
-        // Unique constraint — another request already created it
-      });
-    }
 
     // 4. Send reply back
     const adapter = this.adapters.get(msg.channelType);
@@ -115,7 +102,7 @@ class IMService {
       im_user_id: msg.userId,
     });
 
-    return { sessionId: session.id, isNew: false }; // isNew=false because we already created the mapping
+    return { sessionId: session.id, isNew: true };
   }
 }
 

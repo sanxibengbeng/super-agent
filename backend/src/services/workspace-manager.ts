@@ -789,6 +789,94 @@ export class WorkspaceManager {
   }
 
   /**
+   * List workspace files from S3 (for agentcore mode where files live in the container).
+   * Builds a tree from S3 object keys under the workspace prefix.
+   */
+  async listWorkspaceFilesFromS3(
+    orgId: string,
+    scopeId: string,
+    sessionId: string,
+    bucket?: string,
+  ): Promise<WorkspaceFileNode[] | null> {
+    const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
+    const prefix = `${orgId}/${scopeId}/${sessionId}/`;
+
+    try {
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const allKeys: Array<{ key: string; size: number }> = [];
+      let continuationToken: string | undefined;
+
+      do {
+        const result = await this.s3Client.send(new ListObjectsV2Command({
+          Bucket: s3Bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }));
+        for (const obj of result.Contents ?? []) {
+          if (obj.Key) {
+            const relKey = obj.Key.slice(prefix.length);
+            if (relKey) allKeys.push({ key: relKey, size: obj.Size ?? 0 });
+          }
+        }
+        continuationToken = result.NextContinuationToken;
+      } while (continuationToken);
+
+      if (allKeys.length === 0) return null;
+
+      // Build tree from flat key list
+      return this.buildTreeFromKeys(allKeys);
+    } catch (err) {
+      console.warn('[workspace-manager] Failed to list S3 workspace:', err);
+      return null;
+    }
+  }
+
+  private buildTreeFromKeys(keys: Array<{ key: string; size: number }>): WorkspaceFileNode[] {
+    const root: Map<string, any> = new Map();
+
+    for (const { key, size } of keys) {
+      const parts = key.split('/');
+      let current = root;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        if (i === parts.length - 1) {
+          // File
+          current.set(part, { type: 'file', size });
+        } else {
+          // Directory
+          if (!current.has(part)) {
+            current.set(part, new Map());
+          }
+          current = current.get(part);
+        }
+      }
+    }
+
+    const mapToNodes = (map: Map<string, any>, parentPath: string): WorkspaceFileNode[] => {
+      const nodes: WorkspaceFileNode[] = [];
+      const entries = [...map.entries()].sort(([aName, aVal], [bName, bVal]) => {
+        const aIsDir = aVal instanceof Map;
+        const bIsDir = bVal instanceof Map;
+        if (aIsDir && !bIsDir) return -1;
+        if (!aIsDir && bIsDir) return 1;
+        return aName.localeCompare(bName);
+      });
+
+      for (const [name, value] of entries) {
+        const path = parentPath ? `${parentPath}/${name}` : name;
+        if (value instanceof Map) {
+          nodes.push({ name, path, type: 'directory', children: mapToNodes(value, path) });
+        } else {
+          nodes.push({ name, path, type: 'file', size: value.size });
+        }
+      }
+      return nodes;
+    };
+
+    return mapToNodes(root, '');
+  }
+
+  /**
    * Copy a marketplace-installed skill into a session workspace.
    */
   async installSkillToWorkspace(
@@ -861,10 +949,48 @@ export class WorkspaceManager {
     try {
       await access(skillDir);
       await rm(skillDir, { recursive: true, force: true });
+
+      // In agentcore mode, also delete from S3
+      if (config.agentRuntime === 'agentcore') {
+        await this.deleteS3Prefix(
+          `${orgId}/${scopeId}/${sessionId}/.claude/skills/${skillName}/`,
+        ).catch(err => console.warn('[workspace-manager] S3 delete failed:', err));
+      }
+
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Delete all S3 objects under a prefix.
+   */
+  private async deleteS3Prefix(prefix: string): Promise<void> {
+    const { ListObjectsV2Command, DeleteObjectsCommand } = await import('@aws-sdk/client-s3');
+    const bucket = config.agentcore.workspaceS3Bucket;
+    let continuationToken: string | undefined;
+
+    do {
+      const result = await this.s3Client.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }));
+
+      const objects = (result.Contents ?? [])
+        .filter((obj): obj is { Key: string } => !!obj.Key)
+        .map(obj => ({ Key: obj.Key }));
+
+      if (objects.length > 0) {
+        await this.s3Client.send(new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: objects },
+        }));
+      }
+
+      continuationToken = result.NextContinuationToken;
+    } while (continuationToken);
   }
 
   /**
@@ -882,6 +1008,33 @@ export class WorkspaceManager {
     if (!resolved.startsWith(workspacePath)) return null;
     try {
       return await readFile(resolved, 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read a workspace file from S3 (fallback for agentcore mode when
+   * the file only exists in the container and was synced to S3).
+   */
+  async readWorkspaceFileFromS3(
+    orgId: string,
+    scopeId: string,
+    sessionId: string,
+    filePath: string,
+  ): Promise<string | null> {
+    const s3Bucket = config.agentcore.workspaceS3Bucket;
+    const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+    try {
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const response = await this.s3Client.send(new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: key,
+      }));
+      if (response.Body && typeof (response.Body as any).transformToString === 'function') {
+        return await (response.Body as any).transformToString();
+      }
+      return null;
     } catch {
       return null;
     }
@@ -914,6 +1067,18 @@ export class WorkspaceManager {
     try {
       await mkdir(dirname(resolved), { recursive: true });
       await writeFile(resolved, content, 'utf-8');
+
+      // In agentcore mode, also upload to S3 so the container picks it up
+      if (config.agentRuntime === 'agentcore') {
+        const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+        const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+        await this.s3Client.send(new PutObjectCommand({
+          Bucket: config.agentcore.workspaceS3Bucket,
+          Key: key,
+          Body: content,
+        })).catch(err => console.warn('[workspace-manager] S3 upload failed:', err));
+      }
+
       return true;
     } catch {
       return false;
@@ -940,15 +1105,24 @@ export class WorkspaceManager {
       const relativePath = relative(rootDir, fullPath);
       if (entry.isDirectory()) {
         if (WorkspaceManager.SHALLOW_DIRS.has(entry.name)) {
-          // Show the directory but don't recurse — avoids walking thousands of files
           nodes.push({ name: entry.name, path: relativePath, type: 'directory', children: [] });
         } else {
-          const children = await this.readDirRecursive(fullPath, rootDir);
-          nodes.push({ name: entry.name, path: relativePath, type: 'directory', children });
+          try {
+            const children = await this.readDirRecursive(fullPath, rootDir);
+            nodes.push({ name: entry.name, path: relativePath, type: 'directory', children });
+          } catch {
+            // Directory may have been removed or is a broken symlink — show as empty
+            nodes.push({ name: entry.name, path: relativePath, type: 'directory', children: [] });
+          }
         }
       } else {
-        const fileStat = await stat(fullPath);
-        nodes.push({ name: entry.name, path: relativePath, type: 'file', size: fileStat.size });
+        try {
+          const fileStat = await stat(fullPath);
+          nodes.push({ name: entry.name, path: relativePath, type: 'file', size: fileStat.size });
+        } catch {
+          // File may have been removed or is a broken symlink — show with size 0
+          nodes.push({ name: entry.name, path: relativePath, type: 'file', size: 0 });
+        }
       }
     }
     return nodes;
@@ -958,7 +1132,7 @@ export class WorkspaceManager {
    * Remove session workspace directories whose manifests are older than maxAgeMs.
    * Returns the number of directories removed.
    */
-  async pruneStaleWorkspaces(maxAgeMs: number = 24 * 60 * 60 * 1000): Promise<number> {
+  async pruneStaleWorkspaces(maxAgeMs: number = 2400 * 60 * 60 * 1000): Promise<number> {
     let removed = 0;
     const now = Date.now();
     try {

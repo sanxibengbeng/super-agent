@@ -88,3 +88,7 @@ export { ScopeMemoryPanel } from './ScopeMemoryPanel'
 
 // Casino Dashboard (comic-book styled dashboard)
 export { CommandCenter } from './CommandCenter'
+
+// Chat Room Components (group chat with multiple agents)
+export { ChatRoom } from './ChatRoom'
+export { CreateRoomDialog } from './CreateRoomDialog'

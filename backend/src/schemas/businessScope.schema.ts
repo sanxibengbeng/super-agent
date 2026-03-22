@@ -20,12 +20,27 @@ export const createBusinessScopeSchema = z.object({
     .optional()
     .nullable(),
   is_default: z.boolean().default(false),
+  scope_type: z.enum(['business', 'digital_twin']).default('business'),
+  avatar: z.string().max(1024).optional().nullable(),
+  role: z.string().max(255).optional().nullable(),
+  system_prompt: z.string().optional().nullable(),
 });
 
 /**
- * Schema for updating a business scope
+ * Schema for updating a business scope.
+ * Uses .partial() but strips .default() from fields that shouldn't reset on omission.
  */
-export const updateBusinessScopeSchema = createBusinessScopeSchema.partial();
+export const updateBusinessScopeSchema = z.object({
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().max(1000).optional().nullable(),
+  icon: z.string().max(100).optional().nullable(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(),
+  is_default: z.boolean().optional(),
+  scope_type: z.enum(['business', 'digital_twin']).optional(),
+  avatar: z.string().max(1024).optional().nullable(),
+  role: z.string().max(255).optional().nullable(),
+  system_prompt: z.string().optional().nullable(),
+});
 
 /**
  * Schema for business scope query filters

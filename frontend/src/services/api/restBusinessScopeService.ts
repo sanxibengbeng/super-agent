@@ -22,6 +22,10 @@ interface ApiBusinessScope {
   visibility: string;
   created_at: string;
   updated_at: string;
+  scope_type?: string;
+  avatar?: string | null;
+  role?: string | null;
+  system_prompt?: string | null;
 }
 
 /**
@@ -62,6 +66,10 @@ export interface BusinessScope {
   visibility: 'open' | 'restricted';
   createdAt: Date;
   updatedAt: Date;
+  scopeType?: string;
+  avatar?: string | null;
+  role?: string | null;
+  systemPrompt?: string | null;
 }
 
 /**
@@ -125,6 +133,10 @@ function mapApiBusinessScopeToBusinessScope(apiScope: ApiBusinessScope): Busines
     visibility: (apiScope.visibility as 'open' | 'restricted') || 'open',
     createdAt: new Date(apiScope.created_at),
     updatedAt: new Date(apiScope.updated_at),
+    scopeType: apiScope.scope_type,
+    avatar: apiScope.avatar,
+    role: apiScope.role,
+    systemPrompt: apiScope.system_prompt,
   };
 }
 
@@ -189,7 +201,7 @@ export const RestBusinessScopeService = {
       const response = await restClient.get<{
         data: ApiBusinessScope[];
         pagination: { page: number; limit: number; total: number; totalPages: number };
-      }>('/api/business-scopes');
+      }>('/api/business-scopes?limit=100');
       return response.data.map(mapApiBusinessScopeToBusinessScope);
     } catch (error) {
       if (error instanceof ServiceError) throw error;

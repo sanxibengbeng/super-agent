@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Users, Loader2 } from 'lucide-react'
+import { Users, Loader2, Plus } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { useAgents } from '@/services'
 import { useBusinessScopes } from '@/services/useBusinessScopes'
@@ -108,9 +108,27 @@ export function Agents() {
       {/* Left Panel - Agent List */}
       <div className="w-72 border-r border-gray-800 bg-gray-900 flex flex-col">
         <div className="p-4 border-b border-gray-800">
-          <p className="text-xs text-gray-400 mt-1">
-            {agents.length} {t('common.allAgents').toLowerCase()}
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400">
+              {agents.length} {t('common.allAgents').toLowerCase()}
+            </p>
+            <button
+              onClick={() => navigate('/create-business-scope')}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded transition-colors"
+              title="Create a new team (business scope)"
+            >
+              <Plus size={14} />
+              <span>Create Team</span>
+            </button>
+            <button
+              onClick={() => navigate('/create-digital-twin')}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-colors"
+              title="Create a digital twin of yourself"
+            >
+              <Plus size={14} />
+              <span>Create Agent</span>
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-hidden">
           <AgentList

@@ -31,6 +31,9 @@ interface FeishuEventPayload {
 }
 
 export class FeishuAdapter implements IMAdapter {
+  // Cache: bindingId → { token, expiresAt }
+  private tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
   verifyRequest(headers: Record<string, string>, body: string): boolean {
     const token = headers['x-feishu-verification-token-internal'];
     if (!token) return true;
@@ -98,9 +101,15 @@ export class FeishuAdapter implements IMAdapter {
 
   /**
    * Get tenant_access_token using app_id + app_secret stored in binding config.
-   * In production, cache this token (expires in 2 hours).
+   * Cached for 100 minutes (token expires in 2 hours).
    */
   private async getTenantAccessToken(binding: IMChannelBindingEntity): Promise<string | null> {
+    // Check cache first
+    const cached = this.tokenCache.get(binding.id);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.token;
+    }
+
     const cfg = binding.config as Record<string, string>;
     const appId = cfg?.app_id;
     const appSecret = binding.bot_token_enc; // app_secret stored as bot_token
@@ -114,8 +123,15 @@ export class FeishuAdapter implements IMAdapter {
       body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
     });
     if (!res.ok) return null;
-    const data = await res.json() as { tenant_access_token?: string };
-    return data.tenant_access_token || null;
+    const data = await res.json() as { tenant_access_token?: string; expire?: number };
+    const token = data.tenant_access_token;
+    if (!token) return null;
+
+    // Cache for 100 minutes (token valid for ~120 min)
+    const ttlMs = Math.min((data.expire ?? 7200) - 600, 6000) * 1000;
+    this.tokenCache.set(binding.id, { token, expiresAt: Date.now() + ttlMs });
+
+    return token;
   }
 
   private splitMessage(text: string, maxLen: number): string[] {

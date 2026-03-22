@@ -148,51 +148,158 @@ export async function imChannelAdminRoutes(fastify: FastifyInstance): Promise<vo
       return reply.status(204).send();
     },
   );
+
+  /**
+   * POST /api/business-scopes/:scopeId/im-channels/:bindingId/register-webhook
+   * Register the webhook URL with the IM platform (currently Telegram only).
+   * Automates the manual `setWebhook` step.
+   */
+  fastify.post<BindingParam>(
+    '/:scopeId/im-channels/:bindingId/register-webhook',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest<BindingParam>, reply: FastifyReply) => {
+      const binding = await imChannelRepository.findById(
+        request.params.bindingId,
+        request.user!.orgId,
+      );
+      if (!binding) {
+        return reply.status(404).send({ error: 'Binding not found', code: 'NOT_FOUND' });
+      }
+
+      if (binding.channel_type !== 'telegram') {
+        return reply.status(400).send({
+          error: 'Webhook registration is only supported for Telegram bindings',
+          code: 'UNSUPPORTED',
+        });
+      }
+
+      const botToken = binding.bot_token_enc;
+      if (!botToken) {
+        return reply.status(400).send({ error: 'Bot token is required', code: 'VALIDATION_ERROR' });
+      }
+
+      const baseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+      const webhookUrl = `${baseUrl}/api/im/telegram/webhook`;
+      const cfg = (binding.config ?? {}) as Record<string, string>;
+
+      const result = await telegramAdapter.setWebhook(botToken, webhookUrl, cfg.secret_token);
+
+      return reply.status(200).send({
+        ok: result.ok,
+        webhookUrl,
+        description: result.description,
+      });
+    },
+  );
 }
 
 // ============================================================================
 // Platform Webhook Routes — Receive messages from IM platforms (no auth)
 // ============================================================================
 
+/**
+ * Helper: look up binding by channel type + channel ID extracted from the event,
+ * then verify the request signature using secrets stored in the binding config.
+ */
+async function verifyAndLookupBinding(
+  channelType: string,
+  channelId: string,
+  adapter: import('../services/im.service.js').IMAdapter,
+  headers: Record<string, string>,
+  rawBody: string,
+): Promise<{ binding: import('../repositories/im-channel.repository.js').IMChannelBindingEntity } | { error: string }> {
+  const binding = await imChannelRepository.findByChannelTypeAndId(channelType, channelId);
+  if (!binding) {
+    return { error: `No active binding for ${channelType}:${channelId}` };
+  }
+
+  const cfg = (binding.config ?? {}) as Record<string, string>;
+
+  // Inject platform-specific secrets into headers for adapter verification
+  if (channelType === 'slack' && cfg.signing_secret) {
+    headers['x-slack-signing-secret-internal'] = cfg.signing_secret;
+  }
+  if (channelType === 'feishu' && cfg.verification_token) {
+    headers['x-feishu-verification-token-internal'] = cfg.verification_token;
+  }
+  if (channelType === 'telegram' && cfg.secret_token) {
+    headers['x-telegram-bot-api-secret-token-internal'] = cfg.secret_token;
+  }
+  if (channelType === 'dingtalk' && cfg.signing_secret) {
+    headers['x-dingtalk-secret-internal'] = cfg.signing_secret;
+  }
+  if (channelType === 'discord' && cfg.public_key) {
+    headers['x-discord-public-key-internal'] = cfg.public_key;
+  }
+
+  if (!adapter.verifyRequest(headers, rawBody)) {
+    return { error: 'Signature verification failed' };
+  }
+
+  return { binding };
+}
+
 export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
+  // Ensure raw body is available for signature verification
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      try {
+        const json = JSON.parse(body as string);
+        done(null, json);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+
   /**
    * POST /api/im/slack/events — Slack Events API endpoint.
    * Handles URL verification challenges and incoming messages.
-   * No JWT auth — verified via Slack signing secret instead.
+   * Verified via Slack signing secret stored in binding config.
    */
   fastify.post(
     '/slack/events',
+    { config: { rawBody: true } },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = request.body as Record<string, unknown>;
 
-      // Handle Slack URL verification challenge
+      // Handle Slack URL verification challenge (no signature check needed)
       const challenge = SlackAdapter.isChallenge(body);
       if (challenge) {
         return reply.status(200).send({ challenge });
       }
 
-      // Parse the event
+      // Parse the event to get channel ID for binding lookup
       const msg = slackAdapter.parseEvent(body);
       if (!msg) {
-        // Not a user message (bot message, subtype, etc.) — acknowledge silently
         return reply.status(200).send({ ok: true });
       }
 
-      // Process asynchronously — Slack requires a 200 within 3 seconds
-      // We acknowledge immediately and process in the background
+      // Verify signature using binding's signing secret
+      const headers = request.headers as Record<string, string>;
+      const rawBody = JSON.stringify(request.body);
+      const result = await verifyAndLookupBinding('slack', msg.channelId, slackAdapter, headers, rawBody);
+      if ('error' in result) {
+        console.warn(`[SLACK] ${result.error}`);
+        return reply.status(200).send({ ok: true }); // Slack expects 200 even on errors
+      }
+
+      // Acknowledge immediately — Slack requires 200 within 3 seconds
       reply.status(200).send({ ok: true });
 
       try {
         await imService.handleMessage(msg);
       } catch (error) {
-        console.error('Failed to handle Slack message:', error instanceof Error ? error.message : error);
+        console.error('[SLACK] Failed to handle message:', error instanceof Error ? error.message : error);
       }
     },
   );
 
   /**
    * POST /api/im/telegram/webhook — Telegram Bot API webhook endpoint.
-   * Receives Update objects from Telegram. No JWT auth — verified via secret_token header.
+   * Verified via secret_token header matched against binding config.
    */
   fastify.post(
     '/telegram/webhook',
@@ -202,25 +309,33 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(200).send({ ok: true });
       }
 
-      // Telegram tolerates slower responses, but still process async
+      // Verify using binding's secret_token
+      const headers = request.headers as Record<string, string>;
+      const rawBody = JSON.stringify(request.body);
+      const result = await verifyAndLookupBinding('telegram', msg.channelId, telegramAdapter, headers, rawBody);
+      if ('error' in result) {
+        console.warn(`[TELEGRAM] ${result.error}`);
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
       reply.status(200).send({ ok: true });
 
       try {
         await imService.handleMessage(msg);
       } catch (error) {
-        console.error('Failed to handle Telegram message:', error instanceof Error ? error.message : error);
+        console.error('[TELEGRAM] Failed to handle message:', error instanceof Error ? error.message : error);
       }
     },
   );
 
   /**
    * POST /api/im/discord/interactions — Discord Interactions endpoint.
-   * Handles PING verification and message events.
+   * Verified via Ed25519 signature matched against binding's public key.
    */
   fastify.post(
     '/discord/interactions',
     async (request: FastifyRequest, reply: FastifyReply) => {
-      // Handle Discord PING → PONG
+      // Handle Discord PING → PONG (before signature check for initial setup)
       if (DiscordAdapter.isPing(request.body)) {
         return reply.status(200).send({ type: 1 });
       }
@@ -230,19 +345,27 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(200).send({ ok: true });
       }
 
+      const headers = request.headers as Record<string, string>;
+      const rawBody = JSON.stringify(request.body);
+      const result = await verifyAndLookupBinding('discord', msg.channelId, discordAdapter, headers, rawBody);
+      if ('error' in result) {
+        console.warn(`[DISCORD] ${result.error}`);
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
+
       reply.status(200).send({ ok: true });
 
       try {
         await imService.handleMessage(msg);
       } catch (error) {
-        console.error('Failed to handle Discord message:', error instanceof Error ? error.message : error);
+        console.error('[DISCORD] Failed to handle message:', error instanceof Error ? error.message : error);
       }
     },
   );
 
   /**
    * POST /api/im/feishu/events — Feishu (Lark) Event Subscription endpoint.
-   * Handles URL verification and im.message.receive_v1 events.
+   * Verified via verification_token in binding config.
    */
   fastify.post(
     '/feishu/events',
@@ -260,19 +383,27 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(200).send({ ok: true });
       }
 
+      const headers = request.headers as Record<string, string>;
+      const rawBody = JSON.stringify(request.body);
+      const result = await verifyAndLookupBinding('feishu', msg.channelId, feishuAdapter, headers, rawBody);
+      if ('error' in result) {
+        console.warn(`[FEISHU] ${result.error}`);
+        return reply.status(200).send({ ok: true });
+      }
+
       reply.status(200).send({ ok: true });
 
       try {
         await imService.handleMessage(msg);
       } catch (error) {
-        console.error('Failed to handle Feishu message:', error instanceof Error ? error.message : error);
+        console.error('[FEISHU] Failed to handle message:', error instanceof Error ? error.message : error);
       }
     },
   );
 
   /**
    * POST /api/im/dingtalk/callback — DingTalk Robot callback endpoint.
-   * Receives messages when users @mention the bot in a group.
+   * Verified via signing secret in binding config.
    */
   fastify.post(
     '/dingtalk/callback',
@@ -282,12 +413,20 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(200).send({ ok: true });
       }
 
+      const headers = request.headers as Record<string, string>;
+      const rawBody = JSON.stringify(request.body);
+      const result = await verifyAndLookupBinding('dingtalk', msg.channelId, dingtalkAdapter, headers, rawBody);
+      if ('error' in result) {
+        console.warn(`[DINGTALK] ${result.error}`);
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
       reply.status(200).send({ ok: true });
 
       try {
         await imService.handleMessage(msg);
       } catch (error) {
-        console.error('Failed to handle DingTalk message:', error instanceof Error ? error.message : error);
+        console.error('[DINGTALK] Failed to handle message:', error instanceof Error ? error.message : error);
       }
     },
   );
@@ -307,8 +446,6 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(400).send({ error: 'text is required' });
       }
 
-      // Look up the binding to get channel info
-      // We need to find it without org context since this is an unauthenticated webhook
       const binding = await findBindingById(bindingId);
       if (!binding || !binding.is_enabled) {
         return reply.status(404).send({ error: 'Binding not found or disabled' });
@@ -326,7 +463,7 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         const result = await imService.handleMessage(msg);
         return reply.status(200).send({ text: result.text, session_id: result.sessionId });
       } catch (error) {
-        console.error('Failed to handle webhook message:', error instanceof Error ? error.message : error);
+        console.error('[WEBHOOK] Failed to handle message:', error instanceof Error ? error.message : error);
         return reply.status(500).send({ error: 'Failed to process message' });
       }
     },

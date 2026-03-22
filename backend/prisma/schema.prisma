@@ -53,6 +53,9 @@ model organizations {
   document_groups            document_groups[]
   document_group_files       document_group_files[]
   scope_document_groups      scope_document_groups[]
+  projects                   projects[]
+  project_issues             project_issues[]
+  project_issue_comments     project_issue_comments[]
   @@index([slug])
   @@index([plan_type])
   @@index([created_at(sort: Desc)])
@@ -113,6 +116,10 @@ model business_scopes {
   color           String?
   is_default      Boolean   @default(false)
   config_version  Int       @default(1)
+  scope_type      String    @default("business") @db.VarChar(20) // business | digital_twin
+  avatar          String?                                        // photo for digital twins
+  role            String?                                        // role/title for digital twins
+  system_prompt   String?                                        // system prompt for digital twins
   created_at      DateTime  @default(now()) @db.Timestamptz
   updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz
   deleted_at      DateTime? @db.Timestamptz
@@ -131,6 +138,7 @@ model business_scopes {
   scope_briefings     scope_briefings[]
   scope_memberships   scope_memberships[]
   scope_document_groups scope_document_groups[]
+  agent_scope_assignments agent_scope_assignments[]
 
   @@unique([organization_id, name], name: "unique_scope_name_per_org")
   @@index([organization_id])
@@ -179,6 +187,8 @@ model agents {
   scope             Json     @default("[]")
   system_prompt     String?
   model_config      Json     @default("{}")
+  origin            String   @default("scope_generation") @db.VarChar(50)
+  is_shared         Boolean  @default(false)
   created_at        DateTime @default(now()) @db.Timestamptz
   updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
 
@@ -187,11 +197,14 @@ model agents {
   tasks          tasks[]
   agent_skills   agent_skills[]
   scope_briefings scope_briefings[]
+  scope_assignments agent_scope_assignments[]
+  room_memberships  chat_room_members[]
 
   @@index([organization_id])
   @@index([business_scope_id])
   @@index([status])
   @@index([name])
+  @@index([origin])
   @@index([created_at(sort: Desc)])
   @@index([organization_id, business_scope_id])
 }
@@ -422,6 +435,8 @@ model chat_sessions {
   status            String   @default("idle") // idle | generating | error
   sop_context       String?
   context           Json     @default("{}")
+  room_mode         String   @default("single") @db.VarChar(20) // single | group
+  routing_strategy  String   @default("auto") @db.VarChar(20)   // auto | mention | round_robin
   created_at        DateTime @default(now()) @db.Timestamptz
   updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
 
@@ -429,10 +444,12 @@ model chat_sessions {
   business_scope business_scopes? @relation(fields: [business_scope_id], references: [id], onDelete: SetNull)
   chat_messages  chat_messages[]
   im_thread_sessions im_thread_sessions[]
+  room_members   chat_room_members[]
 
   @@index([organization_id])
   @@index([user_id])
   @@index([business_scope_id])
+  @@index([room_mode])
   @@index([created_at(sort: Desc)])
   @@index([organization_id, user_id])
   @@index([organization_id, business_scope_id])
@@ -442,12 +459,15 @@ model chat_sessions {
 // Chat Messages Table - matches Supabase migration 20250108000010
 // ============================================================================
 model chat_messages {
-  id              String   @id @default(uuid()) @db.Uuid
-  organization_id String   @db.Uuid
-  session_id      String   @db.Uuid
-  type            String
-  content         String
-  created_at      DateTime @default(now()) @db.Timestamptz
+  id               String   @id @default(uuid()) @db.Uuid
+  organization_id  String   @db.Uuid
+  session_id       String   @db.Uuid
+  type             String                      // user | agent | ai (legacy) | system
+  content          String
+  agent_id         String?  @db.Uuid           // which agent sent this (type=agent)
+  mention_agent_id String?  @db.Uuid           // which agent was @mentioned (type=user)
+  metadata         Json     @default("{}")     // routing info, confidence, etc.
+  created_at       DateTime @default(now()) @db.Timestamptz
 
   organization organizations  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   session      chat_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade)
@@ -455,6 +475,7 @@ model chat_messages {
   @@index([organization_id])
   @@index([session_id])
   @@index([type])
+  @@index([agent_id])
   @@index([created_at(sort: Desc)])
   @@index([session_id, created_at])
 }
@@ -896,25 +917,27 @@ model agent_metrics_daily {
 model im_channel_bindings {
   id                String    @id @default(uuid()) @db.Uuid
   organization_id   String    @db.Uuid
-  business_scope_id String    @db.Uuid
-  channel_type      String    @db.VarChar(50)  // slack, discord, teams, wechat_work, dingtalk, webhook
-  channel_id        String    @db.VarChar(255) // platform-specific channel identifier
+  business_scope_id String?   @db.Uuid
+  agent_id          String?   @db.Uuid         // for agent-level IM bindings (digital twins)
+  channel_type      String    @db.VarChar(50)
+  channel_id        String    @db.VarChar(255)
   channel_name      String?   @db.VarChar(255)
-  bot_token_enc     String?                    // encrypted bot token
-  webhook_url       String?                    // for platforms using incoming webhooks
-  config            Json      @default("{}")   // platform-specific config (signing secret, etc.)
+  bot_token_enc     String?
+  webhook_url       String?
+  config            Json      @default("{}")
   is_enabled        Boolean   @default(true)
   created_by        String?   @db.Uuid
   created_at        DateTime  @default(now()) @db.Timestamptz
   updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz
 
-  organization   organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
+  organization   organizations    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope business_scopes? @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
   thread_sessions im_thread_sessions[]
 
   @@unique([organization_id, channel_type, channel_id], name: "unique_channel_binding")
   @@index([organization_id])
   @@index([business_scope_id])
+  @@index([agent_id])
   @@index([channel_type, channel_id])
   @@index([is_enabled])
 }
@@ -1088,4 +1111,151 @@ model scope_document_groups {
   @@index([organization_id])
   @@index([business_scope_id])
   @@index([document_group_id])
+}
+
+
+// ============================================================================
+// Chat Room Members — agents participating in a chat room (group mode)
+// ============================================================================
+model chat_room_members {
+  id          String   @id @default(uuid()) @db.Uuid
+  session_id  String   @db.Uuid
+  agent_id    String   @db.Uuid
+  role        String   @default("member") @db.VarChar(20) // primary | member
+  is_active   Boolean  @default(true)
+  added_by    String?  @db.Uuid
+  joined_at   DateTime @default(now()) @db.Timestamptz
+
+  session chat_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  agent   agents        @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@unique([session_id, agent_id], name: "unique_room_member")
+  @@index([session_id])
+  @@index([agent_id])
+  @@index([session_id, is_active])
+}
+
+// ============================================================================
+// Agent Scope Assignments — M:N relationship for cross-scope agent reuse
+// ============================================================================
+model agent_scope_assignments {
+  id                String   @id @default(uuid()) @db.Uuid
+  agent_id          String   @db.Uuid
+  business_scope_id String   @db.Uuid
+  is_primary        Boolean  @default(false)
+  assigned_at       DateTime @default(now()) @db.Timestamptz
+  assigned_by       String?  @db.Uuid
+
+  agent          agents          @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
+
+  @@unique([agent_id, business_scope_id], name: "unique_agent_scope")
+  @@index([agent_id])
+  @@index([business_scope_id])
+}
+
+
+// ============================================================================
+// Projects — Kanban boards for software development
+// ============================================================================
+model projects {
+  id                   String   @id @default(uuid()) @db.Uuid
+  organization_id      String   @db.Uuid
+  name                 String
+  description          String?
+  repo_url             String?
+  default_branch       String   @default("main")
+  business_scope_id    String?  @db.Uuid
+  agent_id             String?  @db.Uuid         // the agent in charge of this project
+  workspace_session_id String?  @db.Uuid         // persistent chat session for the project agent
+  settings             Json     @default("{}")
+  created_by           String   @db.Uuid
+  created_at           DateTime @default(now()) @db.Timestamptz
+  updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization   organizations    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  issues         project_issues[]
+  members        project_members[]
+
+  @@index([organization_id])
+  @@index([created_by])
+  @@index([agent_id])
+  @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Project Members — who can access a project
+// ============================================================================
+model project_members {
+  id         String   @id @default(uuid()) @db.Uuid
+  project_id String   @db.Uuid
+  user_id    String   @db.Uuid
+  role       String   @default("member") @db.VarChar(20)
+  joined_at  DateTime @default(now()) @db.Timestamptz
+
+  project projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, user_id], name: "unique_project_member")
+  @@index([project_id])
+  @@index([user_id])
+}
+
+// ============================================================================
+// Project Issues — task cards on the kanban board
+// ============================================================================
+model project_issues {
+  id                    String    @id @default(uuid()) @db.Uuid
+  project_id            String    @db.Uuid
+  organization_id       String    @db.Uuid
+  issue_number          Int
+  title                 String
+  description           String?
+  status                String    @default("backlog") @db.VarChar(20)
+  priority              String    @default("medium") @db.VarChar(20)
+  labels                Json      @default("[]")
+  sort_order            Float     @default(0)
+  branch_name           String?
+  workspace_session_id  String?   @db.Uuid
+  pr_url                String?
+  estimated_effort      String?
+  parent_issue_id       String?   @db.Uuid
+  created_by            String    @db.Uuid
+  created_at            DateTime  @default(now()) @db.Timestamptz
+  updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz
+
+  project      projects              @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  organization organizations         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  comments     project_issue_comments[]
+  children     project_issues[]      @relation("issue_parent")
+  parent       project_issues?       @relation("issue_parent", fields: [parent_issue_id], references: [id], onDelete: SetNull)
+
+  @@unique([project_id, issue_number], name: "unique_issue_number_per_project")
+  @@index([project_id])
+  @@index([organization_id])
+  @@index([status])
+  @@index([priority])
+  @@index([project_id, status])
+  @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Project Issue Comments — discussion, code review, agent logs
+// ============================================================================
+model project_issue_comments {
+  id               String   @id @default(uuid()) @db.Uuid
+  issue_id         String   @db.Uuid
+  organization_id  String   @db.Uuid
+  author_user_id   String?  @db.Uuid
+  author_agent_id  String?  @db.Uuid
+  content          String
+  comment_type     String   @default("discussion") @db.VarChar(20)
+  metadata         Json     @default("{}")
+  created_at       DateTime @default(now()) @db.Timestamptz
+
+  issue        project_issues @relation(fields: [issue_id], references: [id], onDelete: Cascade)
+  organization organizations  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([issue_id])
+  @@index([organization_id])
+  @@index([created_at(sort: Desc)])
 }

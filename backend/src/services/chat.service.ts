@@ -22,12 +22,12 @@ import { prisma } from '../config/database.js';
 import type { CreateChatSessionInput, UpdateChatSessionInput } from '../schemas/chat.schema.js';
 import { formatSSEEvent, type SSEEvent } from '../utils/sse.js';
 import {
-  claudeAgentService,
-  type ClaudeAgentService,
   type ConversationEvent,
   type AgentConfig,
   type ContentBlock,
 } from './claude-agent.service.js';
+import type { AgentRuntime } from './agent-runtime.js';
+import { agentRuntime as defaultAgentRuntime } from './agent-runtime-factory.js';
 import {
   workspaceManager as defaultWorkspaceManager,
   type WorkspaceManager,
@@ -53,7 +53,6 @@ import {
 } from './langfuse.service.js';
 import { processConversationEvent, flushActiveSubAgents, type ConversationHookContext } from './conversation-hooks.js';
 import { sanitizeEvent } from './output-sanitizer.js';
-import { agentCoreService } from './agentcore.service.js';
 
 export type { SSEEvent };
 export { formatSSEEvent };
@@ -74,18 +73,18 @@ export interface ChatHistoryOptions {
 }
 
 export class ChatService {
-  private claudeAgentService: ClaudeAgentService;
+  private agentRuntime: AgentRuntime;
   private skillService: SkillService;
   private workspaceManager: WorkspaceManager;
   private businessScopeService: BusinessScopeService;
 
   constructor(
-    agentService?: ClaudeAgentService,
+    runtime?: AgentRuntime,
     skillSvc?: SkillService,
     wsMgr?: WorkspaceManager,
     bsSvc?: BusinessScopeService,
   ) {
-    this.claudeAgentService = agentService ?? claudeAgentService;
+    this.agentRuntime = runtime ?? defaultAgentRuntime;
     this.skillService = skillSvc ?? defaultSkillService;
     this.workspaceManager = wsMgr ?? defaultWorkspaceManager;
     this.businessScopeService = bsSvc ?? defaultBusinessScopeService;
@@ -193,12 +192,20 @@ export class ChatService {
   async addMessage(
     organizationId: string,
     sessionId: string,
-    type: 'user' | 'ai',
+    type: 'user' | 'ai' | 'agent' | 'system',
     content: string,
+    options?: { agentId?: string; mentionAgentId?: string; metadata?: Record<string, unknown> },
   ): Promise<ChatMessageEntity> {
     const session = await chatSessionRepository.findById(sessionId, organizationId);
     if (!session) throw AppError.notFound(`Chat session with ID ${sessionId} not found`);
-    return chatMessageRepository.create({ session_id: sessionId, type, content }, organizationId);
+    return chatMessageRepository.create({
+      session_id: sessionId,
+      type,
+      content,
+      agent_id: options?.agentId ?? null,
+      mention_agent_id: options?.mentionAgentId ?? null,
+      metadata: options?.metadata ?? {},
+    }, organizationId);
   }
 
   // ==========================================================================
@@ -239,15 +246,16 @@ export class ChatService {
     const allContentBlocks: ContentBlock[] = [];
 
     try {
-      const conversationGenerator = this.claudeAgentService.runConversation(
+      const conversationGenerator = this.agentRuntime.runConversation(
         {
           agentId: agentConfig.id,
           sessionId: options.sessionId,
-          claudeSessionId,
+          providerSessionId: claudeSessionId,
           message: options.message,
           organizationId: options.organizationId,
           userId: options.userId,
           workspacePath,
+          scopeId: options.businessScopeId,
         },
         agentConfig,
         skills,
@@ -446,33 +454,19 @@ export class ChatService {
     let currentSpeaker: { displayName: string; avatar: string | null } | null = null;
 
     try {
-      // Choose execution backend: AgentCore (container-isolated) or local subprocess
-      const useAgentCore = config.agentcore.enabled && useScopeFlow && options.businessScopeId;
-
-      const conversationGenerator = useAgentCore
-        ? agentCoreService.runConversation(
-            {
-              scopeId: options.businessScopeId!,
-              organizationId,
-              userId,
-              agentId: agentConfig.id,
-              sessionId: options.sessionId,
-              claudeSessionId,
-              message: options.message,
-              systemPrompt: agentConfig.systemPrompt ?? undefined,
-              mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-            },
-            agentConfig,
-          )
-        : this.claudeAgentService.runConversation(
+      // Use the configured agent runtime (claude or openclaw).
+      // AgentCore container isolation is handled by the runtime provider itself
+      // when AGENT_RUNTIME=openclaw (which runs on AgentCore).
+      const conversationGenerator = this.agentRuntime.runConversation(
             {
               agentId: agentConfig.id,
               sessionId: options.sessionId,
-              claudeSessionId,
+              providerSessionId: claudeSessionId,
               message: options.message,
               organizationId,
               userId,
               workspacePath,
+              scopeId: options.businessScopeId,
             },
             agentConfig,
             skills,
@@ -549,7 +543,7 @@ export class ChatService {
             this.writeConversationEventSSE(reply, timeoutEvent);
           }
           if (conversationSessionId) {
-            this.claudeAgentService.disconnectSession(conversationSessionId).catch((err) => {
+            this.agentRuntime.disconnectSession(conversationSessionId).catch((err) => {
               console.error('Error disconnecting session on timeout:', err);
             });
           }

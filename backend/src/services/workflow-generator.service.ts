@@ -5,7 +5,8 @@
  * to generate workflow plans from natural language descriptions.
  */
 
-import { claudeAgentService, type AgentConfig, type ConversationEvent } from './claude-agent.service.js';
+import { agentRuntime } from './agent-runtime-factory.js';
+import type { AgentConfig, ConversationEvent } from './agent-runtime.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -236,7 +237,7 @@ export class WorkflowGeneratorService {
       message = `Here is our conversation so far:\n\n${conversationParts.join('\n\n')}\n\nPlease continue based on the latest message. If you now have enough information, generate the workflow JSON. Otherwise, ask follow-up questions.`;
     }
 
-    yield* claudeAgentService.runConversation(
+    yield* agentRuntime.runConversation(
       {
         agentId: 'workflow-generator',
         message,
@@ -281,7 +282,7 @@ export class WorkflowGeneratorService {
       message = `Current workflow:\n${JSON.stringify(currentPlan, null, 2)}\n\nModification request: ${modificationRequest}`;
     }
 
-    yield* claudeAgentService.runConversation(
+    yield* agentRuntime.runConversation(
       {
         agentId: 'workflow-patcher',
         message,

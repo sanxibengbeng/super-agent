@@ -36,6 +36,8 @@ import { executionRoutes } from './execution.routes.js';
 import { documentRoutes } from './documents.routes.js';
 import { fileRoutes } from './files.routes.js';
 import { chatRoutes } from './chat.routes.js';
+import { chatRoomRoutes } from './chatRooms.routes.js';
+import { projectRoutes } from './projects.routes.js';
 import { mcpRoutes } from './mcp.routes.js';
 import { organizationRoutes } from './organizations.routes.js';
 import { businessScopeRoutes } from './businessScopes.routes.js';
@@ -133,6 +135,12 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7
   await fastify.register(chatRoutes, { prefix: '/api/chat' });
 
+  // Chat Room Routes (group chat with multiple agents)
+  await fastify.register(chatRoomRoutes, { prefix: '/api/chat/rooms' });
+
+  // Project Management Routes (kanban board)
+  await fastify.register(projectRoutes, { prefix: '/api/projects' });
+
   // Enterprise skill publish-from-workspace (under /api/chat)
   await fastify.register(enterpriseSkillPublishRoutes, { prefix: '/api/chat' });
 
@@ -223,6 +231,7 @@ export {
   documentRoutes,
   fileRoutes,
   chatRoutes,
+  chatRoomRoutes,
   mcpRoutes,
   organizationRoutes,
   businessScopeRoutes,

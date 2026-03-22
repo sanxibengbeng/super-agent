@@ -288,8 +288,8 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
       return null
     }
 
-    if (!selectedBusinessScopeId) {
-      setError('No business scope selected')
+    if (!selectedBusinessScopeId && !selectedAgentId) {
+      setError('Select a business scope or an agent to start chatting')
       return null
     }
 
@@ -301,7 +301,7 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
         setBackendSessionId(validSessionId)
 
         sessionStreamManager.sendMessage(validSessionId, content, {
-          businessScopeId: selectedBusinessScopeId!,
+          businessScopeId: selectedBusinessScopeId || undefined,
           agentId: selectedAgentId || undefined,
           sopContext: activeSop,
         })
@@ -342,7 +342,8 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
   }, [])
 
   const setSelectedBusinessScope = useCallback((scopeId: string) => {
-    setSelectedBusinessScopeIdState(scopeId)
+    const newScopeId = scopeId || null
+    setSelectedBusinessScopeIdState(newScopeId)
     // Reset agent and backend session when scope changes
     setSelectedAgentIdState(null)
     setBackendSessionId(null)

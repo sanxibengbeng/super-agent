@@ -123,8 +123,8 @@ class WebhookService {
 
     const config = this.mapToWebhookConfig(webhook);
 
-    // Cache for 5 minutes
-    await redisService.setex(cacheKey, WEBHOOK_CONFIG_CACHE_TTL, JSON.stringify(config));
+    // Cache for 5 minutes (TTL in ms)
+    await redisService.set(cacheKey, JSON.stringify(config), WEBHOOK_CONFIG_CACHE_TTL * 1000);
 
     return config;
   }
@@ -299,7 +299,7 @@ class WebhookService {
     });
 
     // Clear cache
-    await redisService.del(`webhook:${webhookId}`);
+    await redisService.delete(`webhook:${webhookId}`);
 
     return this.mapToWebhookConfig(updated);
   }
@@ -325,7 +325,7 @@ class WebhookService {
     });
 
     // Clear cache
-    await redisService.del(`webhook:${webhookId}`);
+    await redisService.delete(`webhook:${webhookId}`);
   }
 
   /**
@@ -367,6 +367,81 @@ class WebhookService {
         createdAt: r.created_at,
       })),
       total,
+    };
+  }
+
+  /**
+   * Get webhook call status by callRecordId (public, no org check)
+   */
+  async getCallStatus(callRecordId: string): Promise<{
+    callRecordId: string;
+    status: string;
+    errorMessage: string | null;
+    createdAt: Date;
+    execution: {
+      status: string;
+      startedAt: Date;
+      completedAt: Date | null;
+      nodes: {
+        nodeId: string;
+        nodeType: string;
+        status: string;
+        progress: number;
+        startedAt: Date | null;
+        completedAt: Date | null;
+      }[];
+    } | null;
+  }> {
+    const record = await prisma.webhook_call_records.findUnique({
+      where: { id: callRecordId },
+    });
+
+    if (!record) {
+      throw new Error('Call record not found');
+    }
+
+    let execution = null;
+    if (record.execution_id) {
+      const exec = await prisma.workflow_executions.findUnique({
+        where: { id: record.execution_id },
+        include: {
+          node_executions: {
+            orderBy: { created_at: 'asc' },
+            select: {
+              node_id: true,
+              node_type: true,
+              status: true,
+              progress: true,
+              started_at: true,
+              completed_at: true,
+            },
+          },
+        },
+      });
+
+      if (exec) {
+        execution = {
+          status: exec.status,
+          startedAt: exec.started_at,
+          completedAt: exec.completed_at,
+          nodes: exec.node_executions.map(n => ({
+            nodeId: n.node_id,
+            nodeType: n.node_type,
+            status: n.status,
+            progress: n.progress,
+            startedAt: n.started_at,
+            completedAt: n.completed_at,
+          })),
+        };
+      }
+    }
+
+    return {
+      callRecordId: record.id,
+      status: record.status,
+      errorMessage: record.error_message,
+      createdAt: record.created_at,
+      execution,
     };
   }
 

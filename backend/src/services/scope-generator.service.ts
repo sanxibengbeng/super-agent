@@ -5,7 +5,8 @@
  * from a free-text business description.
  */
 
-import { claudeAgentService, type AgentConfig, type ConversationEvent } from './claude-agent.service.js';
+import { agentRuntime } from './agent-runtime-factory.js';
+import type { AgentConfig, ConversationEvent } from './agent-runtime.js';
 import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -120,7 +121,7 @@ export class ScopeGeneratorService {
       const tempWorkspace = await mkdtemp(join(tmpdir(), 'scope-gen-'));
 
       try {
-        yield* claudeAgentService.runConversation(
+        yield* agentRuntime.runConversation(
           {
             agentId: 'scope-generator',
             message,

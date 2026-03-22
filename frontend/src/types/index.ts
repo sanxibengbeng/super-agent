@@ -2,7 +2,7 @@
 export * from './canvas'
 
 // Navigation Types
-export type NavigationPage = 'dashboard' | 'chat' | 'workflow' | 'agents' | 'tools' | 'apps'
+export type NavigationPage = 'dashboard' | 'chat' | 'workflow' | 'agents' | 'projects' | 'tools' | 'apps'
 
 export interface NavItem {
   id: NavigationPage
