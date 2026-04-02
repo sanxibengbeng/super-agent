@@ -12,3 +12,5 @@ infra/cdk.context.json
 
 # Frontend production environment (contains Cognito secrets and IPs)
 frontend/.env.production
+**/cdk.out/
+**/cdk.context.json
