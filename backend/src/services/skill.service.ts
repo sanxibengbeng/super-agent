@@ -207,6 +207,22 @@ export class SkillService {
   }
 
   /**
+   * Get all skills from all agents in a business scope (via agent_skills).
+   * Returns deduplicated skill entities.
+   */
+  async getAllAgentSkillsForScope(organizationId: string, businessScopeId: string): Promise<SkillEntity[]> {
+    const agents = await agentRepository.findByBusinessScope(organizationId, businessScopeId);
+    const skillMap = new Map<string, SkillEntity>();
+    for (const agent of agents) {
+      const skills = await skillRepository.findByAgentId(organizationId, agent.id);
+      for (const s of skills) {
+        if (!skillMap.has(s.id)) skillMap.set(s.id, s);
+      }
+    }
+    return Array.from(skillMap.values());
+  }
+
+  /**
    * Get scope-level API integration skills for a business scope.
    */
   async getScopeIntegrations(organizationId: string, businessScopeId: string): Promise<SkillEntity[]> {

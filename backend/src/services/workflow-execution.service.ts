@@ -188,7 +188,7 @@ export class WorkflowExecutionService extends EventEmitter {
   async getExecutionHistory(
     workflowId: string,
     organizationId: string,
-    options?: { page?: number; limit?: number }
+    options?: { page?: number; limit?: number; userId?: string }
   ) {
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 20;
@@ -198,8 +198,9 @@ export class WorkflowExecutionService extends EventEmitter {
       workflowExecutionRepository.findByWorkflowId(workflowId, organizationId, {
         skip,
         take: limit,
+        userId: options?.userId,
       }),
-      workflowExecutionRepository.countByWorkflowId(workflowId, organizationId),
+      workflowExecutionRepository.countByWorkflowId(workflowId, organizationId, options?.userId),
     ]);
 
     return {

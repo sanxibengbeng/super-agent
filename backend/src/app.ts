@@ -1,5 +1,6 @@
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply, FastifyError } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { createWriteStream } from 'node:fs';
@@ -81,6 +82,14 @@ export async function buildApp(): Promise<FastifyInstance> {
       'X-Request-Id', // For request tracing
     ],
     maxAge: 86400, // Cache preflight requests for 24 hours
+  });
+
+  // Register multipart support for file uploads (SOP documents, etc.)
+  await app.register(multipart, {
+    limits: {
+      fileSize: 20 * 1024 * 1024, // 20MB max file size
+      files: 1, // single file per request
+    },
   });
 
   // Register Swagger for API documentation

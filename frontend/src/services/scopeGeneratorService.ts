@@ -46,9 +46,9 @@ export interface ConfirmResult {
 
 // SSE event types from the backend
 export interface SSEEvent {
-  type: 'session_start' | 'assistant' | 'result' | 'heartbeat' | 'error';
+  type: 'session_start' | 'assistant' | 'result' | 'heartbeat' | 'error' | 'scope_config';
   sessionId?: string;
-  content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> | string }>;
+  content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> | string }> | string;
   code?: string;
   message?: string;
 }
@@ -58,6 +58,73 @@ export interface SSEEvent {
 // ---------------------------------------------------------------------------
 
 export type GenerateCallback = (event: SSEEvent) => void;
+
+/**
+ * Helper: process SSE stream and accumulate the final result text.
+ * Only text/tool_use from the final `result` event is used for JSON parsing.
+ * Intermediate `assistant` events (tool calls, thinking) are forwarded to onEvent
+ * for UI rendering but not included in the parseable output.
+ */
+async function processSSEStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onEvent: GenerateCallback,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let resultText = '';
+  let assistantText = '';
+  let scopeConfigJson = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') continue;
+
+      try {
+        const event: SSEEvent = JSON.parse(data);
+        onEvent(event);
+
+        // Capture the scope_config event (file-based JSON from workspace)
+        if (event.type === 'scope_config' && typeof event.content === 'string') {
+          scopeConfigJson = event.content;
+        }
+
+        // Also accumulate text from assistant and result events as fallback
+        if ((event.type === 'result' || event.type === 'assistant') && Array.isArray(event.content)) {
+          for (const block of event.content) {
+            if (block.type === 'text' && block.text) {
+              if (event.type === 'result') {
+                resultText += block.text;
+              }
+              assistantText += block.text;
+            }
+            if (block.type === 'tool_use' && block.input) {
+              const inputStr = typeof block.input === 'string' ? block.input : JSON.stringify(block.input);
+              if (event.type === 'result') {
+                resultText += inputStr;
+              }
+              assistantText += inputStr;
+            }
+          }
+        }
+      } catch {
+        // skip unparseable lines
+      }
+    }
+  }
+
+  // Priority: scope_config file > result text > assistant text
+  return scopeConfigJson || resultText || assistantText;
+}
 
 /**
  * Streams scope generation via SSE. Calls onEvent for each parsed event.
@@ -86,49 +153,7 @@ export async function generateScope(
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body');
 
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let accumulatedText = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    // Parse SSE lines
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // keep incomplete line in buffer
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const data = line.slice(6).trim();
-      if (data === '[DONE]') continue;
-
-      try {
-        const event: SSEEvent = JSON.parse(data);
-        onEvent(event);
-
-        // Accumulate text from assistant/result events
-        if ((event.type === 'assistant' || event.type === 'result') && event.content) {
-          for (const block of event.content) {
-            if (block.type === 'text' && block.text) {
-              accumulatedText += block.text;
-            }
-            // Also capture tool_use input — Claude may return the JSON via a tool call
-            if (block.type === 'tool_use' && block.input) {
-              const inputStr = typeof block.input === 'string' ? block.input : JSON.stringify(block.input);
-              accumulatedText += inputStr;
-            }
-          }
-        }
-      } catch {
-        // skip unparseable lines
-      }
-    }
-  }
-
-  return accumulatedText;
+  return processSSEStream(reader, onEvent);
 }
 
 /**
@@ -165,11 +190,81 @@ export function parseScopeConfig(text: string): GeneratedScopeConfig {
     jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
   }
 
-  const parsed = JSON.parse(jsonStr);
-  if (!parsed.scope || !parsed.agents || !Array.isArray(parsed.agents)) {
-    throw new Error('Invalid config: missing scope or agents');
+  // Try parsing the extracted JSON
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed.scope && parsed.agents && Array.isArray(parsed.agents)) {
+      return parsed as GeneratedScopeConfig;
+    }
+  } catch {
+    // Fall through to brute-force search
   }
-  return parsed as GeneratedScopeConfig;
+
+  // Brute-force: scan for all top-level JSON objects and find one with scope+agents
+  const candidates: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (text[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        candidates.push(text.substring(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  // Try candidates from largest to smallest (the scope config is usually the biggest JSON)
+  candidates.sort((a, b) => b.length - a.length);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed.scope && parsed.agents && Array.isArray(parsed.agents)) {
+        return parsed as GeneratedScopeConfig;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error('Could not extract valid scope configuration from AI response');
+}
+
+/**
+ * Upload a SOP document and stream scope generation via SSE.
+ * The file is sent as multipart/form-data so the backend agent can parse it autonomously.
+ */
+export async function generateScopeWithDocument(
+  file: File,
+  description: string,
+  onEvent: GenerateCallback,
+  signal?: AbortSignal,
+): Promise<string> {
+  const token = getAuthToken();
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('description', description);
+
+  const response = await fetch(`${API_BASE_URL}/api/scope-generator/generate-with-document`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Generation failed: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+
+  return processSSEStream(reader, onEvent);
 }
 
 /**

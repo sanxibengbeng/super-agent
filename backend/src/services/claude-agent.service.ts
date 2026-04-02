@@ -428,8 +428,8 @@ export class ClaudeAgentService {
         CLAUDE_CODE_USE_BEDROCK: '1',
         AWS_REGION: config.aws.region,
         AWS_DEFAULT_REGION: config.aws.region,
-        ...(config.aws.accessKeyId ? { AWS_ACCESS_KEY_ID: config.aws.accessKeyId } : {}),
-        ...(config.aws.secretAccessKey ? { AWS_SECRET_ACCESS_KEY: config.aws.secretAccessKey } : {}),
+        ...(config.claude.bedrockAccessKeyId ? { AWS_ACCESS_KEY_ID: config.claude.bedrockAccessKeyId } : {}),
+        ...(config.claude.bedrockSecretAccessKey ? { AWS_SECRET_ACCESS_KEY: config.claude.bedrockSecretAccessKey } : {}),
       };
       // Remove any Anthropic direct-API keys/URLs so the CLI uses Bedrock auth only.
       // These may leak in from process.env or ~/.claude/settings.json.

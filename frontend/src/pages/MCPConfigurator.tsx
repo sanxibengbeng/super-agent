@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Loader2, Save, AlertCircle, Trash2, Wifi, WifiOff, Terminal, Globe } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { useMCP } from '@/services'
-import { useToast, FormField, FormErrorSummary, useFormValidation, ValidationRules, LoadingSpinner } from '@/components'
+import { useToast, FormField, FormErrorSummary, useFormValidation, ValidationRules, LoadingSpinner, MCPCatalogPanel } from '@/components'
 import type { MCPServer, MCPServerConfig } from '@/types'
+import type { McpServerEntry } from '@/data/mcp-servers'
 
 type ServerType = 'stdio' | 'sse' | 'http'
 
@@ -57,6 +58,7 @@ export function MCPConfigurator() {
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isTestingConnection, setIsTestingConnection] = useState<string | null>(null)
+  const [isCatalogOpen, setIsCatalogOpen] = useState(false)
   const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM })
 
   useEffect(() => { getServers() }, [getServers])
@@ -161,6 +163,42 @@ export function MCPConfigurator() {
   }
 
   const handleNewServer = () => { resetForm(); setIsFormOpen(true) }
+
+  /** Set of server names already in the org list (for catalog "Installed" badges) */
+  const installedNames = useMemo(
+    () => new Set(servers.map(s => s.name)),
+    [servers],
+  )
+
+  /** Install a server from the catalog: create a record, refresh list, then open it for editing */
+  const handleCatalogInstall = useCallback(async (entry: McpServerEntry) => {
+    try {
+      const config: MCPServerConfig = entry.config
+        ? { type: entry.config.type as MCPServerConfig['type'], command: entry.config.command, args: entry.config.args }
+        : { type: 'sse', url: '' }
+
+      const hostAddress = entry.config
+        ? [entry.config.command, ...entry.config.args].join(' ')
+        : ''
+
+      const created = await createServer({
+        name: entry.name,
+        description: entry.description,
+        hostAddress,
+        config,
+        oauth: { clientId: '', clientSecret: '', tokenUrl: '', scope: '' },
+        headers: {},
+        status: 'active',
+      })
+      success(`${entry.name} installed`)
+      // Refresh list and auto-select the new server for editing
+      await getServers()
+      handleSelectServer(created)
+      setIsCatalogOpen(false)
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to install server')
+    }
+  }, [createServer, getServers, success, showError])
 
   /** Build structured config and hostAddress from form state */
   const buildConfigAndAddress = (): { config: MCPServerConfig; hostAddress: string } => {
@@ -279,7 +317,7 @@ export function MCPConfigurator() {
             <p className="text-sm text-gray-400">{t('mcpConfig.subtitle')}</p>
           </div>
           <button
-            onClick={handleNewServer}
+            onClick={() => setIsCatalogOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -561,6 +599,14 @@ export function MCPConfigurator() {
           )}
         </div>
       </div>
+
+      {/* Catalog slide-out panel */}
+      <MCPCatalogPanel
+        open={isCatalogOpen}
+        onClose={() => setIsCatalogOpen(false)}
+        installedNames={installedNames}
+        onInstall={handleCatalogInstall}
+      />
     </div>
   )
 }

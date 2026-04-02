@@ -88,6 +88,7 @@ export interface ScopeForWorkspace {
   id: string;
   name: string;
   description: string | null;
+  systemPrompt: string | null;
   configVersion: number;
   agents: AgentForWorkspace[];
   skills: SkillForWorkspace[];
@@ -202,6 +203,42 @@ export class WorkspaceManager {
       console.log(`Loaded built-in skills for session ${sessionId}: ${builtinCopied.join(', ')}`);
     }
 
+    // Generate RAG knowledge-search skill if enabled and scope has document groups
+    const { isRagEnabled } = await import('./rag/document-indexer.service.js');
+    if (isRagEnabled() && docGroups.length > 0) {
+      const ragSkillPath = join(skillsDir, 'knowledge-search.md');
+      const backendUrl = `http://localhost:${process.env.PORT || 3001}`;
+      const ragSkillContent = [
+        '# Knowledge Search',
+        '',
+        'Use this skill to search the knowledge base for relevant document passages.',
+        'This performs semantic similarity search — much more accurate than grep for finding relevant information.',
+        '',
+        '## When to Use',
+        '- User asks about specific policies, procedures, or regulations',
+        '- User needs information that might be in uploaded documents',
+        '- You need to cite or reference specific document content',
+        '- Grep/ripgrep returns too many or irrelevant results',
+        '',
+        '## How to Use',
+        `Use the WebFetch tool to call: ${backendUrl}/api/rag/search?scope_id=${scope.id}&q={URL_ENCODED_QUERY}&top_k=5`,
+        '',
+        '## Response Format',
+        'JSON with a `data` array. Each result contains:',
+        '- `filename`: source document name',
+        '- `content`: relevant text passage (~500 tokens)',
+        '- `similarity`: relevance score (0-1, higher is better)',
+        '- `chunkIndex`: position within the document',
+        '',
+        '## Tips',
+        '- Use natural language queries, not keywords',
+        '- If the first search is not specific enough, refine your query',
+        '- Always cite the source filename when using retrieved information',
+        '',
+      ].join('\n');
+      await writeFile(ragSkillPath, ragSkillContent, 'utf-8');
+    }
+
     // Install plugins (git clone)
     const pluginPaths = await this.installPlugins(workspacePath, scope.plugins ?? []);
 
@@ -305,6 +342,12 @@ export class WorkspaceManager {
       lines.push(scope.description, '');
     }
 
+    // Inject scope-level system prompt (behavior instructions for this business domain)
+    if (scope.systemPrompt) {
+      lines.push('## Scope Instructions', '');
+      lines.push(scope.systemPrompt, '');
+    }
+
     if (scope.agents.length > 0) {
       lines.push('## Available Agents', '');
       lines.push('You have access to specialized subagents for this business scope.');
@@ -347,6 +390,13 @@ export class WorkspaceManager {
       lines.push('Reference documents are available in the `documents/` directory. These are **READ-ONLY**.');
       lines.push('- NEVER modify, delete, or create files inside `documents/`.');
       lines.push('- Use grep or ripgrep to search within these files when you need reference information.');
+
+      // Add RAG instructions if enabled
+      const { isRagEnabled: checkRag } = await import('./rag/document-indexer.service.js');
+      if (checkRag()) {
+        lines.push('- **Preferred**: Use the `knowledge-search` skill for semantic search — it finds relevant passages much more accurately than grep.');
+      }
+
       lines.push('');
       lines.push('Available document groups:');
       for (const g of docGroups) {
@@ -361,9 +411,32 @@ export class WorkspaceManager {
       lines.push('The following knowledge has been accumulated for this scope:', '');
       for (const m of memories) {
         const pinLabel = m.is_pinned ? '[Pinned] ' : '';
-        lines.push(`### ${pinLabel}${m.title}`);
+        const autoLabel = m.tags.includes('auto-distilled') ? '[Auto] ' : '';
+        lines.push(`### ${pinLabel}${autoLabel}${m.title}`);
         lines.push(`*Category: ${m.category}*`);
         lines.push(m.content, '');
+      }
+    }
+
+    // Optionally append vector-search semantic memories (if configured)
+    const { isVectorMemoryEnabled, getVectorProvider } = await import('./memory-provider.js');
+    if (isVectorMemoryEnabled()) {
+      const vectorProvider = getVectorProvider();
+      if (vectorProvider) {
+        try {
+          const semanticMemories = await vectorProvider.loadForContext(scope.id);
+          if (semanticMemories.length > 0) {
+            lines.push('');
+            lines.push('## Semantic Memory', '');
+            lines.push('Additional knowledge retrieved via semantic similarity:', '');
+            for (const m of semanticMemories) {
+              lines.push(`- **${m.title}** *(${m.category})*: ${m.content}`);
+            }
+            lines.push('');
+          }
+        } catch (err) {
+          console.error('[workspace-manager] Vector memory loadForContext failed:', err instanceof Error ? err.message : err);
+        }
       }
     }
 

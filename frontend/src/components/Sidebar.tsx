@@ -7,6 +7,7 @@ import {
   Wrench,
   Rocket,
   FolderKanban,
+  Star,
 } from 'lucide-react'
 import type { NavigationPage } from '@/types'
 import { useTranslation } from '@/i18n'
@@ -61,6 +62,12 @@ const navItems: NavItemConfig[] = [
     tooltipKey: 'nav.apps',
     path: '/apps',
   },
+  {
+    id: 'starred',
+    icon: <Star className="w-5 h-5" />,
+    tooltipKey: 'nav.starred',
+    path: '/starred',
+  },
 ]
 
 interface SidebarProps {
@@ -82,6 +89,7 @@ export function Sidebar({ onAvatarClick, isAdminMenuOpen }: SidebarProps) {
     if (path.startsWith('/projects')) return 'projects'
     if (path.startsWith('/tools')) return 'tools'
     if (path.startsWith('/apps')) return 'apps'
+    if (path.startsWith('/starred')) return 'starred'
     return 'dashboard'
   }
 
@@ -111,7 +119,7 @@ export function Sidebar({ onAvatarClick, isAdminMenuOpen }: SidebarProps) {
                 transition-all duration-200 group
                 ${
                   isActive
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-blue-600/15 text-blue-400'
                     : 'text-gray-400 hover:bg-gray-800 hover:text-white'
                 }
               `}

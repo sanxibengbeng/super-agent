@@ -30,6 +30,10 @@ export const translations: TranslationData = {
     en: 'Apps',
     cn: '应用'
   },
+  'nav.starred': {
+    en: 'Starred',
+    cn: '明星案例'
+  },
   'nav.tasks': {
     en: 'Tasks',
     cn: '任务'

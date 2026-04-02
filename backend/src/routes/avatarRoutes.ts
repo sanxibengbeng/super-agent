@@ -1,11 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { avatarService } from '../services/avatarService.js';
 import { authenticate } from '../middleware/auth.js';
-import multipart from '@fastify/multipart';
 
 export async function avatarRoutes(fastify: FastifyInstance) {
-  // Register multipart for photo upload
-  await fastify.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
+  // multipart is registered globally in app.ts
 
   // Upload avatar photo (user-provided image)
   fastify.post('/avatars/upload', {

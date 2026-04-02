@@ -35,11 +35,11 @@ function tryParseContentBlocks(content: string): ContentBlock[] | null {
 function UserBubble({ message }: { message: Message }) {
   return (
     <div className="flex gap-3 flex-row-reverse">
-      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-600">
-        <User className="w-4 h-4 text-white" />
+      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-600/15 border border-blue-500/25">
+        <User className="w-4 h-4 text-blue-400" />
       </div>
       <div className="flex flex-col max-w-[70%] items-end">
-        <div className="px-4 py-2 rounded-2xl bg-blue-600 text-white rounded-br-md">
+        <div className="px-4 py-2 rounded-2xl bg-blue-600/15 border border-blue-500/20 text-white rounded-br-md">
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         </div>
         <span className="text-xs text-gray-500 mt-1 px-1">

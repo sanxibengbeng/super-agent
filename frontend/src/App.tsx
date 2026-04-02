@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { TranslationProvider } from '@/i18n'
 import { AppShell, ErrorBoundary, ToastProvider, ProtectedRoute, SkillMarketplaceBrowser, AIScopeGenerator, SkillWorkshop } from '@/components'
 import { Dashboard, Chat, WorkflowEditor, Agents, Tools, AgentConfigurator, TaskAuditLog, TaskExecutionCenter, MCPConfigurator, KnowledgeManager, InfrastructureConfigurator, Login, CreateBusinessScope, Marketplace, AppRunner } from '@/pages'
+import { StarredSessions } from '@/pages/StarredSessions'
 import { Settings } from '@/pages/Settings'
 import { AuthCallback } from '@/pages/AuthCallback'
 import { InviteAccept } from '@/pages/InviteAccept'
@@ -44,6 +45,7 @@ function AppContent() {
             <Route path="/config/framework" element={<InfrastructureConfigurator />} />
             <Route path="/apps" element={<Marketplace />} />
             <Route path="/apps/:id" element={<AppRunner />} />
+            <Route path="/starred" element={<StarredSessions />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </AppShell>

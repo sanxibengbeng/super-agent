@@ -181,12 +181,8 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       }
     }
 
-    // --- After invoke completes, sync container changes back from S3 to local ---
-    if (options.workspacePath) {
-      this.syncBackFromS3(s3Prefix, options.workspacePath).catch(err => {
-        console.warn('[agentcore-runtime] syncBackFromS3 failed:', err);
-      });
-    }
+    // --- S3 sync-back disabled: local workspace is read-only cache, not critical ---
+    // if (options.workspacePath) { ... }
   }
 
   async disconnectSession(_sessionId: string): Promise<void> { /* managed by AgentCore */ }
@@ -306,13 +302,18 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       for (const obj of result.Contents ?? []) {
         if (!obj.Key) continue;
         const relativePath = obj.Key.slice(s3Prefix.length);
-        if (!relativePath) continue;
+        if (!relativePath || relativePath.endsWith('/')) continue;
 
         const localPath = join(localDir, relativePath);
         const localDirPath = dirname(localPath);
 
         try {
           await mkdir(localDirPath, { recursive: true });
+          // Skip if localPath is already a directory
+          try {
+            const s = await import('fs/promises').then(m => m.stat(localPath));
+            if (s.isDirectory()) continue;
+          } catch { /* doesn't exist yet, fine */ }
           const response = await this.s3Client.send(new GetObjectCommand({
             Bucket: this.workspaceBucket,
             Key: obj.Key,
@@ -323,7 +324,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
           }
         } catch (err) {
           // Non-critical — local workspace is a cache
-          console.warn(`[agentcore-runtime] syncBack failed for ${relativePath}:`, err);
+          console.warn(`[agentcore-runtime] syncBack failed for ${relativePath}:`, err instanceof Error ? err.message : err);
         }
       }
 

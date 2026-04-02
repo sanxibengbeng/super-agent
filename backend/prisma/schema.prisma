@@ -56,6 +56,8 @@ model organizations {
   projects                   projects[]
   project_issues             project_issues[]
   project_issue_comments     project_issue_comments[]
+  rehearsal_sessions         rehearsal_sessions[]
+  scope_evolution_proposals  scope_evolution_proposals[]
   @@index([slug])
   @@index([plan_type])
   @@index([created_at(sort: Desc)])
@@ -139,6 +141,8 @@ model business_scopes {
   scope_memberships   scope_memberships[]
   scope_document_groups scope_document_groups[]
   agent_scope_assignments agent_scope_assignments[]
+  rehearsal_sessions      rehearsal_sessions[]
+  scope_evolution_proposals scope_evolution_proposals[]
 
   @@unique([organization_id, name], name: "unique_scope_name_per_org")
   @@index([organization_id])
@@ -391,6 +395,7 @@ model scope_mcp_servers {
   mcp_server_id     String   @db.Uuid
   assigned_at       DateTime @default(now()) @db.Timestamptz
   assigned_by       String?  @db.Uuid
+  scope_config      Json?    @db.JsonB
 
   business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
   mcp_server     mcp_servers     @relation(fields: [mcp_server_id], references: [id], onDelete: Cascade)
@@ -437,6 +442,10 @@ model chat_sessions {
   context           Json     @default("{}")
   room_mode         String   @default("single") @db.VarChar(20) // single | group
   routing_strategy  String   @default("auto") @db.VarChar(20)   // auto | mention | round_robin
+  is_starred        Boolean  @default(false)
+  starred_at        DateTime? @db.Timestamptz
+  starred_by        String?  @db.Uuid
+  star_category     String?  @db.VarChar(50)
   created_at        DateTime @default(now()) @db.Timestamptz
   updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
 
@@ -981,6 +990,9 @@ model scope_memories {
   organization   organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
 
+  // pgvector embedding — managed via raw SQL, not Prisma ORM
+  // embedding vector(1024)
+
   @@index([organization_id])
   @@index([business_scope_id])
   @@index([category])
@@ -1257,5 +1269,62 @@ model project_issue_comments {
 
   @@index([issue_id])
   @@index([organization_id])
+  @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Rehearsal Sessions — automated agent evaluation sessions
+// ============================================================================
+model rehearsal_sessions {
+  id                  String    @id @default(uuid()) @db.Uuid
+  organization_id     String    @db.Uuid
+  business_scope_id   String    @db.Uuid
+  agent_id            String?   @db.Uuid
+  rehearsal_type      String    @default("memory_triggered") @db.VarChar(50)
+  trigger_memory_ids  String[]  @default([])
+  agent_config_snapshot Json    @default("{}")
+  scenario            Json      @default("{}")
+  evaluation          Json?
+  status              String    @default("pending") @db.VarChar(20)
+  created_at          DateTime  @default(now()) @db.Timestamptz
+  completed_at        DateTime? @db.Timestamptz
+
+  organization   organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope business_scopes @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
+  proposals      scope_evolution_proposals[]
+
+  @@index([organization_id])
+  @@index([business_scope_id])
+  @@index([status])
+  @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Scope Evolution Proposals — change proposals from rehearsal evaluations
+// ============================================================================
+model scope_evolution_proposals {
+  id                     String    @id @default(uuid()) @db.Uuid
+  organization_id        String    @db.Uuid
+  business_scope_id      String    @db.Uuid
+  rehearsal_session_id   String?   @db.Uuid
+  trigger_memory_ids     String[]  @default([])
+  proposal_type          String    @db.VarChar(50)
+  proposed_changes       Json      @default("[]")
+  evaluation_score       Int?
+  evaluation_summary     String?
+  status                 String    @default("pending") @db.VarChar(20)
+  reviewed_by            String?   @db.Uuid
+  review_note            String?
+  applied_at             DateTime? @db.Timestamptz
+  created_at             DateTime  @default(now()) @db.Timestamptz
+  updated_at             DateTime  @default(now()) @updatedAt @db.Timestamptz
+
+  organization      organizations      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope    business_scopes    @relation(fields: [business_scope_id], references: [id], onDelete: Cascade)
+  rehearsal_session rehearsal_sessions? @relation(fields: [rehearsal_session_id], references: [id], onDelete: SetNull)
+
+  @@index([organization_id])
+  @@index([business_scope_id])
+  @@index([status])
   @@index([created_at(sort: Desc)])
 }

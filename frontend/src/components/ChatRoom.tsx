@@ -321,7 +321,7 @@ function MessageBubble({ message, agentName }: {
   return (
     <div className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs ${
-        isUser ? 'bg-blue-600' : 'bg-purple-600'
+        isUser ? 'bg-blue-600/15 border border-blue-500/25 text-blue-400' : 'bg-purple-600/15 border border-purple-500/25 text-purple-400'
       }`}>
         {isUser ? <User size={14} /> : <Bot size={14} />}
       </div>
@@ -331,7 +331,7 @@ function MessageBubble({ message, agentName }: {
         )}
         <div className={`inline-block px-3 py-2 rounded-lg text-sm ${
           isUser
-            ? 'bg-blue-600 text-white'
+            ? 'bg-blue-600/15 border border-blue-500/20 text-white'
             : 'bg-gray-800 text-gray-200 border border-gray-700'
         }`}>
           {message.content}

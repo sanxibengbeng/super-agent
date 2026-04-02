@@ -61,6 +61,8 @@ import { scopeMemoryRoutes } from './scope-memory.routes.js';
 import { briefingRoutes } from './briefing.routes.js';
 import { scopeMembershipRoutes } from './scopeMemberships.routes.js';
 import { documentGroupRoutes, scopeDocGroupRoutes } from './document-groups.routes.js';
+import { rehearsalRoutes } from './rehearsal.routes.js';
+import { ragRoutes } from './rag.routes.js';
 
 /**
  * Register all API routes on the Fastify instance.
@@ -206,6 +208,12 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   // Scope Briefings Routes (AI-generated insights)
   await fastify.register(briefingRoutes);
+
+  // Rehearsal & Evolution Proposal Routes (agent self-evolution)
+  await fastify.register(rehearsalRoutes, { prefix: '/api/business-scopes' });
+
+  // RAG Routes (semantic document search)
+  await fastify.register(ragRoutes, { prefix: '/api/rag' });
 
   // IM Webhook Routes (receive messages from Slack, Discord, etc. — no JWT auth)
   await fastify.register(imWebhookRoutes, { prefix: '/api/im' });

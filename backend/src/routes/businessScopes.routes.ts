@@ -858,8 +858,9 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
       const rows = await prisma.$queryRaw<Array<{
         id: string; mcp_server_id: string; name: string; description: string | null;
         host_address: string; config: Record<string, unknown> | null; status: string; assigned_at: Date;
+        scope_config: Record<string, unknown> | null;
       }>>`
-        SELECT sms.id, sms.mcp_server_id, ms.name, ms.description, ms.host_address, ms.config, ms.status, sms.assigned_at
+        SELECT sms.id, sms.mcp_server_id, ms.name, ms.description, ms.host_address, ms.config, ms.status, sms.assigned_at, sms.scope_config
         FROM scope_mcp_servers sms
         JOIN mcp_servers ms ON ms.id = sms.mcp_server_id
         WHERE sms.business_scope_id = ${id}::uuid
@@ -936,6 +937,56 @@ export async function businessScopeRoutes(fastify: FastifyInstance): Promise<voi
       `;
 
       return reply.status(204).send();
+    },
+  );
+
+  /**
+   * PUT /api/business-scopes/:id/mcp-servers/:assignmentId/config
+   * Update the scope-level configuration for an assigned MCP server.
+   * This stores per-scope overrides (connection strings, env vars, etc.)
+   * separate from the global MCP server definition.
+   */
+  fastify.put<{ Params: { id: string; assignmentId: string }; Body: { scopeConfig: Record<string, unknown> } }>(
+    '/:id/mcp-servers/:assignmentId/config',
+    {
+      preHandler: [authenticate, requireModifyAccess],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['scopeConfig'],
+          properties: {
+            scopeConfig: { type: 'object' },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const scopeId = request.params.id;
+      const assignmentId = request.params.assignmentId;
+      const orgId = request.user!.orgId;
+      const { scopeConfig } = request.body;
+
+      // Verify scope belongs to org
+      const scope = await businessScopeService.getBusinessScopeById(scopeId, orgId);
+      if (!scope) throw AppError.notFound('Business scope not found');
+
+      const configJson = JSON.stringify(scopeConfig);
+      const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+        UPDATE scope_mcp_servers
+        SET scope_config = ${configJson}::jsonb
+        WHERE id = ${assignmentId}::uuid AND business_scope_id = ${scopeId}::uuid
+        RETURNING id
+      `;
+
+      if (!rows.length) throw AppError.notFound('MCP server assignment not found');
+
+      // Bump config_version
+      await prisma.$executeRaw`
+        UPDATE business_scopes SET config_version = config_version + 1, updated_at = NOW()
+        WHERE id = ${scopeId}::uuid AND organization_id = ${orgId}::uuid
+      `;
+
+      return reply.status(200).send({ id: assignmentId, scopeConfig });
     },
   );
 }

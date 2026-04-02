@@ -28,6 +28,7 @@ export const createChatSessionSchema = z.object({
  * Schema for updating a chat session
  */
 export const updateChatSessionSchema = z.object({
+  title: z.string().optional().nullable(),
   sop_context: z.string().optional().nullable(),
   context: z.record(z.string(), z.unknown()).optional(),
 });

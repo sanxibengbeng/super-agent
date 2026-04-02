@@ -66,6 +66,10 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   CLAUDE_CODE_USE_BEDROCK: z.string().optional().default('false'),
   CLAUDE_MODEL: z.string().optional().default('claude-sonnet-4-5-20250929'),
+  // Separate Bedrock credentials — only injected into the SDK subprocess,
+  // so the main process keeps using the EC2 instance role for S3/Secrets/etc.
+  BEDROCK_AWS_ACCESS_KEY_ID: z.string().optional(),
+  BEDROCK_AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AGENT_WORKSPACE_BASE_DIR: z.string().optional().default('/tmp/super-agent-workspaces'),
   CLAUDE_CODE_EXECUTABLE: z.string().optional(),
   CLAUDE_SESSION_TIMEOUT_MS: z.string().optional().default('1800000').transform(Number), // 30 min
@@ -93,6 +97,12 @@ const envSchema = z.object({
 
   // OpenClaw on AgentCore (when AGENT_RUNTIME=openclaw)
   OPENCLAW_AGENTCORE_RUNTIME_ARN: z.string().optional(),
+
+  // Vector Memory (optional — pgvector + Bedrock Nova Embed semantic memory layer)
+  VECTOR_MEMORY_ENABLED: z.string().optional(),
+
+  // RAG (optional — semantic document search over knowledge base)
+  RAG_ENABLED: z.string().optional(),
 });
 
 function loadConfig(): z.infer<typeof envSchema> {
@@ -173,6 +183,8 @@ export const config = {
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     useBedrock: env.CLAUDE_CODE_USE_BEDROCK === 'true' || env.CLAUDE_CODE_USE_BEDROCK === '1',
     model: env.CLAUDE_MODEL,
+    bedrockAccessKeyId: env.BEDROCK_AWS_ACCESS_KEY_ID,
+    bedrockSecretAccessKey: env.BEDROCK_AWS_SECRET_ACCESS_KEY,
     workspaceBaseDir: env.AGENT_WORKSPACE_BASE_DIR,
     executablePath: env.CLAUDE_CODE_EXECUTABLE,
     sessionTimeoutMs: env.CLAUDE_SESSION_TIMEOUT_MS,
@@ -205,6 +217,14 @@ export const config = {
 
   openclaw: {
     agentCoreRuntimeArn: env.OPENCLAW_AGENTCORE_RUNTIME_ARN,
+  },
+
+  vectorMemory: {
+    enabled: env.VECTOR_MEMORY_ENABLED === 'true' || env.VECTOR_MEMORY_ENABLED === '1',
+  },
+
+  rag: {
+    enabled: env.RAG_ENABLED === 'true' || env.RAG_ENABLED === '1',
   },
 
   logLevel: env.LOG_LEVEL,

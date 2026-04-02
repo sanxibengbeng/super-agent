@@ -2,7 +2,7 @@
 @plugin "@tailwindcss/typography";
 
 /* ============================================================
-   THEME SYSTEM: CSS-level palette swap
+   THEME SYSTEM: CSS-level palette swap + brand color remap
    
    The app was built dark-first with hardcoded Tailwind classes
    like bg-gray-900, text-white, border-gray-800, etc.
@@ -10,6 +10,10 @@
    Instead of adding dark: variants to 90+ components, we remap
    the color palette at the CSS level. In light mode, dark colors
    become light and vice versa — a full palette inversion.
+   
+   Brand remap: blue-* → indigo values, purple-* → violet values
+   so the primary accent is a cohesive indigo and secondary is
+   a complementary violet. This avoids the blue+purple clash.
    
    .dark class = original dark palette (no changes)
    no .dark    = inverted palette for light mode
@@ -45,9 +49,35 @@
   /* White/black swap */
   --color-white: var(--th-white);
   --color-black: var(--th-black);
+
+  /* ── Brand: remap blue-* → indigo ── */
+  --color-blue-50:  var(--th-blue-50);
+  --color-blue-100: var(--th-blue-100);
+  --color-blue-200: var(--th-blue-200);
+  --color-blue-300: var(--th-blue-300);
+  --color-blue-400: var(--th-blue-400);
+  --color-blue-500: var(--th-blue-500);
+  --color-blue-600: var(--th-blue-600);
+  --color-blue-700: var(--th-blue-700);
+  --color-blue-800: var(--th-blue-800);
+  --color-blue-900: var(--th-blue-900);
+  --color-blue-950: var(--th-blue-950);
+
+  /* ── Secondary: remap purple-* → softer violet ── */
+  --color-purple-50:  var(--th-purple-50);
+  --color-purple-100: var(--th-purple-100);
+  --color-purple-200: var(--th-purple-200);
+  --color-purple-300: var(--th-purple-300);
+  --color-purple-400: var(--th-purple-400);
+  --color-purple-500: var(--th-purple-500);
+  --color-purple-600: var(--th-purple-600);
+  --color-purple-700: var(--th-purple-700);
+  --color-purple-800: var(--th-purple-800);
+  --color-purple-900: var(--th-purple-900);
+  --color-purple-950: var(--th-purple-950);
 }
 
-/* ---- Dark mode: original Tailwind palette (unchanged) ---- */
+/* ---- Dark mode: indigo brand palette ---- */
 .dark {
   color-scheme: dark;
 
@@ -77,24 +107,50 @@
 
   --th-white: #ffffff;
   --th-black: #000000;
+
+  /* blue-* → Tailwind indigo (dark mode) */
+  --th-blue-50:  #eef2ff;
+  --th-blue-100: #e0e7ff;
+  --th-blue-200: #c7d2fe;
+  --th-blue-300: #a5b4fc;
+  --th-blue-400: #818cf8;
+  --th-blue-500: #6366f1;
+  --th-blue-600: #4f46e5;
+  --th-blue-700: #4338ca;
+  --th-blue-800: #3730a3;
+  --th-blue-900: #312e81;
+  --th-blue-950: #1e1b4b;
+
+  /* purple-* → softer violet (dark mode) */
+  --th-purple-50:  #f5f3ff;
+  --th-purple-100: #ede9fe;
+  --th-purple-200: #ddd6fe;
+  --th-purple-300: #c4b5fd;
+  --th-purple-400: #a78bfa;
+  --th-purple-500: #8b5cf6;
+  --th-purple-600: #7c3aed;
+  --th-purple-700: #6d28d9;
+  --th-purple-800: #5b21b6;
+  --th-purple-900: #4c1d95;
+  --th-purple-950: #2e1065;
 }
 
-/* ---- Light mode: inverted palette ---- */
+/* ---- Light mode: inverted palette + indigo brand ---- */
 :root:not(.dark) {
   color-scheme: light;
 
   /* gray: dark shades → light, light shades → dark */
-  --th-gray-50:  #111827;   /* was lightest → now darkest (for text on light bg) */
+  --th-gray-50:  #111827;
   --th-gray-100: #1f2937;
   --th-gray-200: #374151;
   --th-gray-300: #4b5563;
   --th-gray-400: #6b7280;
   --th-gray-500: #9ca3af;
   --th-gray-600: #d1d5db;
-  --th-gray-700: #e5e7eb;   /* borders become light */
-  --th-gray-800: #f3f4f6;   /* panels become near-white */
-  --th-gray-900: #f9fafb;   /* main bg becomes lightest */
-  --th-gray-950: #ffffff;   /* deepest bg becomes white */
+  --th-gray-700: #e5e7eb;
+  --th-gray-800: #f3f4f6;
+  --th-gray-900: #f9fafb;
+  --th-gray-950: #ffffff;
 
   /* slate: same inversion */
   --th-slate-50:  #0f172a;
@@ -109,9 +165,34 @@
   --th-slate-900: #f8fafc;
   --th-slate-950: #ffffff;
 
-  /* Swap white ↔ near-black for text/bg */
   --th-white: #111827;
   --th-black: #ffffff;
+
+  /* blue-* → indigo (light mode — same values, Tailwind handles contrast) */
+  --th-blue-50:  #eef2ff;
+  --th-blue-100: #e0e7ff;
+  --th-blue-200: #c7d2fe;
+  --th-blue-300: #a5b4fc;
+  --th-blue-400: #818cf8;
+  --th-blue-500: #6366f1;
+  --th-blue-600: #4f46e5;
+  --th-blue-700: #4338ca;
+  --th-blue-800: #3730a3;
+  --th-blue-900: #312e81;
+  --th-blue-950: #1e1b4b;
+
+  /* purple-* → violet (light mode) */
+  --th-purple-50:  #f5f3ff;
+  --th-purple-100: #ede9fe;
+  --th-purple-200: #ddd6fe;
+  --th-purple-300: #c4b5fd;
+  --th-purple-400: #a78bfa;
+  --th-purple-500: #8b5cf6;
+  --th-purple-600: #7c3aed;
+  --th-purple-700: #6d28d9;
+  --th-purple-800: #5b21b6;
+  --th-purple-900: #4c1d95;
+  --th-purple-950: #2e1065;
 }
 
 /* ============================================================ */
@@ -264,13 +345,13 @@ body {
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
 }
 
-/* Selection styles */
+/* Selection styles — indigo accent */
 .react-flow__selection {
-  background: rgba(59, 130, 246, 0.1) !important;
-  border: 1px solid rgba(59, 130, 246, 0.5) !important;
+  background: rgba(99, 102, 241, 0.1) !important;
+  border: 1px solid rgba(99, 102, 241, 0.5) !important;
 }
 
 .react-flow__nodesselection-rect {
-  background: rgba(59, 130, 246, 0.1) !important;
-  border: 1px solid rgba(59, 130, 246, 0.5) !important;
+  background: rgba(99, 102, 241, 0.1) !important;
+  border: 1px solid rgba(99, 102, 241, 0.5) !important;
 }

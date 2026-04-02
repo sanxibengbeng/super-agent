@@ -87,6 +87,38 @@ function marketplaceSkillToToolItem(skill: MarketplaceSkillResult, index: number
   }
 }
 
+/** Enterprise skill from /api/skills/enterprise */
+interface EnterpriseSkillResult {
+  id: string
+  skillId: string
+  name: string
+  displayName: string
+  description: string | null
+  version: string
+  category: string | null
+  source: string
+  sourceRef: string | null
+  installCount: number
+  voteScore: number
+  publishedBy: string
+  publishedAt: string
+}
+
+/** Convert an enterprise catalog skill into a ToolItem */
+function enterpriseSkillToToolItem(skill: EnterpriseSkillResult): ToolItem {
+  return {
+    id: `ent-${skill.id}`,
+    name: skill.displayName,
+    description: skill.description || `Published internally`,
+    category: 'skills',
+    source: 'internal',
+    icon: Zap,
+    tags: skill.category ? [skill.category] : [],
+    installed: true,
+  }
+}
+
+
 const STATIC_TOOLS: ToolItem[] = [
   // ── Internal Skills ──
   {
@@ -386,6 +418,12 @@ const STATIC_TOOLS: ToolItem[] = [
     tags: ['aws', 'glue', 'emr', 'etl'], author: 'awslabs',
     marketplaceUrl: 'https://github.com/awslabs/mcp/tree/main/src/dataprocessing-mcp-server', marketplaceName: 'AWS',
   },
+  {
+    id: 'mcp-aws-41', name: 'Amazon Bedrock AgentCore MCP Server', description: 'Access AgentCore documentation, Runtime, Memory, Code Interpreter, Browser, Gateway, Observability, and Identity services.',
+    category: 'mcp', source: 'marketplace', icon: Cpu,
+    tags: ['aws', 'bedrock', 'agentcore', 'agents', 'browser', 'code-interpreter'], author: 'awslabs',
+    marketplaceUrl: 'https://github.com/awslabs/mcp/tree/main/src/amazon-bedrock-agentcore-mcp-server', marketplaceName: 'AWS',
+  },
   // ── Internal Plugins ──
   {
     id: 'plugin-1', name: 'claude-mem', description: 'Persistent memory across sessions — auto-saves context, searchable recall. Agents remember past conversations and decisions.',
@@ -538,6 +576,7 @@ export function Tools() {
   const [searchQuery, setSearchQuery] = useState('')
   const [marketplaceSkills, setMarketplaceSkills] = useState<ToolItem[]>([])
   const [loadingMarketplace, setLoadingMarketplace] = useState(false)
+  const [enterpriseSkills, setEnterpriseSkills] = useState<ToolItem[]>([])
 
   // Marketplace search state (active when skills + marketplace + has query)
   const [marketSearchResults, setMarketSearchResults] = useState<ToolItem[]>([])
@@ -618,8 +657,28 @@ export function Tools() {
     loadMarketplaceSkills()
   }, [loadMarketplaceSkills])
 
-  // Merge static tools with dynamically loaded marketplace skills
-  const allTools = [...STATIC_TOOLS, ...marketplaceSkills]
+  // Load enterprise skills from API
+  const loadEnterpriseSkills = useCallback(async () => {
+    try {
+      const res = await restClient.get<{ items: EnterpriseSkillResult[]; total: number }>(
+        '/api/skills/enterprise?limit=100',
+      )
+      const items = res.items || []
+      setEnterpriseSkills(items.map(enterpriseSkillToToolItem))
+    } catch {
+      // Silently fail — static internal skills still show
+    }
+  }, [])
+
+  useEffect(() => {
+    loadEnterpriseSkills()
+  }, [loadEnterpriseSkills])
+
+  // Merge static tools with dynamically loaded marketplace + enterprise skills
+  // Deduplicate enterprise skills against static tools by name
+  const staticNames = new Set(STATIC_TOOLS.map(t => t.name.toLowerCase()))
+  const dedupedEnterprise = enterpriseSkills.filter(t => !staticNames.has(t.name.toLowerCase()))
+  const allTools = [...STATIC_TOOLS, ...dedupedEnterprise, ...marketplaceSkills]
 
   // When searching in skills+marketplace mode, use API search results
   // instead of local filtering

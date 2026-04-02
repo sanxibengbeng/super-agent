@@ -308,6 +308,16 @@ export async function executionRoutes(fastify: FastifyInstance): Promise<void> {
         request.user!.orgId
       );
 
+      // Non-admin users can only view their own executions
+      const isAdmin = request.user!.role === 'owner' || request.user!.role === 'admin';
+      if (!isAdmin && execution.user_id !== request.user!.id) {
+        return reply.status(403).send({
+          error: 'Access denied. You can only view your own executions.',
+          code: 'FORBIDDEN',
+          requestId: request.id,
+        });
+      }
+
       return reply.status(200).send(execution);
     }
   );
@@ -365,6 +375,19 @@ export async function executionRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (request: FastifyRequest<AbortExecutionRequest>, reply: FastifyReply) => {
       const { executionId } = validateSchema(executionIdParamSchema, request.params);
+
+      // Non-admin users can only abort their own executions
+      const isAdmin = request.user!.role === 'owner' || request.user!.role === 'admin';
+      if (!isAdmin) {
+        const existing = await workflowExecutionService.getExecution(executionId, request.user!.orgId);
+        if (existing.user_id !== request.user!.id) {
+          return reply.status(403).send({
+            error: 'Access denied. You can only abort your own executions.',
+            code: 'FORBIDDEN',
+            requestId: request.id,
+          });
+        }
+      }
 
       const execution = await workflowExecutionService.abortExecution(
         executionId,
@@ -460,10 +483,12 @@ export async function executionRoutes(fastify: FastifyInstance): Promise<void> {
       const { workflowId } = validateSchema(workflowIdParamSchema, request.params);
       const { page, limit } = validateSchema(paginationSchema, request.query);
 
+      const isAdmin = request.user!.role === 'owner' || request.user!.role === 'admin';
+
       const result = await workflowExecutionService.getExecutionHistory(
         workflowId,
         request.user!.orgId,
-        { page, limit }
+        { page, limit, userId: isAdmin ? undefined : request.user!.id }
       );
 
       return reply.status(200).send(result);

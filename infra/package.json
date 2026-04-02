@@ -1,8 +1,9 @@
 {
-  "name": "super-agent-infra",
-  "version": "1.0.0",
+  "name": "super-agent-infra2",
+  "version": "2.0.0",
+  "description": "Super Agent unified infrastructure - core + optional CloudFront CDN",
   "bin": {
-    "infra": "bin/app.js"
+    "infra2": "bin/app.js"
   },
   "scripts": {
     "build": "tsc",

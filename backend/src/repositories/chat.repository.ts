@@ -25,6 +25,10 @@ export interface ChatSessionEntity {
   context: Record<string, unknown>;
   room_mode: 'single' | 'group';
   routing_strategy: 'auto' | 'mention' | 'round_robin';
+  is_starred: boolean;
+  starred_at: Date | null;
+  starred_by: string | null;
+  star_category: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -163,6 +167,66 @@ export class ChatSessionRepository extends BaseRepository<ChatSessionEntity> {
     status: SessionStatus,
   ): Promise<void> {
     await this.update(id, organizationId, { status } as Partial<ChatSessionEntity>);
+  }
+
+  /**
+   * Star (favorite) a chat session.
+   */
+  async star(id: string, organizationId: string, userId: string, category?: string): Promise<ChatSessionEntity | null> {
+    const existing = await this.findById(id, organizationId);
+    if (!existing) return null;
+    return this.getModel().update({
+      where: { id },
+      data: { is_starred: true, starred_at: new Date(), starred_by: userId, star_category: category ?? null },
+    });
+  }
+
+  /**
+   * Unstar a chat session.
+   */
+  async unstar(id: string, organizationId: string): Promise<ChatSessionEntity | null> {
+    const existing = await this.findById(id, organizationId);
+    if (!existing) return null;
+    return this.getModel().update({
+      where: { id },
+      data: { is_starred: false, starred_at: null, starred_by: null, star_category: null },
+    });
+  }
+
+  /**
+   * Update the star category on an already-starred session.
+   */
+  async updateStarCategory(id: string, organizationId: string, category: string | null): Promise<ChatSessionEntity | null> {
+    const existing = await this.findById(id, organizationId);
+    if (!existing) return null;
+    return this.getModel().update({
+      where: { id },
+      data: { star_category: category },
+    });
+  }
+
+  /**
+   * Find all starred sessions for an organization.
+   * Optionally filter by scope or user.
+   */
+  async findStarred(
+    organizationId: string,
+    filters?: { scopeId?: string; userId?: string },
+  ): Promise<(ChatSessionEntity & { business_scope?: { id: string; name: string; icon: string | null } | null })[]> {
+    const where: Record<string, unknown> = {
+      organization_id: organizationId,
+      is_starred: true,
+    };
+    if (filters?.scopeId) where.business_scope_id = filters.scopeId;
+    if (filters?.userId) where.starred_by = filters.userId;
+
+    return prisma.chat_sessions.findMany({
+      where,
+      include: {
+        business_scope: { select: { id: true, name: true, icon: true } },
+      },
+      orderBy: { starred_at: 'desc' },
+    }) as any;
   }
 }
 

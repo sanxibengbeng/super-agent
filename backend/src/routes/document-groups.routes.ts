@@ -5,7 +5,6 @@
  */
 
 import { FastifyInstance } from 'fastify';
-import multipart from '@fastify/multipart';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
 import { documentGroupRepository } from '../repositories/document-group.repository.js';
 import { config } from '../config/index.js';
@@ -16,8 +15,7 @@ import { randomUUID } from 'crypto';
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export async function documentGroupRoutes(fastify: FastifyInstance): Promise<void> {
-  // Register multipart support for file uploads (scoped to this plugin)
-  await fastify.register(multipart, { limits: { fileSize: MAX_FILE_SIZE } });
+  // multipart is registered globally in app.ts
 
   /** GET /api/document-groups — list all groups */
   fastify.get('/', { preHandler: [authenticate] }, async (request, reply) => {
@@ -117,6 +115,20 @@ export async function documentGroupRoutes(fastify: FastifyInstance): Promise<voi
         mime_type: file.mimetype || 'application/octet-stream',
         uploaded_by: request.user!.id,
       });
+
+      // Auto-index for RAG if enabled (fire-and-forget)
+      const { documentIndexerService, isRagEnabled } = await import('../services/rag/document-indexer.service.js');
+      if (isRagEnabled()) {
+        documentIndexerService.indexFile(
+          record.id,
+          request.user!.orgId,
+          group.id,
+          group.storage_path,
+          storedFilename,
+          file.mimetype || 'application/octet-stream',
+          file.filename,
+        ).catch(err => console.error('[rag] Auto-index failed:', err));
+      }
 
       return reply.status(201).send({ data: { ...record, file_size: Number(record.file_size) } });
     },

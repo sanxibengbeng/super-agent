@@ -21,9 +21,10 @@ import { useToast } from '@/components';
 import { ChatMessage } from '@/components/chat/ChatMessage';
 import type { ContentBlock } from '@/services/chatStreamService';
 import {
-  generateScope, parseScopeConfig, confirmScopeGeneration,
+  generateScope, generateScopeWithDocument, parseScopeConfig, confirmScopeGeneration,
   type GeneratedScopeConfig, type GeneratedAgent, type GeneratedScope, type SSEEvent,
 } from '@/services/scopeGeneratorService';
+import { consumeSopFile } from '@/services/sopFileStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -302,8 +303,11 @@ export function AIScopeGenerator() {
   const location = useLocation();
   const { success: showSuccess, error: showError } = useToast();
 
-  // Accept pre-filled description from navigation state (Strategy 3 flow)
-  const prefilled = (location.state as { description?: string } | null)?.description || '';
+  // Accept pre-filled description and optional SOP file from navigation state
+  const navState = location.state as { description?: string; hasSopFile?: boolean } | null;
+  const prefilled = navState?.description || '';
+  // Consume the SOP file from the ephemeral store (only available once after navigation)
+  const [sopFile] = useState<File | null>(() => navState?.hasSopFile ? consumeSopFile() : null);
 
   // State
   const [step, setStep] = useState<Step>('input');
@@ -343,54 +347,56 @@ export function AIScopeGenerator() {
     abortRef.current = controller;
 
     // Add an initial "thinking" text block
-    setContentBlocks([{ type: 'text', text: 'Analyzing your business description...\n\n' }]);
+    setContentBlocks([{ type: 'text', text: sopFile
+      ? `Uploading document "${sopFile.name}" and analyzing...\n\n`
+      : 'Analyzing your business description...\n\n' }]);
+
+    const sseHandler = (event: SSEEvent) => {
+      if (event.type === 'session_start') {
+        setContentBlocks(prev => [
+          ...prev,
+          { type: 'text', text: `Session started. Generating scope configuration...\n\n` },
+        ]);
+      } else if (event.type === 'assistant' && event.content) {
+        setContentBlocks(prev => {
+          const next = [...prev];
+          for (const block of event.content!) {
+            if (block.type === 'text' && block.text) {
+              const lastIdx = next.length - 1;
+              if (lastIdx >= 0 && next[lastIdx].type === 'text') {
+                next[lastIdx] = { type: 'text', text: (next[lastIdx] as { type: 'text'; text: string }).text + block.text };
+              } else {
+                next.push({ type: 'text', text: block.text });
+              }
+            } else if (block.type === 'tool_use' && block.name) {
+              next.push({
+                type: 'tool_use',
+                id: block.id || `tool-${Date.now()}`,
+                name: block.name,
+                input: (typeof block.input === 'object' ? block.input : {}) as Record<string, unknown>,
+              });
+            }
+          }
+          return next;
+        });
+      } else if (event.type === 'result') {
+        setContentBlocks(prev => [
+          ...prev,
+          { type: 'text', text: '\n\n✅ Generation complete. Parsing results...' },
+        ]);
+      } else if (event.type === 'error') {
+        setContentBlocks(prev => [
+          ...prev,
+          { type: 'text', text: `\n\n❌ Error: ${event.message}` },
+        ]);
+      }
+    };
 
     try {
-      const fullText = await generateScope(
-        description.trim(),
-        (event: SSEEvent) => {
-          if (event.type === 'session_start') {
-            setContentBlocks(prev => [
-              ...prev,
-              { type: 'text', text: `Session started. Generating scope configuration...\n\n` },
-            ]);
-          } else if (event.type === 'assistant' && event.content) {
-            setContentBlocks(prev => {
-              const next = [...prev];
-              for (const block of event.content!) {
-                if (block.type === 'text' && block.text) {
-                  // Append text to the last text block if it exists, otherwise create new
-                  const lastIdx = next.length - 1;
-                  if (lastIdx >= 0 && next[lastIdx].type === 'text') {
-                    next[lastIdx] = { type: 'text', text: (next[lastIdx] as { type: 'text'; text: string }).text + block.text };
-                  } else {
-                    next.push({ type: 'text', text: block.text });
-                  }
-                } else if (block.type === 'tool_use' && block.name) {
-                  next.push({
-                    type: 'tool_use',
-                    id: block.id || `tool-${Date.now()}`,
-                    name: block.name,
-                    input: (typeof block.input === 'object' ? block.input : {}) as Record<string, unknown>,
-                  });
-                }
-              }
-              return next;
-            });
-          } else if (event.type === 'result') {
-            setContentBlocks(prev => [
-              ...prev,
-              { type: 'text', text: '\n\n✅ Generation complete. Parsing results...' },
-            ]);
-          } else if (event.type === 'error') {
-            setContentBlocks(prev => [
-              ...prev,
-              { type: 'text', text: `\n\n❌ Error: ${event.message}` },
-            ]);
-          }
-        },
-        controller.signal,
-      );
+      // Use document upload endpoint when a SOP file is provided
+      const fullText = sopFile
+        ? await generateScopeWithDocument(sopFile, description.trim(), sseHandler, controller.signal)
+        : await generateScope(description.trim(), sseHandler, controller.signal);
 
       // Parse the result
       const config = parseScopeConfig(fullText);
@@ -413,7 +419,7 @@ export function AIScopeGenerator() {
       ]);
       setStep('error');
     }
-  }, [description]);
+  }, [description, sopFile]);
 
   // -------------------------------------------------------------------------
   // Auto-trigger generation when arriving with pre-filled description

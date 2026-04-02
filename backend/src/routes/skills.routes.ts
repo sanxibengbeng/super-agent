@@ -17,8 +17,25 @@ interface AgentSkillRequest { Params: { agentId: string; skillId: string }; }
 interface SetAgentSkillsRequest { Params: { agentId: string }; Body: { skill_ids: string[] }; }
 
 export async function skillsRoutes(fastify: FastifyInstance): Promise<void> {
-  // GET /api/skills - List all skills
-  fastify.get('/', { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  // GET /api/skills - List all skills (optionally filtered by business_scope_id)
+  fastify.get<{ Querystring: { business_scope_id?: string } }>('/', { preHandler: [authenticate] }, async (request: FastifyRequest<{ Querystring: { business_scope_id?: string } }>, reply: FastifyReply) => {
+    const scopeId = request.query.business_scope_id;
+    if (scopeId) {
+      // Return all skills related to this scope:
+      // 1. Scope-level skills (skills.business_scope_id = scopeId)
+      // 2. Agent-level skills (via agent_skills for agents in this scope)
+      const [scopeSkills, agentSkills] = await Promise.all([
+        skillService.getScopeLevelSkills(request.user!.orgId, scopeId),
+        skillService.getAllAgentSkillsForScope(request.user!.orgId, scopeId),
+      ]);
+      // Deduplicate by skill ID
+      const seen = new Set<string>();
+      const all = [];
+      for (const s of [...scopeSkills, ...agentSkills]) {
+        if (!seen.has(s.id)) { seen.add(s.id); all.push(s); }
+      }
+      return reply.status(200).send({ data: all });
+    }
     const skills = await skillService.listSkills(request.user!.orgId);
     return reply.status(200).send({ data: skills });
   });

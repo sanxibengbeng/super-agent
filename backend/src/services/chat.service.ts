@@ -53,6 +53,7 @@ import {
 } from './langfuse.service.js';
 import { processConversationEvent, flushActiveSubAgents, type ConversationHookContext } from './conversation-hooks.js';
 import { sanitizeEvent } from './output-sanitizer.js';
+import { distillationService } from './distillation.service.js';
 
 export type { SSEEvent };
 export { formatSSEEvent };
@@ -96,6 +97,15 @@ export class ChatService {
 
   async getSessions(organizationId: string, userId: string): Promise<ChatSessionEntity[]> {
     return chatSessionRepository.findByUser(organizationId, userId);
+  }
+
+  /**
+   * Get all sessions across the organization (admin view).
+   */
+  async getAllSessions(organizationId: string): Promise<ChatSessionEntity[]> {
+    return chatSessionRepository.findAll(organizationId, {
+      orderBy: { created_at: 'desc' },
+    });
   }
 
   async getSessionsByScope(
@@ -149,6 +159,7 @@ export class ChatService {
     if (!existing) throw AppError.notFound(`Chat session with ID ${sessionId} not found`);
 
     const updateData: Partial<ChatSessionEntity> = {};
+    if (data.title !== undefined) updateData.title = data.title;
     if (data.sop_context !== undefined) updateData.sop_context = data.sop_context;
     if (data.context !== undefined) updateData.context = data.context;
 
@@ -595,6 +606,18 @@ export class ChatService {
         this.maybeSetTitle(organizationId, sessionId, options.message).catch(() => {});
       }
 
+      // Auto-distill memories from the conversation (fire-and-forget)
+      if (useScopeFlow && allContentBlocks.length > 0 && options.businessScopeId) {
+        distillationService.enqueue({
+          organizationId,
+          scopeId: options.businessScopeId,
+          sessionId,
+          agentId: resolvedAgentId,
+          contentBlocks: allContentBlocks,
+          userMessage: options.message,
+        }).catch(() => {});
+      }
+
       if (!clientDisconnected) {
         try {
           reply.raw.write(formatSSEEvent({ data: '[DONE]' }));
@@ -692,6 +715,7 @@ export class ChatService {
       id: scope.id,
       name: scope.name,
       description: scope.description,
+      systemPrompt: scope.system_prompt ?? null,
       configVersion: scope.config_version,
       agents: agentsWithSkills.map(a => {
         // Extract generated skills from model_config (created by scope-generator)

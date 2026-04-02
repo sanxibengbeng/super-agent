@@ -73,6 +73,7 @@ export { SkillMarketplaceBrowser } from './SkillMarketplaceBrowser'
 export { SkillsPanel } from './SkillsPanel'
 export { PluginsPanel } from './PluginsPanel'
 export { MCPServersPanel } from './MCPServersPanel'
+export { MCPCatalogPanel } from './MCPCatalogPanel'
 
 // AI Scope Generator
 export { AIScopeGenerator } from './AIScopeGenerator'

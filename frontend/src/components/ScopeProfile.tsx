@@ -1,18 +1,22 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Server, Plus, Trash2, Loader2, Briefcase,
   Users, Zap, TrendingUp, BarChart3,
   CheckCircle2, AlertCircle, Clock, FileText,
-  MessageSquare, Shield, Database,
+  MessageSquare, Shield, Database, Settings, Save,
+  Terminal, Pencil, Sparkles,
 } from 'lucide-react'
 import { useMCP } from '@/services'
 import { useToast } from '@/components'
 import { restClient } from '@/services/api/restClient'
 import type { BusinessScope } from '@/services/businessScopeService'
-import type { MCPServer, Agent } from '@/types'
+import type { MCPServer, MCPServerConfig, Agent } from '@/types'
+import type { McpServerEntry } from '@/data/mcp-servers'
 import { IMChannelsPanel } from './IMChannelsPanel'
 import { ScopeMemoryPanel } from './ScopeMemoryPanel'
 import { DocGroupsPanel } from './DocGroupsPanel'
+import { RehearsalPanel } from './RehearsalPanel'
+import { MCPCatalogPanel, type CustomMcpServer } from './MCPCatalogPanel'
 import {
   getAvatarDisplayUrl,
   getAvatarFallback,
@@ -35,6 +39,7 @@ interface ScopeMcpServer {
   description: string | null
   host_address: string
   config: Record<string, unknown> | null
+  scope_config: Record<string, unknown> | null
   status: string
   assigned_at: string
 }
@@ -284,13 +289,17 @@ function AgentRow({ agent }: { agent: Agent }) {
 /* ------------------------------------------------------------------ */
 export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onAddAgent, onRemoveAgent }: ScopeProfileProps) {
   const { success, error: showError } = useToast()
-  const { servers: allServers, getServers } = useMCP()
+  const { servers: allServers, getServers, createServer } = useMCP()
 
   const [scopeServers, setScopeServers] = useState<ScopeMcpServer[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isAdding, setIsAdding] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
+  const [showCatalogPanel, setShowCatalogPanel] = useState(false)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
+  const [editingConfigId, setEditingConfigId] = useState<string | null>(null)
+  const [configDraft, setConfigDraft] = useState('')
+  const [isSavingConfig, setIsSavingConfig] = useState(false)
 
   /* ---------- MCP server logic ---------- */
   const loadScopeServers = useCallback(async () => {
@@ -332,6 +341,141 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
     }
   }
 
+  /** Names of org-level MCP servers (for catalog "Installed" badges) */
+  const installedServerNames = useMemo(
+    () => new Set(scopeServers.map(s => s.name)),
+    [scopeServers],
+  )
+
+  /** Install from catalog: create org-level server if needed, then assign to scope */
+  const handleCatalogInstall = useCallback(async (entry: McpServerEntry) => {
+    try {
+      // Check if server already exists at org level
+      let existing = allServers.find(s => s.name === entry.name)
+      if (!existing) {
+        // Create org-level server first
+        const config: MCPServerConfig = entry.config
+          ? { type: entry.config.type as MCPServerConfig['type'], command: entry.config.command, args: entry.config.args }
+          : { type: 'sse', url: '' }
+        const hostAddress = entry.config
+          ? [entry.config.command, ...entry.config.args].join(' ')
+          : ''
+        existing = await createServer({
+          name: entry.name,
+          description: entry.description,
+          hostAddress,
+          config,
+          oauth: { clientId: '', clientSecret: '', tokenUrl: '', scope: '' },
+          headers: {},
+          status: 'active',
+        })
+        await getServers()
+      }
+      // Assign to scope
+      await restClient.post(`/api/business-scopes/${scope.id}/mcp-servers`, { mcpServerId: existing.id })
+
+      // Seed default scope_config from catalog into DB
+      const defaultCfg = entry.config?.defaultScopeConfig ?? null
+      if (defaultCfg) {
+        const res = await restClient.get<{ data: ScopeMcpServer[] }>(
+          `/api/business-scopes/${scope.id}/mcp-servers`,
+        )
+        const assignment = res.data.find(s => s.mcp_server_id === existing!.id)
+        if (assignment) {
+          await restClient.put(
+            `/api/business-scopes/${scope.id}/mcp-servers/${assignment.id}/config`,
+            { scopeConfig: defaultCfg },
+          )
+        }
+      }
+
+      success(`Added "${entry.name}" to scope`)
+      setShowCatalogPanel(false)
+      await loadScopeServers()
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to install MCP server')
+    }
+  }, [allServers, createServer, getServers, scope.id, loadScopeServers, success, showError])
+
+  /** Add a custom (non-catalog) MCP server to the scope */
+  const handleCustomInstall = useCallback(async (custom: CustomMcpServer) => {
+    try {
+      // Create org-level server
+      const created = await createServer({
+        name: custom.name,
+        description: custom.description || 'Custom MCP server',
+        hostAddress: custom.name,
+        config: { type: 'stdio' } as MCPServerConfig,
+        oauth: { clientId: '', clientSecret: '', tokenUrl: '', scope: '' },
+        headers: {},
+        status: 'active',
+      })
+      await getServers()
+
+      // Assign to scope
+      await restClient.post(`/api/business-scopes/${scope.id}/mcp-servers`, { mcpServerId: created.id })
+
+      // Seed scope_config if provided
+      if (custom.scopeConfig && Object.keys(custom.scopeConfig).length > 0) {
+        const res = await restClient.get<{ data: ScopeMcpServer[] }>(
+          `/api/business-scopes/${scope.id}/mcp-servers`,
+        )
+        const assignment = res.data.find(s => s.mcp_server_id === created.id)
+        if (assignment) {
+          await restClient.put(
+            `/api/business-scopes/${scope.id}/mcp-servers/${assignment.id}/config`,
+            { scopeConfig: custom.scopeConfig },
+          )
+        }
+      }
+
+      success(`Added custom server "${custom.name}" to scope`)
+      setShowCatalogPanel(false)
+      await loadScopeServers()
+    } catch (err) {
+      throw err // Let the panel show the error
+    }
+  }, [createServer, getServers, scope.id, loadScopeServers, success])
+
+  /** Open the inline config editor for a scope MCP server */
+  const handleEditConfig = useCallback((server: ScopeMcpServer) => {
+    if (editingConfigId === server.id) {
+      setEditingConfigId(null)
+      return
+    }
+    setEditingConfigId(server.id)
+    setConfigDraft(
+      server.scope_config && Object.keys(server.scope_config).length > 0
+        ? JSON.stringify(server.scope_config, null, 2)
+        : '{\n  \n}',
+    )
+  }, [editingConfigId])
+
+  /** Save scope-level config for an MCP server assignment */
+  const handleSaveConfig = useCallback(async (assignmentId: string) => {
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(configDraft)
+    } catch {
+      showError('Invalid JSON — please fix syntax errors')
+      return
+    }
+    setIsSavingConfig(true)
+    try {
+      await restClient.put(
+        `/api/business-scopes/${scope.id}/mcp-servers/${assignmentId}/config`,
+        { scopeConfig: parsed },
+      )
+      success('Configuration saved')
+      setEditingConfigId(null)
+      await loadScopeServers()
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to save configuration')
+    } finally {
+      setIsSavingConfig(false)
+    }
+  }, [configDraft, scope.id, loadScopeServers, success, showError])
+
   const getTypeLabel = (config: Record<string, unknown> | null, hostAddress: string): string => {
     if (config?.type) return (config.type as string).toUpperCase()
     return (hostAddress.startsWith('http://') || hostAddress.startsWith('https://')) ? 'SSE' : 'STDIO'
@@ -345,7 +489,6 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
   const avgResponseRate = totalAgents > 0
     ? Math.round(agents.reduce((sum, a) => sum + (a.metrics?.responseRate ?? 0), 0) / totalAgents)
     : 0
-  const totalSkills = agents.reduce((sum, a) => sum + (a.tools?.length ?? 0), 0)
 
   // Agents not assigned to this scope (available to add)
   const scopeAgentIds = new Set(agents.map(a => a.id))
@@ -368,6 +511,53 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
 
   const [briefings, setBriefings] = useState<TaskBriefing[]>([])
   const [briefingsLoading, setBriefingsLoading] = useState(true)
+
+  // System prompt editing state
+  const [isEditingPrompt, setIsEditingPrompt] = useState(false)
+  const [promptDraft, setPromptDraft] = useState(scope.systemPrompt || '')
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false)
+
+  // Scope-level skills
+  const [scopeSkills, setScopeSkills] = useState<Array<{ id: string; name: string; description: string | null; skill_type: string }>>([])
+  const [skillsLoading, setSkillsLoading] = useState(true)
+
+  useEffect(() => {
+    setPromptDraft(scope.systemPrompt || '')
+  }, [scope.systemPrompt])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadScopeSkills() {
+      setSkillsLoading(true)
+      try {
+        const res = await restClient.get<{ data: Array<{ id: string; name: string; description: string | null; skill_type: string }> }>(
+          `/api/skills?business_scope_id=${scope.id}&limit=100`
+        )
+        if (!cancelled) setScopeSkills(res.data || [])
+      } catch {
+        if (!cancelled) setScopeSkills([])
+      } finally {
+        if (!cancelled) setSkillsLoading(false)
+      }
+    }
+    loadScopeSkills()
+    return () => { cancelled = true }
+  }, [scope.id])
+
+  const handleSavePrompt = async () => {
+    setIsSavingPrompt(true)
+    try {
+      await restClient.put(`/api/business-scopes/${scope.id}`, { system_prompt: promptDraft })
+      success('System prompt saved')
+      setIsEditingPrompt(false)
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to save system prompt')
+    } finally {
+      setIsSavingPrompt(false)
+    }
+  }
+
+  const totalSkills = scopeSkills.length
 
   useEffect(() => {
     let cancelled = false
@@ -415,7 +605,7 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
   }, [scope.id])
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto overflow-x-hidden">
       {/* ============================================================ */}
       {/*  Header                                                       */}
       {/* ============================================================ */}
@@ -485,7 +675,99 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
         </div>
       </div>
 
-      <div className="px-6 py-5 space-y-6">
+      <div className="px-6 py-5 space-y-6 min-w-0">
+        {/* ============================================================ */}
+        {/*  System Prompt                                                */}
+        {/* ============================================================ */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-gray-400" />
+              <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">System Prompt</h3>
+            </div>
+            {!isEditingPrompt && (
+              <button
+                onClick={() => setIsEditingPrompt(true)}
+                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+              >
+                <Pencil className="w-3 h-3" /> Edit
+              </button>
+            )}
+          </div>
+          {isEditingPrompt ? (
+            <div className="space-y-2">
+              <textarea
+                value={promptDraft}
+                onChange={e => setPromptDraft(e.target.value)}
+                rows={6}
+                className="w-full px-3 py-2 text-xs bg-gray-800 border border-gray-700 rounded-lg text-white focus:border-blue-500 focus:outline-none resize-y font-mono"
+                placeholder="Define the behavior and personality for this scope..."
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSavePrompt}
+                  disabled={isSavingPrompt}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[10px] bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors disabled:opacity-50"
+                >
+                  {isSavingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  Save
+                </button>
+                <button
+                  onClick={() => { setIsEditingPrompt(false); setPromptDraft(scope.systemPrompt || '') }}
+                  className="px-2.5 py-1 text-[10px] text-gray-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              {scope.systemPrompt ? (
+                <p className="text-xs text-gray-400 whitespace-pre-wrap leading-relaxed break-words">{scope.systemPrompt}</p>
+              ) : (
+                <p className="text-xs text-gray-600 italic">No system prompt defined. Click Edit to add one.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ============================================================ */}
+        {/*  Scope Skills                                                 */}
+        {/* ============================================================ */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-yellow-400" />
+              <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Skills</h3>
+              <span className="text-[10px] text-gray-600">{scopeSkills.length} equipped</span>
+            </div>
+          </div>
+          {skillsLoading ? (
+            <div className="py-4 text-center text-xs text-gray-500">Loading skills...</div>
+          ) : scopeSkills.length === 0 ? (
+            <div className="py-4 text-center">
+              <Sparkles className="w-5 h-5 text-gray-700 mx-auto mb-1" />
+              <p className="text-xs text-gray-500">No skills equipped</p>
+              <p className="text-[10px] text-gray-600 mt-0.5">Skills can be added from the Skill Workshop or API integrations.</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {scopeSkills.map(skill => (
+                <div key={skill.id} className="flex items-start gap-2 px-2.5 py-2 bg-gray-800/50 rounded-lg min-w-0">
+                  <Sparkles className="w-3 h-3 text-yellow-500/60 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <span className="text-xs text-gray-200 font-medium">{skill.name}</span>
+                    {skill.description && (
+                      <p className="text-[10px] text-gray-500 line-clamp-2">{skill.description}</p>
+                    )}
+                  </div>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-500 flex-shrink-0">{skill.skill_type}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* ============================================================ */}
         {/*  Task Briefings — Pinterest masonry grid                     */}
         {/* ============================================================ */}
@@ -605,7 +887,7 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
               <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">MCP Servers</h3>
             </div>
             <button
-              onClick={() => setShowPicker(!showPicker)}
+              onClick={() => setShowCatalogPanel(true)}
               className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-600 hover:bg-blue-700 rounded text-white transition-colors"
             >
               <Plus className="w-3 h-3" />
@@ -651,22 +933,68 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
           ) : (
             <div className="divide-y divide-gray-800/50">
               {scopeServers.map(server => (
-                <div key={server.id} className="flex items-center justify-between px-4 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <Server className="w-3.5 h-3.5 text-gray-500" />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs font-medium text-white">{server.name}</p>
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-gray-700 text-gray-400 font-mono">
-                          {getTypeLabel(server.config, server.host_address)}
-                        </span>
+                <div key={server.id}>
+                  <div className="flex items-center justify-between px-4 py-2.5">
+                    <button
+                      onClick={() => handleEditConfig(server)}
+                      className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
+                    >
+                      <Server className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-medium text-white truncate">{server.name}</p>
+                          <span className="text-[9px] px-1 py-0.5 rounded bg-gray-700 text-gray-400 font-mono">
+                            {getTypeLabel(server.config, server.host_address)}
+                          </span>
+                          {server.scope_config && Object.keys(server.scope_config).length > 0 && (
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-400">configured</span>
+                          )}
+                        </div>
                       </div>
+                    </button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => handleEditConfig(server)}
+                        className="p-1 text-gray-600 hover:text-blue-400 transition-colors" title="Configure">
+                        <Settings className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => handleRemove(server)}
+                        className="p-1 text-gray-600 hover:text-red-400 transition-colors" title="Remove">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
-                  <button onClick={() => handleRemove(server)}
-                    className="p-1 text-gray-600 hover:text-red-400 transition-colors" title="Remove">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {/* Inline config editor */}
+                  {editingConfigId === server.id && (
+                    <div className="px-4 pb-3 bg-gray-800/30">
+                      <label className="block text-[10px] font-medium text-gray-400 mb-1.5 uppercase tracking-wider">
+                        Scope Configuration (JSON)
+                      </label>
+                      <textarea
+                        value={configDraft}
+                        onChange={e => setConfigDraft(e.target.value)}
+                        rows={6}
+                        className="w-full px-3 py-2 text-xs bg-gray-900 border border-gray-700 rounded-lg text-white font-mono focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-colors resize-y"
+                        placeholder='{ "connectionString": "postgres://..." }'
+                        spellCheck={false}
+                      />
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          onClick={() => handleSaveConfig(server.id)}
+                          disabled={isSavingConfig}
+                          className="flex items-center gap-1 px-2.5 py-1 text-[10px] bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors disabled:opacity-50"
+                        >
+                          {isSavingConfig ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingConfigId(null)}
+                          className="px-2.5 py-1 text-[10px] text-gray-400 hover:text-white transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -693,7 +1021,23 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
           <ScopeMemoryPanel scopeId={scope.id} scopeName={scope.name} />
         </div>
+
+        {/* ============================================================ */}
+        {/*  Agent Evolution (Rehearsals & Proposals)                     */}
+        {/* ============================================================ */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+          <RehearsalPanel scopeId={scope.id} scopeName={scope.name} />
+        </div>
       </div>
+
+      {/* MCP Server Catalog slide-out panel */}
+      <MCPCatalogPanel
+        open={showCatalogPanel}
+        onClose={() => setShowCatalogPanel(false)}
+        installedNames={installedServerNames}
+        onInstall={handleCatalogInstall}
+        onCustomInstall={handleCustomInstall}
+      />
     </div>
   )
 }

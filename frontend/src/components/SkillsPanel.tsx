@@ -111,6 +111,7 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
 
   // Publishing
   const [publishingSkill, setPublishingSkill] = useState<string | null>(null)
+  const [confirmingPublish, setConfirmingPublish] = useState(false)
   const [publishCategory, setPublishCategory] = useState('')
 
   const [error, setError] = useState<string | null>(null)
@@ -262,10 +263,16 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
   }, [])
 
   // ── Publish from workspace ──
-  const handlePublish = useCallback(async (skillName: string) => {
-    if (!sessionId) return
+  const handlePublishStart = useCallback((skillName: string) => {
     setPublishingSkill(skillName)
+    setPublishCategory('')
     setError(null)
+  }, [])
+
+  const handlePublishConfirm = useCallback(async (skillName: string) => {
+    if (!sessionId) return
+    setError(null)
+    setConfirmingPublish(true)
     try {
       await restClient.post(
         `/api/chat/sessions/${sessionId}/skills/${encodeURIComponent(skillName)}/publish`,
@@ -273,10 +280,13 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
       )
       setPublishingSkill(null)
       setPublishCategory('')
+      setConfirmingPublish(false)
       await loadEnterprise()
+      // Switch to Internal tab so the user sees the published skill
+      setActiveTab('enterprise')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Publish failed')
-      setPublishingSkill(null)
+      setConfirmingPublish(false)
     }
   }, [sessionId, publishCategory, loadEnterprise])
 
@@ -346,9 +356,11 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
               loading={loadingInstalled}
               sessionId={sessionId}
               publishingSkill={publishingSkill}
+              confirmingPublish={confirmingPublish}
               publishCategory={publishCategory}
               onPublishCategoryChange={setPublishCategory}
-              onPublish={handlePublish}
+              onPublishStart={handlePublishStart}
+              onPublishConfirm={handlePublishConfirm}
               onDelete={handleDelete}
               deletingSkill={deletingSkill}
             />
@@ -400,14 +412,16 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
 // Installed Tab
 // ---------------------------------------------------------------------------
 
-function InstalledTab({ skills, loading, sessionId, publishingSkill, publishCategory, onPublishCategoryChange, onPublish, onDelete, deletingSkill }: {
+function InstalledTab({ skills, loading, sessionId, publishingSkill, confirmingPublish, publishCategory, onPublishCategoryChange, onPublishStart, onPublishConfirm, onDelete, deletingSkill }: {
   skills: WorkspaceSkill[]
   loading: boolean
   sessionId: string | null
   publishingSkill: string | null
+  confirmingPublish: boolean
   publishCategory: string
   onPublishCategoryChange: (v: string) => void
-  onPublish: (name: string) => void
+  onPublishStart: (name: string) => void
+  onPublishConfirm: (name: string) => void
   onDelete: (name: string) => void
   deletingSkill: string | null
 }) {
@@ -468,15 +482,17 @@ function InstalledTab({ skills, loading, sessionId, publishingSkill, publishCate
                 className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
               <button
-                onClick={() => onPublish(skill.name)}
-                className="px-2 py-1 bg-green-600 hover:bg-green-500 text-white text-xs rounded transition-colors"
+                onClick={() => onPublishConfirm(skill.name)}
+                disabled={confirmingPublish}
+                className="px-2 py-1 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 text-white text-xs rounded transition-colors flex items-center gap-1"
               >
-                Confirm
+                {confirmingPublish ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                {confirmingPublish ? 'Publishing…' : 'Confirm'}
               </button>
             </div>
           ) : (
             <button
-              onClick={() => onPublish(skill.name)}
+              onClick={() => onPublishStart(skill.name)}
               className="mt-1.5 flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
             >
               <Upload className="w-3 h-3" />

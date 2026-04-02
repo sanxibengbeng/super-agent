@@ -331,13 +331,16 @@ export class WorkflowExecutionRepository {
   async findByWorkflowId(
     workflowId: string,
     organizationId: string,
-    options?: { skip?: number; take?: number }
+    options?: { skip?: number; take?: number; userId?: string }
   ): Promise<WorkflowExecutionEntity[]> {
+    const where: Record<string, unknown> = {
+      workflow_id: workflowId,
+      organization_id: organizationId,
+    };
+    if (options?.userId) where.user_id = options.userId;
+
     return prisma.workflow_executions.findMany({
-      where: {
-        workflow_id: workflowId,
-        organization_id: organizationId,
-      },
+      where,
       include: {
         node_executions: {
           select: {
@@ -363,18 +366,21 @@ export class WorkflowExecutionRepository {
    *
    * @param workflowId - Workflow ID
    * @param organizationId - Organization ID
+   * @param userId - Optional user ID filter (omit for admin view)
    * @returns Count
    */
   async countByWorkflowId(
     workflowId: string,
-    organizationId: string
+    organizationId: string,
+    userId?: string,
   ): Promise<number> {
-    return prisma.workflow_executions.count({
-      where: {
-        workflow_id: workflowId,
-        organization_id: organizationId,
-      },
-    });
+    const where: Record<string, unknown> = {
+      workflow_id: workflowId,
+      organization_id: organizationId,
+    };
+    if (userId) where.user_id = userId;
+
+    return prisma.workflow_executions.count({ where });
   }
 }
 

@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, MessageSquare, Trash2, PanelLeftClose, PanelLeftOpen, Clock, Loader2 } from 'lucide-react'
+import { Plus, MessageSquare, Trash2, PanelLeftClose, PanelLeftOpen, Clock, Loader2, Star, Pencil, Check, X } from 'lucide-react'
 import { RestChatService } from '@/services/api/restChatService'
+import { restClient } from '@/services/api/restClient'
 import { sessionStreamManager } from '@/services/SessionStreamManager'
 
 interface SessionItem {
   id: string
   title: string | null
   status: string
+  is_starred: boolean
   created_at: string
   updated_at: string
 }
@@ -58,6 +60,7 @@ export function SessionHistoryPanel({
           id: s.id,
           title: s.title ?? null,
           status: s.status ?? 'idle',
+          is_starred: !!(s as any).is_starred,
           created_at: s.created_at,
           updated_at: s.updated_at,
         }))
@@ -91,6 +94,47 @@ export function SessionHistoryPanel({
       console.error('Failed to delete session:', err)
     }
   }, [activeSessionId, onNewSession])
+
+  const handleToggleStar = useCallback(async (sessionId: string, isStarred: boolean, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const endpoint = isStarred ? 'unstar' : 'star'
+      await restClient.put(`/api/chat/sessions/${sessionId}/${endpoint}`, {})
+      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, is_starred: !isStarred } : s))
+    } catch (err) {
+      console.error('Failed to toggle star:', err)
+    }
+  }, [])
+
+  // Inline rename state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const editInputRef = useRef<HTMLInputElement>(null)
+
+  const handleStartRename = useCallback((sessionId: string, currentTitle: string | null, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingId(sessionId)
+    setEditTitle(currentTitle || '')
+    setTimeout(() => editInputRef.current?.focus(), 0)
+  }, [])
+
+  const handleSaveRename = useCallback(async () => {
+    if (!editingId) return
+    const trimmed = editTitle.trim()
+    if (trimmed) {
+      try {
+        await restClient.put(`/api/chat/sessions/${editingId}`, { title: trimmed })
+        setSessions(prev => prev.map(s => s.id === editingId ? { ...s, title: trimmed } : s))
+      } catch (err) {
+        console.error('Failed to rename session:', err)
+      }
+    }
+    setEditingId(null)
+  }, [editingId, editTitle])
+
+  const handleCancelRename = useCallback(() => {
+    setEditingId(null)
+  }, [])
 
   if (collapsed) {
     return (
@@ -175,21 +219,64 @@ export function SessionHistoryPanel({
                   <MessageSquare className="w-3.5 h-3.5 text-gray-500 mt-0.5 flex-shrink-0" />
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-gray-200 truncate">
-                    {session.title || 'Untitled chat'}
-                  </div>
+                  {editingId === session.id ? (
+                    <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                      <input
+                        ref={editInputRef}
+                        type="text"
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleSaveRename()
+                          if (e.key === 'Escape') handleCancelRename()
+                        }}
+                        onBlur={handleSaveRename}
+                        className="w-full px-1 py-0.5 bg-gray-900 border border-blue-500 rounded text-sm text-white focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="text-sm text-gray-200 truncate"
+                      onDoubleClick={(e) => handleStartRename(session.id, session.title, e)}
+                      title="Double-click to rename"
+                    >
+                      {session.title || 'Untitled chat'}
+                    </div>
+                  )}
                   <div className="flex items-center gap-1 mt-0.5">
                     <Clock className="w-3 h-3 text-gray-600" />
                     <span className="text-xs text-gray-500">{formatRelativeTime(session.updated_at)}</span>
                   </div>
                 </div>
-                <button
-                  onClick={(e) => handleDelete(session.id, e)}
-                  className="p-1 rounded hover:bg-gray-600 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
-                  title="Delete session"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-0.5 flex-shrink-0">
+                  {editingId !== session.id && (
+                    <button
+                      onClick={(e) => handleStartRename(session.id, session.title, e)}
+                      className="p-1 rounded text-gray-600 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+                      title="Rename"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => handleToggleStar(session.id, session.is_starred, e)}
+                    className={`p-1 rounded transition-all ${
+                      session.is_starred
+                        ? 'text-yellow-400 hover:text-yellow-300'
+                        : 'text-gray-600 hover:text-yellow-400 opacity-0 group-hover:opacity-100'
+                    }`}
+                    title={session.is_starred ? 'Unstar' : 'Star'}
+                  >
+                    <Star className="w-3.5 h-3.5" fill={session.is_starred ? 'currentColor' : 'none'} />
+                  </button>
+                  <button
+                    onClick={(e) => handleDelete(session.id, e)}
+                    className="p-1 rounded hover:bg-gray-600 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                    title="Delete session"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           ))

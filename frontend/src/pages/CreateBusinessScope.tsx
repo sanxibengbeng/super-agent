@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Laptop, Cog, DollarSign, Scale, MoreHorizontal, Wand2, FileUp, CloudUpload, Loader2, Sparkles } from 'lucide-react'
+import { ArrowLeft, Users, Laptop, Cog, DollarSign, Scale, MoreHorizontal, Wand2, FileUp, CloudUpload, Sparkles } from 'lucide-react'
+import { setSopFile } from '@/services/sopFileStore'
 
 const DEPARTMENTS = [
   { id: 'HR', name: 'Human Resources', icon: Users },
@@ -17,18 +18,6 @@ const STRATEGIES = [
   { id: 3, title: 'Build using Natural Language', description: 'Describe your business in plain text and let AI create the scope and agents for you. Powered by Claude streaming analysis.', icon: Sparkles },
 ]
 
-/**
- * Reads a file as text. Supports .txt, .md, .pdf (text only), .docx (raw text extraction).
- */
-async function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(new Error('Failed to read file'))
-    reader.readAsText(file)
-  })
-}
-
 export function CreateBusinessScope() {
   const navigate = useNavigate()
 
@@ -37,7 +26,6 @@ export function CreateBusinessScope() {
   const [selectedStrategy, setSelectedStrategy] = useState<number | null>(null)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [naturalLanguageInput, setNaturalLanguageInput] = useState('')
-  const [isProcessing, setIsProcessing] = useState(false)
 
   const handleDeptSelect = useCallback((deptId: string) => {
     setSelectedDept(deptId)
@@ -74,17 +62,13 @@ export function CreateBusinessScope() {
       // Reference SOP — generate from department name
       description = `Create a comprehensive business scope for a "${deptName}" department. Generate specialized AI agents with industry best-practice SOPs, responsibilities, and skills for this organizational unit.`
     } else if (selectedStrategy === 2) {
-      // Import SOP document — include file content
+      // Import SOP document — upload file to backend, let the agent parse it
       if (!uploadedFile) return
-      setIsProcessing(true)
-      try {
-        const fileContent = await readFileAsText(uploadedFile)
-        const truncated = fileContent.substring(0, 8000) // Limit to avoid token overflow
-        description = `Create a business scope for a "${deptName}" department based on the following SOP document. Extract the key processes, roles, and responsibilities from this document and generate specialized AI agents accordingly.\n\n--- SOP Document: ${uploadedFile.name} ---\n${truncated}`
-      } catch {
-        description = `Create a business scope for a "${deptName}" department. The uploaded SOP document could not be read. Generate agents based on industry best practices.`
-      }
-      setIsProcessing(false)
+      description = `Create a business scope for a "${deptName}" department based on the uploaded SOP document. Extract the key processes, roles, and responsibilities from this document and generate specialized AI agents accordingly.`
+      // Store the file in the ephemeral store (File objects don't survive navigation state serialization)
+      setSopFile(uploadedFile)
+      navigate('/create-business-scope/ai', { state: { description, hasSopFile: true } })
+      return
     } else if (selectedStrategy === 3) {
       // Natural language — already handled by inline button
       return
@@ -215,13 +199,12 @@ export function CreateBusinessScope() {
             {/* Strategy 3 has its own inline button; strategies 1 & 2 use this Confirm button */}
             {selectedStrategy !== 3 && (
               <button onClick={handleConfirm}
-                disabled={!selectedDept || !selectedStrategy || isProcessing || (selectedStrategy === 2 && !uploadedFile)}
+                disabled={!selectedDept || !selectedStrategy || (selectedStrategy === 2 && !uploadedFile)}
                 className={`px-12 py-3 text-sm font-bold rounded-xl transition-all flex items-center gap-2 ${
-                  selectedDept && selectedStrategy && !isProcessing && (selectedStrategy !== 2 || uploadedFile)
+                  selectedDept && selectedStrategy && (selectedStrategy !== 2 || uploadedFile)
                     ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:shadow-lg hover:shadow-cyan-500/30 hover:-translate-y-0.5'
                     : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                 }`}>
-                {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
                 <Sparkles className="w-4 h-4" />
                 Generate with AI
               </button>

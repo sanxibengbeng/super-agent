@@ -183,11 +183,23 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (request: FastifyRequest<{ Querystring: { business_scope_id?: string } }>, reply: FastifyReply) => {
       const scopeId = request.query.business_scope_id;
+      const isAdmin = request.user!.role === 'owner' || request.user!.role === 'admin';
+
       let sessions;
       if (scopeId) {
-        sessions = await chatService.getSessionsByScope(request.user!.orgId, scopeId, request.user!.id);
+        // Admins see all sessions in the scope; regular users see only their own
+        sessions = await chatService.getSessionsByScope(
+          request.user!.orgId,
+          scopeId,
+          isAdmin ? undefined : request.user!.id,
+        );
       } else {
-        sessions = await chatService.getSessions(request.user!.orgId, request.user!.id);
+        if (isAdmin) {
+          // Admins see all sessions across the organization
+          sessions = await chatService.getAllSessions(request.user!.orgId);
+        } else {
+          sessions = await chatService.getSessions(request.user!.orgId, request.user!.id);
+        }
       }
       return reply.status(200).send(sessions);
     }
@@ -711,8 +723,6 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       const { id } = validateSchema(idParamSchema, request.params);
       const session = await chatService.getSessionById(id, request.user!.orgId);
 
-      // Determine the scope ID for workspace path: use business_scope_id,
-      // or fall back to project_id from session context (for project workspaces)
       const context = session.context as Record<string, unknown> | null;
       const scopeIdForPath = session.business_scope_id
         || (context?.project_id as string | undefined)
@@ -722,30 +732,33 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(200).send({ files: [], workspacePath: null });
       }
 
-      // In agentcore mode, read file tree from S3 (container syncs there).
-      // In other modes, read from local filesystem.
-      const { config: appConfig } = await import('../config/index.js');
-      let files;
-      if (appConfig.agentRuntime === 'agentcore') {
-        files = await workspaceManager.listWorkspaceFilesFromS3(
-          request.user!.orgId,
-          scopeIdForPath,
-          session.id,
-        );
-      } else {
-        files = await workspaceManager.listWorkspaceFiles(
-          request.user!.orgId,
-          scopeIdForPath,
-          session.id,
-        );
-      }
+      try {
+        const { config: appConfig } = await import('../config/index.js');
+        let files;
+        if (appConfig.agentRuntime === 'agentcore') {
+          files = await workspaceManager.listWorkspaceFilesFromS3(
+            request.user!.orgId,
+            scopeIdForPath,
+            session.id,
+          );
+        } else {
+          files = await workspaceManager.listWorkspaceFiles(
+            request.user!.orgId,
+            scopeIdForPath,
+            session.id,
+          );
+        }
 
-      return reply.status(200).send({
-        files: files ?? [],
-        workspacePath: files ? workspaceManager.getSessionWorkspacePath(
-          request.user!.orgId, scopeIdForPath, session.id,
-        ) : null,
-      });
+        return reply.status(200).send({
+          files: files ?? [],
+          workspacePath: files ? workspaceManager.getSessionWorkspacePath(
+            request.user!.orgId, scopeIdForPath, session.id,
+          ) : null,
+        });
+      } catch (err) {
+        console.warn(`[workspace] Failed to list files for session ${id}:`, err instanceof Error ? err.message : err);
+        return reply.status(200).send({ files: [], workspacePath: null });
+      }
     },
   );
 
@@ -1602,6 +1615,79 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       );
 
       return reply.status(204).send();
+    },
+  );
+
+  // ==========================================================================
+  // Star / Favorite endpoints (明星案例)
+  // ==========================================================================
+
+  /** PUT /api/chat/sessions/:id/star — Star a session */
+  fastify.put<{ Params: { id: string }; Body: { category?: string } }>(
+    '/sessions/:id/star',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { chatSessionRepository } = await import('../repositories/chat.repository.js');
+      const result = await chatSessionRepository.star(
+        request.params.id,
+        request.user!.orgId,
+        request.user!.id,
+        request.body?.category,
+      );
+      if (!result) return reply.status(404).send({ error: 'Session not found', code: 'NOT_FOUND' });
+      return reply.send({ data: result });
+    },
+  );
+
+  /** PUT /api/chat/sessions/:id/unstar — Unstar a session */
+  fastify.put<{ Params: { id: string } }>(
+    '/sessions/:id/unstar',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { chatSessionRepository } = await import('../repositories/chat.repository.js');
+      const result = await chatSessionRepository.unstar(
+        request.params.id,
+        request.user!.orgId,
+      );
+      if (!result) return reply.status(404).send({ error: 'Session not found', code: 'NOT_FOUND' });
+      return reply.send({ data: result });
+    },
+  );
+
+  /** PUT /api/chat/sessions/:id/star-category — Update star category */
+  fastify.put<{ Params: { id: string }; Body: { category: string | null } }>(
+    '/sessions/:id/star-category',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { chatSessionRepository } = await import('../repositories/chat.repository.js');
+      const result = await chatSessionRepository.updateStarCategory(
+        request.params.id,
+        request.user!.orgId,
+        request.body?.category ?? null,
+      );
+      if (!result) return reply.status(404).send({ error: 'Session not found', code: 'NOT_FOUND' });
+      return reply.send({ data: result });
+    },
+  );
+
+  /** GET /api/chat/sessions/starred — List all starred sessions */
+  fastify.get<{ Querystring: { scope_id?: string; user_id?: string } }>(
+    '/sessions/starred',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { chatSessionRepository } = await import('../repositories/chat.repository.js');
+      const isAdmin = request.user!.role === 'owner' || request.user!.role === 'admin';
+
+      const sessions = await chatSessionRepository.findStarred(
+        request.user!.orgId,
+        {
+          scopeId: request.query.scope_id,
+          // Non-admin users can only see their own starred sessions
+          userId: isAdmin ? request.query.user_id : request.user!.id,
+        },
+      );
+
+      return reply.send({ data: sessions });
     },
   );
 }

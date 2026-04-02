@@ -81,28 +81,77 @@ export class ScopeMemoryRepository {
     );
   }
 
-  /** Load memories for CLAUDE.md injection: all pinned + recent non-pinned, capped at ~30K chars. */
+  /**
+   * Load memories for CLAUDE.md injection.
+   *
+   * Strategy:
+   *   1. All pinned memories first (capped at 15K chars to prevent budget monopoly)
+   *   2. Recent non-pinned, with per-category budgets:
+   *      - lesson: 8K chars  (highest value — mistakes and corrections)
+   *      - gap:    5K chars  (capability gaps worth surfacing)
+   *      - pattern: 5K chars (recurring solution paths)
+   *      - other:  2K chars  (uncategorized)
+   *   3. Human-created memories take priority over auto-distilled within each bucket
+   *   4. Total hard cap: 30K chars
+   */
   async findForContext(scopeId: string): Promise<ScopeMemoryEntity[]> {
+    const PINNED_CAP = 15_000;
+    const TOTAL_CAP = 30_000;
+    const CATEGORY_BUDGETS: Record<string, number> = {
+      lesson: 8_000,
+      gap: 5_000,
+      pattern: 5_000,
+    };
+    const DEFAULT_BUDGET = 2_000;
+
+    // 1. Pinned memories (capped)
     const pinned = await prisma.scope_memories.findMany({
       where: { business_scope_id: scopeId, is_pinned: true },
       orderBy: { created_at: 'desc' },
     }) as ScopeMemoryEntity[];
 
+    const result: ScopeMemoryEntity[] = [];
+    let totalChars = 0;
+
+    for (const m of pinned) {
+      const size = m.title.length + m.content.length + 50;
+      if (totalChars + size > PINNED_CAP) break;
+      result.push(m);
+      totalChars += size;
+    }
+
+    // 2. Non-pinned memories, ordered: human-created first, then auto-distilled, newest first
     const recent = await prisma.scope_memories.findMany({
       where: { business_scope_id: scopeId, is_pinned: false },
       orderBy: { created_at: 'desc' },
-      take: 50,
+      take: 80,
     }) as ScopeMemoryEntity[];
 
-    // Cap at ~30K chars total
-    const result: ScopeMemoryEntity[] = [...pinned];
-    let charCount = pinned.reduce((sum, m) => sum + m.title.length + m.content.length + 50, 0);
+    // Sort: human-created (no 'auto-distilled' tag) before auto-distilled
+    const isAuto = (m: ScopeMemoryEntity) => m.tags.includes('auto-distilled');
+    recent.sort((a, b) => {
+      const aAuto = isAuto(a) ? 1 : 0;
+      const bAuto = isAuto(b) ? 1 : 0;
+      if (aAuto !== bAuto) return aAuto - bAuto;
+      return b.created_at.getTime() - a.created_at.getTime();
+    });
+
+    // Track per-category char usage
+    const categoryUsed = new Map<string, number>();
 
     for (const m of recent) {
-      const entrySize = m.title.length + m.content.length + 50;
-      if (charCount + entrySize > 30000) break;
+      if (totalChars >= TOTAL_CAP) break;
+
+      const size = m.title.length + m.content.length + 50;
+      const budget = CATEGORY_BUDGETS[m.category] ?? DEFAULT_BUDGET;
+      const used = categoryUsed.get(m.category) ?? 0;
+
+      if (used + size > budget) continue; // This category is full
+      if (totalChars + size > TOTAL_CAP) break;
+
       result.push(m);
-      charCount += entrySize;
+      totalChars += size;
+      categoryUsed.set(m.category, used + size);
     }
 
     return result;

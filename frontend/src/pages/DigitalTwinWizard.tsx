@@ -3,11 +3,17 @@
  * 4-step guided flow: Identity → Knowledge → Skills → Publish
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, User, BookOpen, Zap, Share2, Upload, Check, Loader2, Sparkles, FileText } from 'lucide-react'
+import { ArrowLeft, ArrowRight, User, BookOpen, Zap, Share2, Upload, Check, Loader2, Sparkles, FileText, Bot } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
 import { getValidToken } from '@/services/auth'
+import { ChatMessage } from '@/components/chat/ChatMessage'
+import type { ContentBlock } from '@/services/chatStreamService'
+import {
+  generateScope, generateScopeWithDocument, parseScopeConfig,
+  type SSEEvent,
+} from '@/services/scopeGeneratorService'
 
 const STEPS = [
   { id: 'identity', label: 'Identity', icon: User, desc: 'Who are you?' },
@@ -46,8 +52,12 @@ interface WizardState {
 export function DigitalTwinWizard() {
   const navigate = useNavigate()
   const [currentStep, setCurrentStep] = useState<StepId>('identity')
-  const [isSaving, setIsSaving] = useState(false)
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
+  const [isGeneratingTwin, setIsGeneratingTwin] = useState(false)
+  const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([])
+  const [generatedConfig, setGeneratedConfig] = useState<{ config: any; avatarKey: string | null } | null>(null)
+  const [isConfirming, setIsConfirming] = useState(false)
+  const chatEndRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
 
   const [state, setState] = useState<WizardState>({
@@ -68,6 +78,11 @@ export function DigitalTwinWizard() {
   const canGoBack = stepIndex > 0
   const canGoNext = stepIndex < STEPS.length - 1
   const isLastStep = stepIndex === STEPS.length - 1
+
+  // Auto-scroll chat during generation
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [contentBlocks])
 
   const goBack = () => { if (canGoBack) setCurrentStep(STEPS[stepIndex - 1].id) }
   const goNext = () => { if (canGoNext) setCurrentStep(STEPS[stepIndex + 1].id) }
@@ -172,60 +187,176 @@ export function DigitalTwinWizard() {
     }
   }
 
-  // Final save: create the agent
+  // Final save: create the agent using agentic twin generation
   const handleFinish = async () => {
-      setIsSaving(true)
+      setIsGeneratingTwin(true)
+      setContentBlocks([])
       setError(null)
       try {
-        // 1. Upload photo (graceful fallback if S3 fails)
+        // 1. Upload photo
         let avatarKey: string | null = null
         if (state.avatarFile) {
-          try {
-            avatarKey = await uploadPhoto()
-            if (!avatarKey) {
-              console.warn('Photo upload returned empty key')
-            }
-          } catch (err) {
-            console.error('Photo upload failed:', err)
-            setError('Photo upload failed. The digital twin will be created without a photo. You can update it later from the profile page.')
-            // Continue with creation — avatar can be updated later
-          }
+          try { avatarKey = await uploadPhoto() } catch { /* continue */ }
         }
 
-        // 2. Create business scope with scope_type=digital_twin
-        const scope = await restClient.post<{ id: string }>('/api/business-scopes', {
-          name: state.displayName || 'Digital Twin',
-          description: state.description || null,
-          icon: state.displayName.charAt(0).toUpperCase() || '🤖',
-          color: '#6366f1',
-          scope_type: 'digital_twin',
-          avatar: avatarKey,
-          role: state.role || null,
-          system_prompt: state.systemPrompt || `You are ${state.displayName}'s digital twin. ${state.description}`,
-        })
+        // 2. Build the description prompt for the scope generator
+        const twinDescription = [
+          `Create a DIGITAL TWIN configuration (not a business team) for a single person:`,
+          `Name: ${state.displayName}`,
+          `Role: ${state.role || 'General professional'}`,
+          `Description: ${state.description || 'A professional in their field.'}`,
+          '',
+          `IMPORTANT: This is a digital twin of ONE person, not a team.`,
+          `- Generate a scope with scope.name = "${state.displayName}"`,
+          `- Generate 1 agent that represents this person (not multiple agents)`,
+          `- The agent's systemPrompt must capture this person's specific expertise in ${state.role}`,
+          `- Generate 3-6 skills specific to ${state.role} domain (NOT generic skills)`,
+          `- If a document is provided, extract domain knowledge from it for the skills`,
+        ].join('\n')
 
-        const scopeId = scope.id
+        setContentBlocks([{
+          type: 'text',
+          text: state.uploadedFiles.length > 0
+            ? `📄 Uploading document and analyzing to build ${state.displayName}'s digital twin...\n\n`
+            : `🤖 Generating ${state.displayName}'s digital twin configuration...\n\n`,
+        }])
 
-        // 3. If IM channel binding is requested
-        if (state.publishIM && state.imChannelId.trim()) {
-          try {
-            await restClient.post(`/api/business-scopes/${scopeId}/im-channels`, {
-              channel_type: state.imChannelType,
-              channel_id: state.imChannelId.trim(),
-              channel_name: `${state.displayName} - ${state.imChannelType}`,
+        // 3. Reuse the scope generator SSE flow (same as Business Scope creation)
+        // This puts the file in the workspace and lets AI read it with tools
+        const sseHandler = (event: SSEEvent) => {
+          if (event.type === 'session_start') {
+            setContentBlocks(prev => [...prev, { type: 'text', text: 'Session started. Analyzing...\n\n' }])
+          } else if (event.type === 'assistant' && event.content) {
+            setContentBlocks(prev => {
+              const next = [...prev]
+              const blocks = Array.isArray(event.content) ? event.content : []
+              for (const block of blocks) {
+                if (typeof block === 'string') continue
+                if (block.type === 'text' && block.text) {
+                  const lastIdx = next.length - 1
+                  if (lastIdx >= 0 && next[lastIdx].type === 'text') {
+                    next[lastIdx] = { type: 'text', text: (next[lastIdx] as { type: 'text'; text: string }).text + block.text }
+                  } else {
+                    next.push({ type: 'text', text: block.text })
+                  }
+                } else if (block.type === 'tool_use' && block.name) {
+                  next.push({ type: 'tool_use', id: block.id || `tool-${Date.now()}`, name: block.name, input: (typeof block.input === 'object' ? block.input : {}) as Record<string, unknown> })
+                }
+              }
+              return next
             })
-          } catch (err) {
-            console.warn('IM binding failed:', err)
+          } else if (event.type === 'result') {
+            setContentBlocks(prev => [...prev, { type: 'text', text: '\n\n✅ Generation complete.' }])
+          } else if (event.type === 'error') {
+            setContentBlocks(prev => [...prev, { type: 'text', text: `\n\n❌ Error: ${event.message}` }])
           }
         }
 
-        setIsSaving(false)
-        setTimeout(() => navigate(`/agents?scope=${scopeId}`), 500)
+        // Get the first uploaded file from the document group (if any)
+        let sopFile: File | null = null
+        if (state.uploadedFiles.length > 0 && state.documentGroupId) {
+          try {
+            const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+            const token = await getValidToken()
+            const filesRes = await restClient.get<{ data: Array<{ id: string; original_filename: string }> }>(
+              `/api/document-groups/${state.documentGroupId}/files`
+            )
+            const firstFile = filesRes.data?.[0]
+            if (firstFile) {
+              const fileRes = await fetch(`${baseUrl}/api/document-groups/${state.documentGroupId}/files/${firstFile.id}/download`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+              })
+              if (fileRes.ok) {
+                const blob = await fileRes.blob()
+                sopFile = new File([blob], firstFile.original_filename)
+              }
+            }
+          } catch { /* continue without file */ }
+        }
+
+        // Call the same generate endpoint as Business Scope creation
+        const fullText = sopFile
+          ? await generateScopeWithDocument(sopFile, twinDescription, sseHandler)
+          : await generateScope(twinDescription, sseHandler)
+
+        // 4. Parse the generated config
+        try {
+          const scopeConfig = parseScopeConfig(fullText)
+
+          // Convert scope generator output to twin config format
+          const firstAgent = scopeConfig.agents[0]
+          const twinConfig = {
+            scope: {
+              name: state.displayName, // Force use user's name, not AI's
+              description: scopeConfig.scope.description,
+              icon: scopeConfig.scope.icon || '🤖',
+              color: scopeConfig.scope.color || '#6366f1',
+            },
+            systemPrompt: firstAgent?.systemPrompt || scopeConfig.scope.description,
+            skills: (firstAgent?.skills || []).map(s => ({
+              name: s.name,
+              description: s.description,
+              body: s.body,
+            })),
+          }
+
+          const skillCount = twinConfig.skills.length
+          setContentBlocks(prev => [...prev, {
+            type: 'text',
+            text: `\n\n✅ Generated system prompt and **${skillCount} skills** for ${state.displayName}. Review above and click "Confirm & Create" to save.`,
+          }])
+          setGeneratedConfig({ config: twinConfig, avatarKey })
+        } catch {
+          // Fallback: basic config
+          setContentBlocks(prev => [...prev, { type: 'text', text: '\n\n⚠️ Could not parse AI output. A basic configuration has been prepared.' }])
+          setGeneratedConfig({
+            config: {
+              scope: { name: state.displayName, description: `Digital twin of ${state.displayName}`, icon: '🤖', color: '#6366f1' },
+              systemPrompt: state.systemPrompt || `You are ${state.displayName}'s digital twin. ${state.description}`,
+              skills: [],
+            },
+            avatarKey,
+          })
+        }
+
+        setIsGeneratingTwin(false)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to create digital twin')
-        setIsSaving(false)
+        setIsGeneratingTwin(false)
       }
     }
+
+  // Confirm: user clicks button to persist the generated config
+  const handleConfirmCreate = async () => {
+    if (!generatedConfig) return
+    setIsConfirming(true)
+    try {
+      const { config, avatarKey } = generatedConfig
+
+      setContentBlocks(prev => [...prev, { type: 'text', text: `\n\n💾 Saving digital twin with ${config.skills?.length ?? 0} skills...` }])
+
+      const confirmRes = await restClient.post<{ data: { scope: { id: string } } }>(
+        '/api/scope-generator/generate-twin/confirm',
+        { config, avatar: avatarKey, documentGroupId: state.documentGroupId },
+      )
+      const scopeId = confirmRes.data.scope.id
+
+      if (state.publishIM && state.imChannelId.trim()) {
+        try {
+          await restClient.post(`/api/business-scopes/${scopeId}/im-channels`, {
+            channel_type: state.imChannelType, channel_id: state.imChannelId.trim(),
+            channel_name: `${state.displayName} - ${state.imChannelType}`,
+          })
+        } catch { /* non-fatal */ }
+      }
+
+      setContentBlocks(prev => [...prev, { type: 'text', text: '\n\n🎉 Digital twin created successfully! Redirecting...' }])
+      setTimeout(() => navigate(`/agents?scope=${scopeId}`), 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save digital twin')
+      setIsConfirming(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -267,7 +398,76 @@ export function DigitalTwinWizard() {
 
       {/* Step content */}
       <div className="max-w-2xl mx-auto px-6 py-8">
-        {currentStep === 'identity' && (
+        {(isGeneratingTwin || generatedConfig) ? (
+          /* ── Generating view: Claude Code chat interface ── */
+          <div className="space-y-4">
+            <div className="text-center mb-6">
+              <h2 className="text-xl font-semibold mb-1">Creating {state.displayName}'s Digital Twin</h2>
+              <p className="text-sm text-gray-400">AI is analyzing your documents and building skills...</p>
+            </div>
+
+            {/* User prompt bubble */}
+            <div className="flex gap-3 flex-row-reverse">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-600">
+                <User className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex flex-col max-w-[70%] items-end">
+                <div className="px-4 py-2 rounded-2xl bg-blue-600 text-white rounded-br-md">
+                  <p className="text-sm">Create a digital twin for {state.displayName} ({state.role})</p>
+                </div>
+              </div>
+            </div>
+
+            {/* AI streaming response */}
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1 max-w-[85%]">
+                {contentBlocks.length > 0 ? (
+                  <ChatMessage content={contentBlocks} isStreaming={true} />
+                ) : (
+                  <div className="bg-gray-800 px-4 py-3 rounded-2xl rounded-bl-md">
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {error && (
+              <div className="px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-sm text-red-400">
+                {error}
+              </div>
+            )}
+
+            {/* Confirm button — shown after generation completes */}
+            {generatedConfig && !isConfirming && (
+              <div className="flex justify-center pt-4">
+                <button
+                  onClick={handleConfirmCreate}
+                  className="flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Check size={16} />
+                  Confirm & Create Digital Twin
+                </button>
+              </div>
+            )}
+            {isConfirming && (
+              <div className="flex justify-center pt-4">
+                <div className="flex items-center gap-2 px-6 py-3 bg-gray-700 text-gray-300 rounded-lg text-sm">
+                  <Loader2 size={16} className="animate-spin" />
+                  Saving...
+                </div>
+              </div>
+            )}
+
+            <div ref={chatEndRef} />
+          </div>
+        ) : currentStep === 'identity' && (
           <div className="space-y-6">
             <div className="text-center mb-8">
               <h2 className="text-xl font-semibold mb-1">Who are you?</h2>
@@ -508,7 +708,8 @@ export function DigitalTwinWizard() {
         )}
       </div>
 
-      {/* Bottom navigation */}
+      {/* Bottom navigation — hidden during generation */}
+      {!isGeneratingTwin && !generatedConfig && (
       <div className="fixed bottom-0 left-0 right-0 flex items-center justify-between px-6 py-4 border-t border-gray-800 bg-gray-950">
         <button
           onClick={canGoBack ? goBack : () => navigate('/agents')}
@@ -521,11 +722,11 @@ export function DigitalTwinWizard() {
         {isLastStep ? (
           <button
             onClick={handleFinish}
-            disabled={isSaving || !state.displayName.trim()}
+            disabled={isGeneratingTwin || !state.displayName.trim()}
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {isSaving ? 'Creating...' : 'Create Digital Twin'}
+            {isGeneratingTwin ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {isGeneratingTwin ? 'Creating...' : 'Create Digital Twin'}
           </button>
         ) : (
           <button
@@ -537,6 +738,7 @@ export function DigitalTwinWizard() {
           </button>
         )}
       </div>
+      )}
     </div>
   )
 }
