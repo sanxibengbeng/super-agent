@@ -6,23 +6,33 @@
  *   GET  /ping         — health check
  *
  * Data flow:
- *   1. Backend prepares full workspace locally (skills, agents, CLAUDE.md,
- *      settings.json — same as claude mode) and uploads to S3
+ *   1. Backend prepares full workspace locally and uploads to S3
  *   2. Backend invokes AgentCore with S3 bucket/prefix in payload
  *   3. Container downloads entire workspace from S3 → /workspace/
  *   4. Runs Claude Agent SDK with cwd=/workspace
- *   5. Syncs /workspace back to S3 (including agent-generated files)
+ *   5. SDK hooks (PostToolUse + Stop) sync /workspace changes back to S3
+ *
+ * Note: file-watcher.ts has been replaced by Claude Code SDK hooks
+ * registered in agent-runner.ts. The hooks provide more precise,
+ * event-driven S3 sync (per-file on Write/Edit, full sync on Stop).
  */
 
 import http from 'http';
 import { S3Client } from '@aws-sdk/client-s3';
 import { runAgent } from './agent-runner.js';
-import { restoreWorkspaceFromS3, syncWorkspaceToS3 } from './workspace-sync.js';
-import { startFileWatcher } from './file-watcher.js';
+import { restoreWorkspaceFromS3 } from './workspace-sync.js';
 import type { AgentPayload, AgentEvent } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
-const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
+
+// S3 client for workspace sync.
+// IMPORTANT: The workspace S3 bucket is in us-east-1, but the container's
+// AWS_REGION env var is set to us-west-2 (for Bedrock). We must explicitly
+// use us-east-1 for S3. The container's AWS_ACCESS_KEY_ID/SECRET are for
+// Bedrock (cross-account); S3 uses the same creds since the execution role
+// has S3 permissions and the Bedrock creds also belong to the same account.
+const S3_REGION = process.env.WORKSPACE_S3_REGION ?? 'us-east-1';
+const s3 = new S3Client({ region: S3_REGION });
 
 // ---------------------------------------------------------------------------
 // /invocations
@@ -57,12 +67,10 @@ async function handleInvocations(
     }
   }
 
-  // Start file watcher for incremental S3 sync during execution
-  if (bucket && prefix) {
-    try { startFileWatcher(s3, bucket, prefix); } catch { /* non-critical */ }
-  }
-
   // --- SSE streaming response ---
+  // S3 sync is now handled by SDK hooks in agent-runner.ts:
+  //   PostToolUse (Write|Edit) → incremental file sync
+  //   Stop → full workspace sync (safety net)
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -72,11 +80,6 @@ async function handleInvocations(
   try {
     for await (const event of runAgent(payload)) {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
-
-      // Sync workspace to S3 after assistant/result events (files may have changed)
-      if (bucket && prefix && (event.type === 'assistant' || event.type === 'result')) {
-        syncWorkspaceToS3(s3, bucket, prefix).catch(() => {});
-      }
     }
   } catch (err) {
     const errorEvent: AgentEvent = {
@@ -88,13 +91,6 @@ async function handleInvocations(
   }
 
   res.end();
-
-  // Final sync after response completes
-  if (bucket && prefix) {
-    syncWorkspaceToS3(s3, bucket, prefix).catch(err => {
-      console.error('[index] Final workspace sync failed:', err);
-    });
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -260,6 +260,26 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
           await walk(fullPath);
+        } else if (entry.isSymbolicLink()) {
+          // Follow symlink — if it points to a directory, walk it; if file, upload
+          try {
+            const linkStat = statSync(fullPath); // follows symlink
+            if (linkStat.isDirectory()) {
+              await walk(fullPath);
+            } else if (linkStat.isFile() && linkStat.size <= 50 * 1024 * 1024) {
+              const relPath = relative(localDir, fullPath);
+              const key = `${s3Prefix}${relPath}`;
+              await this.s3Client.send(new PutObjectCommand({
+                Bucket: this.workspaceBucket,
+                Key: key,
+                Body: createReadStream(fullPath),
+                ContentLength: linkStat.size,
+              }));
+              count++;
+            }
+          } catch {
+            // Broken symlink or permission error — skip silently
+          }
         } else {
           const relPath = relative(localDir, fullPath);
           const key = `${s3Prefix}${relPath}`;

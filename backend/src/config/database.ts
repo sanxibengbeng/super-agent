@@ -31,7 +31,7 @@ function createPrismaClient(): PrismaClient {
 
   return new PrismaClient({
     adapter,
-    log: config.isDevelopment ? ['query', 'info', 'warn', 'error'] : ['error'],
+    log: config.isDevelopment ? ['warn', 'error'] : ['error'],
   });
 }
 

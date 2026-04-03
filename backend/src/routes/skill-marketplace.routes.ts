@@ -94,6 +94,39 @@ export async function skillMarketplaceRoutes(fastify: FastifyInstance): Promise<
             result.name,
             result.localPath,
           );
+
+          // In agentcore mode, also write skill files directly to the container
+          const { config: appConfig } = await import('../config/index.js');
+          if (appConfig.agentRuntime === 'agentcore') {
+            try {
+              const { agentCoreCommandService } = await import('../services/agentcore-command.service.js');
+              const { readdir, readFile, stat } = await import('fs/promises');
+              const { join } = await import('path');
+
+              // Recursively write all skill files to the container
+              const writeSkillFiles = async (srcDir: string, destPrefix: string): Promise<void> => {
+                const entries = await readdir(srcDir, { withFileTypes: true });
+                for (const entry of entries) {
+                  const srcPath = join(srcDir, entry.name);
+                  const destPath = `${destPrefix}/${entry.name}`;
+                  if (entry.isDirectory()) {
+                    await writeSkillFiles(srcPath, destPath);
+                  } else {
+                    const content = await readFile(srcPath, 'utf-8');
+                    await agentCoreCommandService.writeFile(sessionId, destPath, content);
+                  }
+                }
+              };
+
+              await agentCoreCommandService.runCommand(sessionId,
+                `mkdir -p /workspace/.claude/skills/${result.name}`
+              );
+              await writeSkillFiles(result.localPath, `.claude/skills/${result.name}`);
+              request.log.info({ skillName: result.name, sessionId }, 'Skill synced to AgentCore container');
+            } catch (cmdErr) {
+              request.log.warn({ err: cmdErr, skillName: result.name }, 'Failed to sync skill to container (will sync on next invoke)');
+            }
+          }
         }
       } catch (err) {
         request.log.error({ err, sessionId, skillName: result.name }, 'Failed to copy skill to session workspace');

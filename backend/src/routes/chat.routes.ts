@@ -11,6 +11,7 @@ import http from 'http';
 import { chatService } from '../services/chat.service.js';
 import { streamRegistry } from '../services/stream-registry.js';
 import { workspaceManager } from '../services/workspace-manager.js';
+import { agentCoreCommandService } from '../services/agentcore-command.service.js';
 import { prisma } from '../config/database.js';
 import { devServerManager } from '../services/dev-server-manager.js';
 import { sanitizeEvent } from '../services/output-sanitizer.js';
@@ -74,6 +75,52 @@ function validateSchema<T>(schema: { parse: (data: unknown) => T }, data: unknow
     }
     throw error;
   }
+}
+
+/**
+ * Build a WorkspaceFileNode tree from flat file entries returned by Command API.
+ */
+function buildTreeFromEntries(
+  entries: Array<{ type: 'file' | 'directory'; size: number; path: string }>,
+): import('../services/workspace-manager.js').WorkspaceFileNode[] {
+  type FileNode = import('../services/workspace-manager.js').WorkspaceFileNode;
+  const root: Map<string, any> = new Map();
+
+  for (const entry of entries) {
+    const parts = entry.path.split('/');
+    let current = root;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      if (i === parts.length - 1) {
+        current.set(part, { type: entry.type, size: entry.size });
+      } else {
+        if (!current.has(part)) current.set(part, new Map());
+        current = current.get(part);
+      }
+    }
+  }
+
+  const mapToNodes = (map: Map<string, any>, parentPath: string): FileNode[] => {
+    const nodes: FileNode[] = [];
+    const sorted = [...map.entries()].sort(([aName, aVal], [bName, bVal]) => {
+      const aIsDir = aVal instanceof Map || aVal?.type === 'directory';
+      const bIsDir = bVal instanceof Map || bVal?.type === 'directory';
+      if (aIsDir && !bIsDir) return -1;
+      if (!aIsDir && bIsDir) return 1;
+      return aName.localeCompare(bName);
+    });
+    for (const [name, value] of sorted) {
+      const path = parentPath ? `${parentPath}/${name}` : name;
+      if (value instanceof Map) {
+        nodes.push({ name, path, type: 'directory', children: mapToNodes(value, path) });
+      } else {
+        nodes.push({ name, path, type: value.type ?? 'file', size: value.size });
+      }
+    }
+    return nodes;
+  };
+
+  return mapToNodes(root, '');
 }
 
 /**
@@ -736,11 +783,19 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         const { config: appConfig } = await import('../config/index.js');
         let files;
         if (appConfig.agentRuntime === 'agentcore') {
-          files = await workspaceManager.listWorkspaceFilesFromS3(
-            request.user!.orgId,
-            scopeIdForPath,
-            session.id,
-          );
+          // Use InvokeAgentRuntimeCommandCommand to query container directly
+          try {
+            const entries = await agentCoreCommandService.listWorkspaceFiles(session.id);
+            files = buildTreeFromEntries(entries);
+          } catch (cmdErr) {
+            // Expected when session has no active microVM (idle >15min or no messages yet).
+            // Silently fall back to S3.
+            files = await workspaceManager.listWorkspaceFilesFromS3(
+              request.user!.orgId,
+              scopeIdForPath,
+              session.id,
+            );
+          }
         } else {
           files = await workspaceManager.listWorkspaceFiles(
             request.user!.orgId,
@@ -840,6 +895,16 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Skill not found in workspace' });
       }
 
+      // In agentcore mode, also delete from the container
+      const { config: appConfig } = await import('../config/index.js');
+      if (appConfig.agentRuntime === 'agentcore') {
+        try {
+          await agentCoreCommandService.deleteDirectory(session.id, `.claude/skills/${request.params.skillName}`);
+        } catch (err) {
+          console.warn('[workspace] Failed to delete skill from container:', err instanceof Error ? err.message : err);
+        }
+      }
+
       return reply.status(204).send();
     },
   );
@@ -884,9 +949,17 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       );
 
       if (content === null) {
-        // In agentcore mode, fallback to S3 (file may only exist in the container)
+        // In agentcore mode, try reading directly from container via Command API
         const { config: appConfig } = await import('../config/index.js');
         if (appConfig.agentRuntime === 'agentcore') {
+          try {
+            const cmdContent = await agentCoreCommandService.readFile(session.id, request.query.path);
+            if (cmdContent !== null) {
+              return reply.status(200).send({ path: request.query.path, content: cmdContent });
+            }
+          } catch {
+            // Command API failed, try S3 fallback
+          }
           const s3Content = await workspaceManager.readWorkspaceFileFromS3(
             request.user!.orgId,
             session.business_scope_id,
@@ -1021,6 +1094,16 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
       if (!ok) {
         return reply.status(400).send({ error: 'Failed to write file' });
+      }
+
+      // In agentcore mode, also write directly to the container
+      const { config: appConfig } = await import('../config/index.js');
+      if (appConfig.agentRuntime === 'agentcore') {
+        try {
+          await agentCoreCommandService.writeFile(session.id, request.body.path, request.body.content);
+        } catch (err) {
+          console.warn('[workspace] Failed to write file to container:', err instanceof Error ? err.message : err);
+        }
       }
 
       return reply.status(200).send({ path: request.body.path, saved: true });
