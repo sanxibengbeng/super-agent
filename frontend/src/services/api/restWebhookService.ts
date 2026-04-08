@@ -5,6 +5,7 @@
  */
 
 import { restClient } from './restClient';
+import type { ScheduleExecutionLog } from './restScheduleService';
 
 // ============================================================================
 // Types
@@ -22,14 +23,13 @@ export interface Webhook {
 
 export interface WebhookCallRecord {
   id: string;
-  calledAt: string;
-  ipAddress: string | null;
-  requestHeaders: Record<string, string>;
-  requestBody: Record<string, unknown>;
-  responseStatus: number;
-  responseBody: Record<string, unknown> | null;
-  durationMs: number;
+  webhookId: string;
   executionId: string | null;
+  status: string;
+  responseTimeMs: number | null;
+  errorMessage: string | null;
+  logs: ScheduleExecutionLog[];
+  createdAt: string;
 }
 
 export interface CreateWebhookRequest {

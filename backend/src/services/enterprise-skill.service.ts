@@ -105,8 +105,10 @@ function toListItem(entry: EnterpriseSkillWithDetails): EnterpriseSkillListItem 
 export class EnterpriseSkillService {
   /**
    * Browse the enterprise skill catalog.
+   * Org owners/admins see everything. Regular users only see skills
+   * that are either published to their groups or have no group restrictions.
    */
-  async browse(organizationId: string, options: BrowseOptions = {}): Promise<BrowseResult> {
+  async browse(organizationId: string, options: BrowseOptions = {}, user?: { id: string; role: string }): Promise<BrowseResult> {
     const page = options.page ?? 1;
     const limit = options.limit ?? 20;
     const { items, total } = await enterpriseSkillRepository.browse(organizationId, {
@@ -114,9 +116,31 @@ export class EnterpriseSkillService {
       page,
       limit,
     });
+
+    let filtered = items.map(toListItem);
+
+    // Apply group-based filtering for non-admin users
+    if (user && user.role !== 'owner' && user.role !== 'admin') {
+      const { userGroupRepository } = await import('../repositories/userGroup.repository.js');
+      const accessibleSkillIds = await userGroupRepository.getAccessibleSkillIds(organizationId, user.id);
+      const accessibleSet = new Set(accessibleSkillIds);
+
+      // Also include skills with no group restrictions (published to everyone)
+      const { prisma } = await import('../config/database.js');
+      const skillsWithGroups = await prisma.skill_group_access.findMany({
+        select: { skill_id: true },
+        distinct: ['skill_id'],
+      });
+      const restrictedSkillIds = new Set(skillsWithGroups.map(s => s.skill_id));
+
+      filtered = filtered.filter(s =>
+        accessibleSet.has(s.skillId) || !restrictedSkillIds.has(s.skillId)
+      );
+    }
+
     return {
-      items: items.map(toListItem),
-      total,
+      items: filtered,
+      total: filtered.length,
       page,
       limit,
     };

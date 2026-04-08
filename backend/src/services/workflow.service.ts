@@ -112,7 +112,7 @@ export class WorkflowService {
    * @param userId - The user ID creating the workflow
    * @returns The created workflow
    * @throws AppError.validation if name is empty or invalid
-   * @throws AppError.conflict if workflow with same name+version exists
+   * @throws AppError.validation if data is invalid
    */
   async createWorkflow(
     data: CreateWorkflowInput,
@@ -126,18 +126,6 @@ export class WorkflowService {
 
     if (!data.version || data.version.trim() === '') {
       throw AppError.validation('Workflow version is required');
-    }
-
-    // Check for duplicate name+version within organization
-    const existingWorkflow = await workflowRepository.findByNameAndVersion(
-      organizationId,
-      data.name,
-      data.version
-    );
-    if (existingWorkflow) {
-      throw AppError.conflict(
-        `Workflow with name "${data.name}" and version "${data.version}" already exists`
-      );
     }
 
     // Create the workflow

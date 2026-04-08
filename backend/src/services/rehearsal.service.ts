@@ -289,6 +289,102 @@ export class RehearsalService {
     }) as unknown as ProposalRecord | null;
   }
 
+  // ---- Apply / Reject proposals ----
+
+  /**
+   * Apply a pending proposal — execute the proposed changes against agent configs.
+   */
+  async applyProposal(
+    proposalId: string,
+    organizationId: string,
+    reviewedBy: string,
+    reviewNote?: string,
+  ): Promise<ProposalRecord> {
+    const proposal = await prisma.scope_evolution_proposals.findFirst({
+      where: { id: proposalId, organization_id: organizationId },
+    });
+    if (!proposal) throw new Error('Proposal not found');
+    if (proposal.status !== 'pending') throw new Error('Proposal is not pending');
+
+    const changes = proposal.proposed_changes as ProposedChange[];
+    const applied: string[] = [];
+
+    for (const change of changes) {
+      try {
+        if (change.target === 'system_prompt' && change.agent_id) {
+          await prisma.agents.update({
+            where: { id: change.agent_id },
+            data: { system_prompt: change.after },
+          });
+          applied.push('Updated system_prompt for agent ' + change.agent_id);
+        } else if (change.target === 'skill') {
+          const { skillService } = await import('./skill.service.js');
+          const name = change.description.replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase().slice(0, 50);
+          await skillService.createSkill(organizationId, {
+            name,
+            display_name: change.description.slice(0, 100),
+            description: change.rationale,
+            metadata: { body: change.after, source: 'evolution_proposal', proposalId },
+          });
+          applied.push('Created skill: ' + name);
+        } else if (change.target === 'new_agent') {
+          const { agentService } = await import('./agent.service.js');
+          const name = change.description.replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase().slice(0, 50);
+          await agentService.createAgent({
+            name,
+            display_name: change.description.slice(0, 100),
+            role: change.rationale.slice(0, 200),
+            system_prompt: change.after,
+            tools: [],
+            business_scope_id: proposal.business_scope_id,
+            origin: 'evolution',
+            is_shared: false,
+          }, organizationId);
+          applied.push('Created agent: ' + name);
+        } else {
+          applied.push('Noted: ' + change.description);
+        }
+      } catch (err) {
+        applied.push('Failed: ' + (err instanceof Error ? err.message : 'unknown'));
+      }
+    }
+
+    return prisma.scope_evolution_proposals.update({
+      where: { id: proposalId },
+      data: {
+        status: 'approved',
+        reviewed_by: reviewedBy,
+        review_note: reviewNote || applied.join('; '),
+        applied_at: new Date(),
+      },
+    }) as unknown as Promise<ProposalRecord>;
+  }
+
+  /**
+   * Reject a pending proposal.
+   */
+  async rejectProposal(
+    proposalId: string,
+    organizationId: string,
+    reviewedBy: string,
+    reviewNote?: string,
+  ): Promise<ProposalRecord> {
+    const proposal = await prisma.scope_evolution_proposals.findFirst({
+      where: { id: proposalId, organization_id: organizationId },
+    });
+    if (!proposal) throw new Error('Proposal not found');
+    if (proposal.status !== 'pending') throw new Error('Proposal is not pending');
+
+    return prisma.scope_evolution_proposals.update({
+      where: { id: proposalId },
+      data: {
+        status: 'rejected',
+        reviewed_by: reviewedBy,
+        review_note: reviewNote || 'Rejected by reviewer',
+      },
+    }) as unknown as Promise<ProposalRecord>;
+  }
+
   // ---- Private helpers ----
 
   private async callCoach(

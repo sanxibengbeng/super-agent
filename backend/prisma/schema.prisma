@@ -58,6 +58,7 @@ model organizations {
   project_issue_comments     project_issue_comments[]
   rehearsal_sessions         rehearsal_sessions[]
   scope_evolution_proposals  scope_evolution_proposals[]
+  user_groups                user_groups[]
   @@index([slug])
   @@index([plan_type])
   @@index([created_at(sort: Desc)])
@@ -231,12 +232,14 @@ model skills {
   skill_type        String   @default("general") @db.VarChar(50)
   tags              Json     @default("[]")
   metadata          Json     @default("{}")
+  created_by        String?  @db.Uuid
   created_at        DateTime @default(now()) @db.Timestamptz
   updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
 
   organization organizations   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   agent_skills agent_skills[]
   skill_marketplace skill_marketplace[]
+  skill_group_access skill_group_access[]
 
   @@unique([organization_id, hash_id], name: "unique_skill_hash_per_org")
   @@unique([organization_id, name], name: "unique_skill_name_per_org")
@@ -376,6 +379,7 @@ model mcp_servers {
   organization organizations @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   scope_mcp_servers scope_mcp_servers[]
+  mcp_group_access  mcp_group_access[]
 
   @@index([organization_id])
   @@index([name])
@@ -662,6 +666,7 @@ model webhook_call_records {
   response_time_ms Int?
   status          String    @default("pending") @db.VarChar(50)
   error_message   String?
+  logs            Json      @default("[]")
   ip_address      String?   @db.VarChar(45)
   created_at      DateTime  @default(now()) @db.Timestamptz
 
@@ -719,6 +724,7 @@ model schedule_execution_records {
   triggered_at    DateTime? @db.Timestamptz
   completed_at    DateTime? @db.Timestamptz
   status          String    @default("scheduled") @db.VarChar(50)
+  trigger_type    String    @default("cron") @db.VarChar(20) // "cron" or "manual"
   error_message   String?
   retry_count     Int       @default(0)
   logs            Json      @default("[]")
@@ -1327,4 +1333,67 @@ model scope_evolution_proposals {
   @@index([business_scope_id])
   @@index([status])
   @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// User Groups — RBAC for skills and MCP servers
+// ============================================================================
+model user_groups {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  name            String   @db.VarChar(255)
+  description     String?
+  created_by      String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization       organizations        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  members            user_group_members[]
+  skill_group_access skill_group_access[]
+  mcp_group_access   mcp_group_access[]
+
+  @@unique([organization_id, name], name: "unique_group_name_per_org")
+  @@index([organization_id])
+}
+
+model user_group_members {
+  id         String   @id @default(uuid()) @db.Uuid
+  group_id   String   @db.Uuid
+  user_id    String   @db.Uuid
+  added_by   String?  @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz
+
+  group user_groups @relation(fields: [group_id], references: [id], onDelete: Cascade)
+
+  @@unique([group_id, user_id], name: "unique_group_member")
+  @@index([group_id])
+  @@index([user_id])
+}
+
+model skill_group_access {
+  skill_id   String   @db.Uuid
+  group_id   String   @db.Uuid
+  granted_by String?  @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz
+
+  skill skills      @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+  group user_groups @relation(fields: [group_id], references: [id], onDelete: Cascade)
+
+  @@id([skill_id, group_id])
+  @@index([group_id])
+  @@index([skill_id])
+}
+
+model mcp_group_access {
+  mcp_server_id String   @db.Uuid
+  group_id      String   @db.Uuid
+  granted_by    String?  @db.Uuid
+  created_at    DateTime @default(now()) @db.Timestamptz
+
+  mcp_server mcp_servers @relation(fields: [mcp_server_id], references: [id], onDelete: Cascade)
+  group      user_groups @relation(fields: [group_id], references: [id], onDelete: Cascade)
+
+  @@id([mcp_server_id, group_id])
+  @@index([group_id])
+  @@index([mcp_server_id])
 }

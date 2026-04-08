@@ -104,4 +104,42 @@ export async function rehearsalRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(200).send({ data });
     },
   );
+
+  /** POST /:scopeId/proposals/:proposalId/apply — Apply a pending proposal */
+  fastify.post<ProposalParam & { Body: { review_note?: string } }>(
+    '/:scopeId/proposals/:proposalId/apply',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const data = await rehearsalService.applyProposal(
+          request.params.proposalId,
+          request.user!.orgId,
+          request.user!.id,
+          (request.body as { review_note?: string })?.review_note,
+        );
+        return reply.status(200).send({ data });
+      } catch (err) {
+        return reply.status(400).send({ error: err instanceof Error ? err.message : 'Apply failed' });
+      }
+    },
+  );
+
+  /** POST /:scopeId/proposals/:proposalId/reject — Reject a pending proposal */
+  fastify.post<ProposalParam & { Body: { review_note?: string } }>(
+    '/:scopeId/proposals/:proposalId/reject',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const data = await rehearsalService.rejectProposal(
+          request.params.proposalId,
+          request.user!.orgId,
+          request.user!.id,
+          (request.body as { review_note?: string })?.review_note,
+        );
+        return reply.status(200).send({ data });
+      } catch (err) {
+        return reply.status(400).send({ error: err instanceof Error ? err.message : 'Reject failed' });
+      }
+    },
+  );
 }

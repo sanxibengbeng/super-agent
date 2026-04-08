@@ -14,6 +14,7 @@ import {
   Upload, Building2, Globe, Trash2,
 } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
+import { RestUserGroupService, type UserGroup } from '@/services/api/restUserGroupService'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,6 +114,10 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
   const [publishingSkill, setPublishingSkill] = useState<string | null>(null)
   const [confirmingPublish, setConfirmingPublish] = useState(false)
   const [publishCategory, setPublishCategory] = useState('')
+  const [publishGroupIds, setPublishGroupIds] = useState<string[]>([])
+
+  // User groups (for publish-to-group selection)
+  const [userGroups, setUserGroups] = useState<UserGroup[]>([])
 
   const [error, setError] = useState<string | null>(null)
 
@@ -173,14 +178,22 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
     finally { setLoadingFeatured(false) }
   }, [featuredSkills.length])
 
+  const loadUserGroups = useCallback(async () => {
+    try {
+      const groups = await RestUserGroupService.listGroups()
+      setUserGroups(groups)
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     if (open) {
       void loadInstalled()
       void loadEnterprise()
       void loadCategories()
       void loadFeatured()
+      void loadUserGroups()
     }
-  }, [open, loadInstalled, loadEnterprise, loadCategories, loadFeatured])
+  }, [open, loadInstalled, loadEnterprise, loadCategories, loadFeatured, loadUserGroups])
 
   // ── External marketplace search ──
   const handleExternalSearch = useCallback(async () => {
@@ -266,6 +279,7 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
   const handlePublishStart = useCallback((skillName: string) => {
     setPublishingSkill(skillName)
     setPublishCategory('')
+    setPublishGroupIds([])
     setError(null)
   }, [])
 
@@ -276,19 +290,22 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
     try {
       await restClient.post(
         `/api/chat/sessions/${sessionId}/skills/${encodeURIComponent(skillName)}/publish`,
-        { category: publishCategory || undefined },
+        {
+          category: publishCategory || undefined,
+          group_ids: publishGroupIds.length > 0 ? publishGroupIds : undefined,
+        },
       )
       setPublishingSkill(null)
       setPublishCategory('')
+      setPublishGroupIds([])
       setConfirmingPublish(false)
       await loadEnterprise()
-      // Switch to Internal tab so the user sees the published skill
       setActiveTab('enterprise')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Publish failed')
       setConfirmingPublish(false)
     }
-  }, [sessionId, publishCategory, loadEnterprise])
+  }, [sessionId, publishCategory, publishGroupIds, loadEnterprise])
 
   // ── Delete from workspace ──
   const handleDelete = useCallback(async (skillName: string) => {
@@ -358,7 +375,10 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
               publishingSkill={publishingSkill}
               confirmingPublish={confirmingPublish}
               publishCategory={publishCategory}
+              publishGroupIds={publishGroupIds}
+              userGroups={userGroups}
               onPublishCategoryChange={setPublishCategory}
+              onPublishGroupIdsChange={setPublishGroupIds}
               onPublishStart={handlePublishStart}
               onPublishConfirm={handlePublishConfirm}
               onDelete={handleDelete}
@@ -412,14 +432,17 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
 // Installed Tab
 // ---------------------------------------------------------------------------
 
-function InstalledTab({ skills, loading, sessionId, publishingSkill, confirmingPublish, publishCategory, onPublishCategoryChange, onPublishStart, onPublishConfirm, onDelete, deletingSkill }: {
+function InstalledTab({ skills, loading, sessionId, publishingSkill, confirmingPublish, publishCategory, publishGroupIds, userGroups, onPublishCategoryChange, onPublishGroupIdsChange, onPublishStart, onPublishConfirm, onDelete, deletingSkill }: {
   skills: WorkspaceSkill[]
   loading: boolean
   sessionId: string | null
   publishingSkill: string | null
   confirmingPublish: boolean
   publishCategory: string
+  publishGroupIds: string[]
+  userGroups: UserGroup[]
   onPublishCategoryChange: (v: string) => void
+  onPublishGroupIdsChange: (v: string[]) => void
   onPublishStart: (name: string) => void
   onPublishConfirm: (name: string) => void
   onDelete: (name: string) => void
@@ -474,21 +497,58 @@ function InstalledTab({ skills, loading, sessionId, publishingSkill, confirmingP
           </div>
           {/* Publish action */}
           {publishingSkill === skill.name ? (
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 space-y-2">
               <input
                 value={publishCategory}
                 onChange={e => onPublishCategoryChange(e.target.value)}
                 placeholder="Category (optional)"
-                className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
-              <button
-                onClick={() => onPublishConfirm(skill.name)}
-                disabled={confirmingPublish}
-                className="px-2 py-1 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 text-white text-xs rounded transition-colors flex items-center gap-1"
-              >
-                {confirmingPublish ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                {confirmingPublish ? 'Publishing…' : 'Confirm'}
-              </button>
+              {/* User group multi-select */}
+              <div>
+                <label className="text-[10px] text-gray-400 block mb-1">Publish to groups:</label>
+                {userGroups.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {userGroups.map(g => {
+                      const selected = publishGroupIds.includes(g.id)
+                      return (
+                        <button
+                          key={g.id}
+                          onClick={() => {
+                            onPublishGroupIdsChange(
+                              selected
+                                ? publishGroupIds.filter(id => id !== g.id)
+                                : [...publishGroupIds, g.id]
+                            )
+                          }}
+                          className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                            selected
+                              ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
+                              : 'bg-gray-700 text-gray-400 border-gray-600 hover:border-gray-500'
+                          }`}
+                        >
+                          {g.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-500">No groups yet. Create groups in Settings → Groups.</p>
+                )}
+                {publishGroupIds.length === 0 && (
+                  <p className="text-[10px] text-yellow-400/80 mt-1">⚠ No groups selected — this skill will be visible to everyone.</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => onPublishConfirm(skill.name)}
+                  disabled={confirmingPublish}
+                  className="px-2 py-1 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 text-white text-xs rounded transition-colors flex items-center gap-1"
+                >
+                  {confirmingPublish ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                  {confirmingPublish ? 'Publishing…' : 'Confirm'}
+                </button>
+              </div>
             </div>
           ) : (
             <button

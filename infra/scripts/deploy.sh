@@ -32,6 +32,8 @@ COGNITO_PASSWORD=""
 ENV_FILE=""
 SKIP_FRONTEND=false
 SKIP_BACKEND=false
+FRONTEND_S3_BUCKET=""
+CF_DISTRIBUTION_ID=""
 
 # Parse options
 while [[ $# -gt 0 ]]; do
@@ -42,6 +44,8 @@ while [[ $# -gt 0 ]]; do
     --env-file)        ENV_FILE="$2"; shift 2 ;;
     --skip-frontend)   SKIP_FRONTEND=true; shift ;;
     --skip-backend)    SKIP_BACKEND=true; shift ;;
+    --s3-bucket)       FRONTEND_S3_BUCKET="$2"; shift 2 ;;
+    --cf-dist-id)      CF_DISTRIBUTION_ID="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -308,12 +312,22 @@ VITE_EOF
     super-agent-platform/dist/ \
     "$SSH_USER@localhost:/opt/super-agent/super-agent-platform/dist/"
 
-  # If CDN enabled, also sync to S3 + invalidate CloudFront
-  if [ "$ENABLE_CDN" = "true" ] && [ -n "$FRONTEND_BUCKET" ]; then
+  # If CDN enabled (via stack output or CLI override), also sync to S3 + invalidate CloudFront
+  EFFECTIVE_BUCKET="${FRONTEND_S3_BUCKET:-$FRONTEND_BUCKET}"
+  EFFECTIVE_CF_ID="${CF_DISTRIBUTION_ID:-$CF_DIST_ID}"
+
+  if [ -n "$EFFECTIVE_BUCKET" ]; then
+    echo "=== Syncing frontend to S3 ($EFFECTIVE_BUCKET) ==="
+    aws s3 sync super-agent-platform/dist/ "s3://$EFFECTIVE_BUCKET/" --delete --region "$REGION"
+    if [ -n "$EFFECTIVE_CF_ID" ]; then
+      echo "=== Invalidating CloudFront ($EFFECTIVE_CF_ID) ==="
+      aws cloudfront create-invalidation --distribution-id "$EFFECTIVE_CF_ID" --paths "/*" --region "$REGION" 2>/dev/null || true
+    fi
+  elif [ "$ENABLE_CDN" = "true" ] && [ -n "$FRONTEND_BUCKET" ]; then
     echo "=== Syncing frontend to S3 + CloudFront invalidation ==="
     aws s3 sync super-agent-platform/dist/ "s3://$FRONTEND_BUCKET/" --delete --region "$REGION"
     if [ -n "$CF_DIST_ID" ]; then
-      aws cloudfront create-invalidation --distribution-id "$CF_DIST_ID" --paths "/*" --region "$REGION" --no-cli-pager
+      aws cloudfront create-invalidation --distribution-id "$CF_DIST_ID" --paths "/*" --region "$REGION" 2>/dev/null || true
     fi
   fi
 fi
@@ -323,17 +337,21 @@ fi
 # =========================================================================
 if [ "$SKIP_BACKEND" = false ]; then
   echo ""
+  echo "=== Building backend locally ==="
+  cd "$PROJECT_ROOT/super-agent-backend"
+  npx tsc --noUnusedLocals false --noUnusedParameters false --strict false --noImplicitAny false --strictNullChecks false 2>&1 || true
+  [ ! -f dist/index.js ] && echo "ERROR: local tsc failed, dist/index.js not found" && exit 1
+
   echo "=== Syncing backend to EC2 ==="
   cd "$PROJECT_ROOT"
   rsync -avz --delete \
     -e "$RSYNC_SSH" \
     --exclude='node_modules' \
     --exclude='.env' \
-    --exclude='dist' \
     super-agent-backend/ \
     "$SSH_USER@localhost:/opt/super-agent/super-agent-backend/"
 
-  echo "=== Installing deps, building, migrating, restarting ==="
+  echo "=== Installing deps, migrating, restarting ==="
   $SSH_CMD << 'REMOTE_DEPLOY'
 set -euo pipefail
 cd /opt/super-agent/super-agent-backend
@@ -344,10 +362,6 @@ npm ci --production=false
 
 echo "  prisma generate..."
 npx prisma generate
-
-echo "  tsc..."
-npx tsc --noUnusedLocals false --noUnusedParameters false --strict false --noImplicitAny false --strictNullChecks false 2>&1 || true
-[ ! -f dist/index.js ] && echo "ERROR: dist/index.js not found" && exit 1
 
 echo "  DB grants..."
 source /opt/super-agent/.env
@@ -365,8 +379,13 @@ GRANTS_SQL
 echo "  prisma migrate deploy..."
 npx prisma migrate deploy
 
-echo "  Seeding..."
-npx tsx prisma/seed.ts 2>/dev/null || echo "  (Seed skipped or already seeded)"
+echo "  Seeding (skip if data exists)..."
+AGENT_COUNT=$(psql "$PSQL_URL" -t -A -c "SELECT count(*) FROM agents;" 2>/dev/null || echo "0")
+if [ "$AGENT_COUNT" -gt "0" ] 2>/dev/null; then
+  echo "  (Seed skipped: $AGENT_COUNT agents already exist)"
+else
+  npx tsx prisma/seed.ts 2>/dev/null || echo "  (Seed failed or already seeded)"
+fi
 
 echo "  Restarting backend..."
 sudo systemctl restart super-agent-backend

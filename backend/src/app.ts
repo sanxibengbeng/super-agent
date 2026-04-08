@@ -18,6 +18,7 @@ import { errorHandler, registerRequestLogger } from './middleware/index.js';
 import { registerRoutes } from './routes/index.js';
 import { executionWebSocketGateway } from './websocket/index.js';
 import { initializeEventWebSocketBridge, initializeWorkflowQueues } from './setup/index.js';
+import { startScheduleProcessor, stopScheduleProcessor } from './setup/index.js';
 import { claudeAgentService } from './services/claude-agent.service.js';
 import { devServerManager } from './services/dev-server-manager.js';
 import { workspaceManager } from './services/workspace-manager.js';
@@ -207,6 +208,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Start briefing generation scheduler (runs every 5 minutes)
   briefingScheduler.start();
 
+  // Start schedule processor for cron-based workflow triggers (polls every minute)
+  startScheduleProcessor();
+
   // Initialize IM message queue (BullMQ) for async message processing
   await imQueueService.initialize();
 
@@ -232,6 +236,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addHook('onClose', async (_instance) => {
     clearInterval(workspacePruneInterval);
     briefingScheduler.stop();
+    stopScheduleProcessor();
 
     // Stop IM gateways and queue
     app.log.info('Stopping IM gateways and message queue...');

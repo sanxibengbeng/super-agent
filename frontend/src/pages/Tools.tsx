@@ -9,6 +9,7 @@ import {
   Network, DollarSign, Heart, Layers,
 } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
+import { GroupAccessPopover } from '@/components/GroupAccessPopover'
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -31,6 +32,8 @@ interface ToolItem {
   installed?: boolean
   marketplaceUrl?: string
   marketplaceName?: string
+  /** Real skill/MCP UUID for API calls (e.g. group access). Differs from display `id`. */
+  resourceId?: string
 }
 
 /* ================================================================== */
@@ -115,6 +118,7 @@ function enterpriseSkillToToolItem(skill: EnterpriseSkillResult): ToolItem {
     icon: Zap,
     tags: skill.category ? [skill.category] : [],
     installed: true,
+    resourceId: skill.skillId,
   }
 }
 
@@ -547,9 +551,18 @@ function ToolCard({ tool }: { tool: ToolItem }) {
               )}
             </div>
           ) : (
-            <span className="text-[10px] text-gray-600 flex items-center gap-1">
-              <Wrench className="w-3 h-3" />Internal
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-gray-600 flex items-center gap-1">
+                <Wrench className="w-3 h-3" />Internal
+              </span>
+              {(tool.category === 'skills' || tool.category === 'mcp') && tool.resourceId && (
+                <GroupAccessPopover
+                  resourceType={tool.category === 'skills' ? 'skill' : 'mcp'}
+                  resourceId={tool.resourceId}
+                  resourceName={tool.name}
+                />
+              )}
+            </div>
           )}
 
           {tool.installed ? (

@@ -28,7 +28,7 @@ export interface Organization {
 export const RestMembersService = {
   listMembers: () =>
     restClient
-      .get<{ data: Member[]; pagination: unknown }>('/api/organizations/members')
+      .get<{ data: Member[]; pagination: unknown }>('/api/organizations/members?limit=0')
       .then((r) => r.data),
 
   inviteMember: (email: string, role: MemberRole) =>

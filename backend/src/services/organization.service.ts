@@ -224,10 +224,11 @@ export class OrganizationService {
     pagination?: PaginationOptions
   ): Promise<PaginatedResponse<MembershipEntity>> {
     const page = pagination?.page ?? 1;
-    const limit = pagination?.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const limit = pagination?.limit ?? 0;
+    const noPagination = limit === 0;
+    const skip = noPagination ? 0 : (page - 1) * limit;
 
-    const members = await membershipRepository.findAllWithFilters(organizationId, filters, {
+    const members = await membershipRepository.findAllWithFilters(organizationId, filters, noPagination ? {} : {
       skip,
       take: limit,
     });
@@ -261,9 +262,9 @@ export class OrganizationService {
       data: enrichedMembers,
       pagination: {
         page,
-        limit,
+        limit: noPagination ? total : limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: noPagination ? 1 : Math.ceil(total / limit),
       },
     };
   }

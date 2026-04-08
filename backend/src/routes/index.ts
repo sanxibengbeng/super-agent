@@ -63,6 +63,7 @@ import { scopeMembershipRoutes } from './scopeMemberships.routes.js';
 import { documentGroupRoutes, scopeDocGroupRoutes } from './document-groups.routes.js';
 import { rehearsalRoutes } from './rehearsal.routes.js';
 import { ragRoutes } from './rag.routes.js';
+import { userGroupRoutes } from './userGroups.routes.js';
 
 /**
  * Register all API routes on the Fastify instance.
@@ -214,6 +215,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   // RAG Routes (semantic document search)
   await fastify.register(ragRoutes, { prefix: '/api/rag' });
+
+  // User Group Routes (RBAC for skills and MCP servers)
+  await fastify.register(userGroupRoutes, { prefix: '/api/user-groups' });
 
   // IM Webhook Routes (receive messages from Slack, Discord, etc. — no JWT auth)
   await fastify.register(imWebhookRoutes, { prefix: '/api/im' });

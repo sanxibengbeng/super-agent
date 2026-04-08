@@ -44,7 +44,7 @@ interface VoteBody {
 
 interface PublishFromWorkspaceBody {
   Params: { sessionId: string; skillName: string };
-  Body: { displayName?: string; description?: string; category?: string };
+  Body: { displayName?: string; description?: string; category?: string; group_ids?: string[] };
 }
 
 export async function enterpriseSkillsRoutes(fastify: FastifyInstance): Promise<void> {
@@ -60,7 +60,7 @@ export async function enterpriseSkillsRoutes(fastify: FastifyInstance): Promise<
         sort,
         page: page ? parseInt(page, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
-      });
+      }, request.user!);
       return reply.send(result);
     },
   );
@@ -159,7 +159,7 @@ export async function enterpriseSkillPublishRoutes(fastify: FastifyInstance): Pr
     { preHandler: [authenticate] },
     async (request: FastifyRequest<PublishFromWorkspaceBody>, reply: FastifyReply) => {
       const { sessionId, skillName } = request.params;
-      const { displayName, description, category } = request.body;
+      const { displayName, description, category, group_ids } = request.body;
       const result = await enterpriseSkillService.publishFromWorkspace(request.user!.orgId, {
         sessionId,
         skillName,
@@ -168,6 +168,13 @@ export async function enterpriseSkillPublishRoutes(fastify: FastifyInstance): Pr
         description,
         category,
       });
+
+      // Grant access to selected user groups
+      if (group_ids && group_ids.length > 0 && result.skillId) {
+        const { userGroupRepository } = await import('../repositories/userGroup.repository.js');
+        await userGroupRepository.grantSkillAccess(result.skillId, group_ids, request.user!.id);
+      }
+
       return reply.status(201).send({ data: result });
     },
   );

@@ -14,17 +14,20 @@ interface CacheEntry {
 }
 
 export class AvatarService {
-  private bedrockClient: BedrockRuntimeClient;
-  private s3Client: S3Client;
-  private bucketName: string;
+  private bedrockClient!: BedrockRuntimeClient;
+  private s3Client!: S3Client;
+  private bucketName!: string;
+  private initialized = false;
   
   // In-memory cache for avatar images
   private cache: Map<string, CacheEntry> = new Map();
   private readonly CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
   private readonly MAX_CACHE_SIZE = 100; // Max number of cached images
 
-  constructor() {
-    const region = process.env.AWS_REGION || "us-east-1";
+  /** Lazy init — ensures process.env is populated (dotenv / systemd EnvironmentFile). */
+  private ensureInit(): void {
+    if (this.initialized) return;
+    const region = process.env.AWS_REGION || "us-west-2";
     this.bucketName = process.env.S3_AVATARS_BUCKET || process.env.S3_BUCKET_NAME || "super-agent-avatars";
     
     console.log('AvatarService initialized:', {
@@ -36,9 +39,11 @@ export class AvatarService {
     // Nova Canvas is only available in us-east-1
     this.bedrockClient = new BedrockRuntimeClient({ region: "us-east-1" });
     this.s3Client = new S3Client({ region });
+    this.initialized = true;
   }
 
   async generateAvatar(prompt: string): Promise<string> {
+    this.ensureInit();
     console.log('Starting avatar generation with prompt:', prompt);
     
     try {
@@ -112,6 +117,7 @@ export class AvatarService {
    * @returns Array of results with role, avatarKey, and optional error
    */
   async generateAvatarsBatch(roles: string[]): Promise<AvatarGenerationResult[]> {
+    this.ensureInit();
     console.log(`Starting batch avatar generation for ${roles.length} roles`);
     
     const promises = roles.map(async (role): Promise<AvatarGenerationResult> => {
@@ -136,6 +142,7 @@ export class AvatarService {
   }
 
   async getAvatarUrl(s3Key: string): Promise<string> {
+    this.ensureInit();
     console.log('Getting avatar URL:', { bucket: this.bucketName, key: s3Key });
     
     // First check if the object exists
@@ -167,6 +174,7 @@ export class AvatarService {
   }
 
   async getAvatarData(s3Key: string): Promise<Buffer> {
+    this.ensureInit();
     // Check cache first
     const cached = this.cache.get(s3Key);
     if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL_MS) {

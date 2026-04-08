@@ -28,7 +28,7 @@ const updateWebhookSchema = z.object({
 });
 
 const triggerWebhookSchema = z.object({
-  variables: z.record(z.unknown()).optional(),
+  variables: z.record(z.string(), z.any()).optional(),
 });
 
 const paginationSchema = z.object({
@@ -108,7 +108,7 @@ export async function webhooksRoutes(fastify: FastifyInstance): Promise<void> {
           isEnabled: w.isEnabled,
           timeoutSeconds: w.timeoutSeconds,
           allowedIps: w.allowedIps,
-          webhookUrl: `${process.env.API_BASE_URL || 'http://localhost:3001'}/v1/webhook/${w.webhookId}/trigger`,
+          webhookUrl: `${process.env.PUBLIC_API_URL || process.env.API_BASE_URL || 'http://localhost:3001'}/api/v1/webhook/${w.webhookId}/trigger`,
         })),
       });
     }

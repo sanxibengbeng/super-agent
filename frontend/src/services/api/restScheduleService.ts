@@ -41,6 +41,7 @@ export interface ScheduleRecord {
   triggeredAt: string | null;
   completedAt: string | null;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  triggerType: 'cron' | 'manual';
   errorMessage: string | null;
   retryCount: number;
   logs: ScheduleExecutionLog[];

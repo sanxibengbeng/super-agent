@@ -7,7 +7,7 @@
 
 import { scheduleService } from '../services/schedule.service.js';
 
-const POLL_INTERVAL_MS = 60_000; // 1 minute
+const POLL_INTERVAL_MS = 15_000; // 15 seconds — keeps cron trigger latency under 15s
 
 let intervalId: NodeJS.Timeout | null = null;
 

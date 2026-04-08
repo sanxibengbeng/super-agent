@@ -13,7 +13,7 @@ export const uuidSchema = z.string().uuid('Invalid UUID format');
  */
 export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().min(0).default(0), // 0 = no pagination (return all)
 });
 
 /**

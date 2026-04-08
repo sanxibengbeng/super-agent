@@ -6,8 +6,8 @@
 import crypto from 'crypto';
 import { prisma } from '../config/database.js';
 import { redisService } from './redis.service.js';
-import { workflowExecutionService } from './workflow-execution.service.js';
 import { workflowRepository } from '../repositories/workflow.repository.js';
+import { workflowExecutorV2, type WorkflowV2Plan } from './workflow-executor-v2.js';
 
 const WEBHOOK_ID_PREFIX = 'wh_';
 const WEBHOOK_ID_LENGTH = 24;
@@ -190,53 +190,109 @@ class WebhookService {
     startTime: number
   ): Promise<void> {
     try {
-      // Get workflow
       const workflow = await workflowRepository.findById(config.workflowId, config.organizationId);
       if (!workflow) {
         throw new Error('Workflow not found');
       }
 
-      // Convert variables to workflow format
-      const workflowVariables = Object.entries(variables).map(([name, value]) => ({
-        variableId: `var-${crypto.randomUUID()}`,
+      const scopeId = (workflow as any).business_scope_id;
+      if (!scopeId) {
+        throw new Error('Workflow has no business scope assigned');
+      }
+
+      // Build V2 plan from stored workflow (same as schedule/manual Run)
+      const webhookVariables = Object.entries(variables).map(([name, value]) => ({
+        variableId: `var-${name}`,
         name,
-        value: [{ type: 'text' as const, text: String(value) }],
+        value: String(value),
+        description: '',
       }));
 
-      // Start execution
-      const executionId = await workflowExecutionService.initializeWorkflowExecution(
-        {
-          id: 'system', // Webhook executions are system-triggered
-          organizationId: config.organizationId,
-        },
-        config.workflowId,
-        {
-          canvasData: {
-            nodes: workflow.nodes as any[],
-            edges: workflow.connections as any[],
-          },
-          variables: workflowVariables,
-          triggerType: 'webhook',
-          triggerId: config.id,
-        }
+      const nodes = (workflow.nodes || []) as Array<{
+        id: string; title?: string; label?: string; type: string; prompt?: string;
+        dependentTasks?: string[]; agentId?: string;
+        metadata?: Record<string, unknown>;
+      }>;
+
+      const plan: WorkflowV2Plan = {
+        title: workflow.name,
+        nodes: nodes.map(n => ({
+          id: n.id,
+          title: n.title || n.label || n.id,
+          type: (n.type as 'agent' | 'action' | 'condition' | 'document' | 'codeArtifact') || 'agent',
+          prompt: n.prompt || (n.metadata?.prompt as string) || n.title || n.label || n.id,
+          dependentTasks: n.dependentTasks || (n.metadata?.dependentTasks as string[]),
+          agentId: n.agentId || (n.metadata?.agentId as string),
+        })),
+        edges: ((workflow.connections || []) as Array<{ source?: string; target?: string; from?: string; to?: string }>).map(c => ({
+          source: c.source || c.from || '',
+          target: c.target || c.to || '',
+        })),
+        variables: webhookVariables,
+      };
+
+      // Mark as running before execution starts
+      await prisma.webhook_call_records.update({
+        where: { id: callRecordId },
+        data: { status: 'running' },
+      });
+
+      // Execute using V2 executor (agentic, same as manual Run and cron)
+      const generator = workflowExecutorV2.execute(
+        plan,
+        config.organizationId,
+        scopeId,
+        'system',
       );
+
+      // Drain the generator, collecting logs (same pattern as schedule runV2Execution)
+      const logs: Array<{ type: string; content?: string; taskId?: string; taskTitle?: string; timestamp: string }> = [];
+      let lastError: string | null = null;
+      let logFlushCount = 0;
+
+      for await (const event of generator) {
+        const timestamp = new Date().toISOString();
+
+        if (event.type === 'error') {
+          lastError = event.message || 'Unknown error';
+          logs.push({ type: 'error', content: lastError, timestamp });
+        } else if (event.type === 'step_start') {
+          logs.push({ type: 'step_start', taskId: event.taskId, taskTitle: event.taskTitle, timestamp });
+        } else if (event.type === 'step_complete') {
+          logs.push({ type: 'step_complete', taskId: event.taskId, taskTitle: event.taskTitle, timestamp });
+        } else if (event.type === 'step_failed') {
+          logs.push({ type: 'step_failed', taskId: event.taskId, taskTitle: event.taskTitle, content: event.message, timestamp });
+        } else if (event.type === 'done') {
+          logs.push({ type: 'done', timestamp });
+        } else if (event.type === 'log') {
+          const content = typeof event.content === 'string' ? event.content : JSON.stringify(event.content);
+          logs.push({ type: 'log', content: content?.slice(0, 2000), timestamp });
+        }
+
+        // Persist logs periodically (every 5 events)
+        if (++logFlushCount % 5 === 0) {
+          prisma.webhook_call_records.update({
+            where: { id: callRecordId },
+            data: { logs: logs as any },
+          }).catch(() => {});
+        }
+      }
 
       const responseTime = Date.now() - startTime;
 
-      // Update call record
       await prisma.webhook_call_records.update({
         where: { id: callRecordId },
         data: {
-          execution_id: executionId,
-          status: 'success',
-          response_status: 200,
+          status: lastError ? 'failed' : 'success',
+          response_status: lastError ? 500 : 200,
           response_time_ms: responseTime,
+          error_message: lastError,
+          logs: logs as any,
         },
       });
     } catch (error: any) {
       const responseTime = Date.now() - startTime;
 
-      // Update call record with error
       await prisma.webhook_call_records.update({
         where: { id: callRecordId },
         data: {
@@ -364,6 +420,7 @@ class WebhookService {
         status: r.status,
         responseTimeMs: r.response_time_ms,
         errorMessage: r.error_message,
+        logs: (r as any).logs || [],
         createdAt: r.created_at,
       })),
       total,
@@ -449,8 +506,10 @@ class WebhookService {
    * Generate webhook URL
    */
   private generateWebhookUrl(webhookId: string): string {
-    const baseUrl = process.env.API_BASE_URL || 'http://localhost:3001';
-    return `${baseUrl}/v1/webhook/${webhookId}/trigger`;
+    // PUBLIC_API_URL is the externally-reachable base URL (e.g. https://api.example.com).
+    // Falls back to API_BASE_URL (backend internal), then localhost for dev.
+    const baseUrl = process.env.PUBLIC_API_URL || process.env.API_BASE_URL || 'http://localhost:3001';
+    return `${baseUrl}/api/v1/webhook/${webhookId}/trigger`;
   }
 
   private mapToWebhookConfig(webhook: any): WebhookConfig {

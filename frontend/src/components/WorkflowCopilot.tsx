@@ -76,7 +76,7 @@ interface WorkflowCopilotProps {
 // ---------------------------------------------------------------------------
 
 interface SSEChunk {
-  type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error'
+  type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'validated_plan'
   text?: string
   error?: string
   toolName?: string
@@ -85,6 +85,7 @@ interface SSEChunk {
   isError?: boolean
   durationMs?: number
   numTurns?: number
+  plan?: WorkflowPlan
 }
 
 async function* streamSSE(
@@ -135,6 +136,10 @@ async function* streamSSE(
           yield { type: 'result', durationMs: event.durationMs, numTurns: event.numTurns }
           continue
         }
+        if (event.type === 'validated_plan' && event.plan) {
+          yield { type: 'validated_plan', plan: event.plan }
+          continue
+        }
         if ((event.type === 'assistant') && event.content && Array.isArray(event.content)) {
           for (const block of event.content) {
             if (block.type === 'text' && block.text) {
@@ -157,6 +162,49 @@ async function* streamSSE(
 // Parsers
 // ---------------------------------------------------------------------------
 
+function fixUnescapedControlChars(json: string): string {
+  // Walk the string character by character, tracking whether we're inside a JSON string value.
+  // Replace raw control characters (U+0000–U+001F) with their escaped forms.
+  // All characters in this range are illegal unescaped inside JSON strings.
+  const out: string[] = []
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i]
+    if (escaped) {
+      out.push(ch)
+      escaped = false
+      continue
+    }
+    if (ch === '\\' && inString) {
+      out.push(ch)
+      escaped = true
+      continue
+    }
+    if (ch === '"') {
+      inString = !inString
+      out.push(ch)
+      continue
+    }
+    if (inString) {
+      const code = ch.charCodeAt(0)
+      if (code < 0x20) {
+        // All control characters U+0000–U+001F must be escaped in JSON strings
+        if (ch === '\n') { out.push('\\n'); continue }
+        if (ch === '\r') { out.push('\\r'); continue }
+        if (ch === '\t') { out.push('\\t'); continue }
+        if (ch === '\b') { out.push('\\b'); continue }
+        if (ch === '\f') { out.push('\\f'); continue }
+        // Other control chars: use \uXXXX escape
+        out.push('\\u' + code.toString(16).padStart(4, '0'))
+        continue
+      }
+    }
+    out.push(ch)
+  }
+  return out.join('')
+}
+
 function parseWorkflowPlan(text: string): WorkflowPlan {
   let jsonStr = text.trim()
   const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -166,6 +214,8 @@ function parseWorkflowPlan(text: string): WorkflowPlan {
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     jsonStr = jsonStr.substring(firstBrace, lastBrace + 1)
   }
+  // Fix unescaped control characters inside JSON string values
+  jsonStr = fixUnescapedControlChars(jsonStr)
   const parsed = JSON.parse(jsonStr)
   if (!parsed.title || !Array.isArray(parsed.tasks)) {
     throw new Error('Invalid workflow plan: missing title or tasks')
@@ -428,6 +478,8 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
         // Generate mode — no existing nodes
         if (!onGenerateWorkflow) throw new Error('Generation not available')
 
+        let validatedPlan: WorkflowPlan | null = null
+
         for await (const chunk of streamSSE('/api/workflows/generate', {
           description: text,
           businessScopeId,
@@ -449,11 +501,14 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
           if (chunk.type === 'tool_result') {
             appendStep(assistantId, { type: 'tool_result', content: chunk.toolContent ?? null, isError: chunk.isError ?? false })
           }
+          if (chunk.type === 'validated_plan' && chunk.plan) {
+            validatedPlan = chunk.plan as WorkflowPlan
+          }
         }
 
-        // Check if the response contains a workflow plan or is a conversational reply
+        // Use server-validated plan if available, otherwise fall back to client-side parsing
         try {
-          const plan = parseWorkflowPlan(accumulatedText)
+          const plan = validatedPlan ?? parseWorkflowPlan(accumulatedText)
           const newCanvasData = workflowPlanToCanvasData(plan)
           onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
 
@@ -487,8 +542,24 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
             content: statusMessage,
             status: 'done',
           })
-        } catch {
+        } catch (parseErr) {
           // Not valid JSON plan — treat as conversational reply
+          // Extract position from error message for debugging
+          const posMatch = String(parseErr).match(/line (\d+) column (\d+)/)
+          let debugContext = ''
+          if (posMatch) {
+            const lines = accumulatedText.split('\n')
+            const lineNum = parseInt(posMatch[1]) - 1
+            const colNum = parseInt(posMatch[2]) - 1
+            if (lineNum < lines.length) {
+              const line = lines[lineNum]
+              debugContext = `\nError at line ${lineNum + 1}, col ${colNum + 1}: ...${line.slice(Math.max(0, colNum - 40), colNum + 40)}...`
+              // Show char codes around the error position
+              const nearby = line.slice(Math.max(0, colNum - 5), colNum + 5)
+              debugContext += `\nChar codes: ${[...nearby].map(c => c.charCodeAt(0).toString(16)).join(' ')}`
+            }
+          }
+          console.error('parseWorkflowPlan failed:', parseErr, 'text length:', accumulatedText.length, 'text preview:', accumulatedText.slice(0, 200), debugContext)
           updateMessage(assistantId, { content: accumulatedText, status: 'done' })
         }
       } else {

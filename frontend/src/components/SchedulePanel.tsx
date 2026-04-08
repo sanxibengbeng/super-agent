@@ -465,9 +465,18 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
                     onClick={() => setViewingRecord(record)}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-gray-400">
-                        {new Date(record.scheduledAt).toLocaleString()}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400">
+                          {new Date(record.scheduledAt).toLocaleString()}
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                          record.triggerType === 'manual'
+                            ? 'bg-yellow-500/20 text-yellow-400'
+                            : 'bg-cyan-500/20 text-cyan-400'
+                        }`}>
+                          {record.triggerType === 'manual' ? 'Manual' : 'Cron'}
+                        </span>
+                      </div>
                       <span className={`px-1.5 py-0.5 rounded flex items-center gap-1 ${
                         record.status === 'completed'
                           ? 'bg-green-500/20 text-green-400'

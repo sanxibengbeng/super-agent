@@ -155,7 +155,31 @@ export async function avatarRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Get avatar image via presigned URL
+  // Get presigned URL for an avatar (preferred over proxy)
+  fastify.get('/avatars/presign/:key', {
+    preHandler: [authenticate],
+    schema: {
+      params: {
+        type: 'object',
+        required: ['key'],
+        properties: { key: { type: 'string' } },
+      },
+    },
+  }, async (request, reply) => {
+    const { key } = request.params as { key: string };
+    const s3Key = key.startsWith('avatars/') ? key : `avatars/${key}`;
+
+    try {
+      const presignedUrl = await avatarService.getAvatarUrl(s3Key);
+      reply.header('Cache-Control', 'private, max-age=3000'); // cache ~50 min (URL valid 1h)
+      return reply.send({ url: presignedUrl });
+    } catch (err) {
+      const error = err as Error;
+      return reply.code(404).send({ error: 'Avatar not found', details: error.message });
+    }
+  });
+
+  // Get avatar image via backend proxy (deprecated — use /avatars/presign/:key instead)
   // Supports both /avatars/:key and /avatars/avatars/:key patterns
   fastify.get('/avatars/*', {
     schema: {

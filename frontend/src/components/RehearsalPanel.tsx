@@ -85,6 +85,11 @@ export function RehearsalPanel({ scopeId, scopeName }: RehearsalPanelProps) {
   const [expandedProposal, setExpandedProposal] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'rehearsals' | 'proposals'>('rehearsals')
 
+  const [applyingId, setApplyingId] = useState<string | null>(null)
+  const [rejectingId, setRejectingId] = useState<string | null>(null)
+
+  const [triggerError, setTriggerError] = useState<string | null>(null)
+
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
@@ -105,13 +110,41 @@ export function RehearsalPanel({ scopeId, scopeName }: RehearsalPanelProps) {
 
   const handleTrigger = async () => {
     setTriggering(true)
+    setTriggerError(null)
     try {
       await restClient.post(`/api/business-scopes/${scopeId}/rehearsals`, {})
       await loadData()
     } catch (err) {
-      console.error('Failed to trigger rehearsal:', err)
+      const msg = err instanceof Error ? err.message : 'Failed to trigger rehearsal'
+      setTriggerError(msg.includes('No actionable memories')
+        ? 'No memories to analyze yet. Chat with your agents first — memories are extracted automatically after conversations.'
+        : msg)
     } finally {
       setTriggering(false)
+    }
+  }
+
+  const handleApply = async (proposalId: string) => {
+    setApplyingId(proposalId)
+    try {
+      await restClient.post(`/api/business-scopes/${scopeId}/proposals/${proposalId}/apply`, {})
+      await loadData()
+    } catch (err) {
+      console.error('Failed to apply proposal:', err)
+    } finally {
+      setApplyingId(null)
+    }
+  }
+
+  const handleReject = async (proposalId: string) => {
+    setRejectingId(proposalId)
+    try {
+      await restClient.post(`/api/business-scopes/${scopeId}/proposals/${proposalId}/reject`, {})
+      await loadData()
+    } catch (err) {
+      console.error('Failed to reject proposal:', err)
+    } finally {
+      setRejectingId(null)
     }
   }
 
@@ -159,6 +192,14 @@ export function RehearsalPanel({ scopeId, scopeName }: RehearsalPanelProps) {
           Proposals ({proposals.length})
         </button>
       </div>
+
+      {triggerError && (
+        <div className="mb-3 px-3 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-[10px] text-yellow-400 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span className="flex-1">{triggerError}</span>
+          <button onClick={() => setTriggerError(null)} className="text-yellow-500 hover:text-yellow-300 ml-1">×</button>
+        </div>
+      )}
 
       {loading ? (
         <div className="py-6 text-center text-xs text-gray-500">Loading...</div>
@@ -273,6 +314,37 @@ export function RehearsalPanel({ scopeId, scopeName }: RehearsalPanelProps) {
                           </div>
                         ))}
                       </div>
+                      {/* Apply / Reject buttons for pending proposals */}
+                      {p.status === 'pending' && (
+                        <div className="flex items-center gap-2 mt-3 pt-2 border-t border-gray-700/30">
+                          <button
+                            onClick={() => handleApply(p.id)}
+                            disabled={applyingId === p.id}
+                            className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition-colors"
+                          >
+                            {applyingId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                            Apply Changes
+                          </button>
+                          <button
+                            onClick={() => handleReject(p.id)}
+                            disabled={rejectingId === p.id}
+                            className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 transition-colors"
+                          >
+                            {rejectingId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                      {p.status === 'approved' && (
+                        <div className="mt-2 text-[10px] text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Applied
+                        </div>
+                      )}
+                      {p.status === 'rejected' && (
+                        <div className="mt-2 text-[10px] text-gray-500 flex items-center gap-1">
+                          <XCircle className="w-3 h-3" /> Rejected
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -1,4 +1,4 @@
-# Super Agent infra2 — 端到端部署指南
+# Super Agent infra — 端到端部署指南
 
 本文档覆盖从零开始到系统可用的完整流程，包括核心基础设施、可选 CloudFront CDN、可选 AgentCore Runtime。
 
@@ -15,7 +15,7 @@
 ### 步骤 1：CDK 部署
 
 ```bash
-cd infra2
+cd infra
 npm install
 
 # 最简部署（local auth，无 CDN）
@@ -59,7 +59,7 @@ aws ssm describe-instance-information \
 ### 步骤 3：运行部署脚本
 
 ```bash
-cd infra2
+cd infra
 
 # 基础部署
 ./scripts/deploy.sh ~/Downloads/my-key.pem --stack SuperAgentTest
@@ -276,7 +276,7 @@ sudo systemctl restart super-agent-backend
 
 如果 Workspace 面板空，检查 `/opt/super-agent/logs/backend-error.log`，
 常见原因是 EC2 instance role 缺少 workspace S3 bucket 的 `s3:ListBucket` 权限
-（infra2 CDK stack 已自动授权，不应出现此问题）。
+（infra CDK stack 已自动授权，不应出现此问题）。
 
 ---
 
@@ -316,7 +316,7 @@ aws bedrock-agentcore-control update-agent-runtime \
 ### 销毁整个环境
 
 ```bash
-cd infra2
+cd infra
 npx cdk destroy -c stackName=SuperAgentTest --region us-west-2
 ```
 

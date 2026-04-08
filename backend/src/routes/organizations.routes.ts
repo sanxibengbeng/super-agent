@@ -376,7 +376,7 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
             role: { type: 'string', enum: ['owner', 'admin', 'member', 'viewer'] },
             status: { type: 'string', enum: ['pending', 'active', 'inactive'] },
             page: { type: 'integer', minimum: 1, default: 1 },
-            limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            limit: { type: 'integer', minimum: 0, default: 0 },
           },
         },
         response: {

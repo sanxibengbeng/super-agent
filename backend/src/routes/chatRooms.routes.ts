@@ -284,6 +284,19 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
             metadata: { routedBy: route.routedBy, confidence: route.confidence },
           }, orgId).catch(() => {});
         }
+
+        // Auto-distill memories from group chat conversation
+        if (allContentBlocks.length > 0) {
+          const { distillationService } = await import('../services/distillation.service.js');
+          distillationService.enqueue({
+            organizationId: orgId,
+            scopeId,
+            sessionId: roomId,
+            agentId: route.targetAgentId,
+            contentBlocks: allContentBlocks,
+            userMessage: content,
+          }).catch(() => {});
+        }
       } catch (err) {
         console.error(`[ROOM] Stream failed for room ${roomId}:`, err instanceof Error ? err.message : err);
         try {

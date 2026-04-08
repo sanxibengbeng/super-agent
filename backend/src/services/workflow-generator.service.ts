@@ -122,8 +122,9 @@ Generates or executes code. Use this for steps that produce code snippets, scrip
 10. Keep task count reasonable: 3-8 tasks for most workflows. Consolidate related steps into single tasks rather than creating one task per bullet point.
 11. Do NOT invent agent IDs. Only use IDs from the provided available agents list.
 12. When the user provides a very detailed multi-step description, synthesize it into a concise workflow. Group related steps into logical tasks rather than creating a 1:1 mapping of every sub-step.
+13. OUTPUT FORMAT: Your JSON output must be machine-parseable. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON object. Use proper JSON escaping inside string values: use \\n for newlines, \\" for quotes, \\\\ for backslashes. Never put raw line breaks inside a JSON string value. Use numbered lists (1. 2. 3.) separated by \\n instead of visual line breaks.
 
-Remember: Ask clarifying questions first if the request is vague. When generating, output ONLY the JSON object.`;
+Remember: Ask clarifying questions first if the request is vague. When generating, output ONLY the raw JSON object — no markdown, no code fences, no explanation.`;
 
 
 // ---------------------------------------------------------------------------
@@ -169,12 +170,43 @@ agent, action, condition, document, codeArtifact
 3. When deleting a task, also update any tasks that depend on it.
 4. When inserting a task between two existing tasks, update dependencies accordingly.
 5. Task prompts must be specific and actionable — name real systems, use concrete values.
+6. OUTPUT FORMAT: Your JSON output must be machine-parseable. Do NOT wrap it in markdown code fences. Use proper JSON escaping inside string values: use \\n for newlines, \\" for quotes. Never put raw line breaks inside a JSON string value.
 
-Remember: Ask if unclear. When generating patches, output ONLY the JSON array.`;
+Remember: Ask if unclear. When generating patches, output ONLY the raw JSON array — no markdown, no code fences, no explanation.`;
 
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
+
+/**
+ * Fix unescaped control characters inside JSON string values.
+ * Walks character by character tracking in-string state.
+ */
+function fixUnescapedControlChars(json: string): string {
+  const out: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (escaped) { out.push(ch); escaped = false; continue; }
+    if (ch === '\\' && inString) { out.push(ch); escaped = true; continue; }
+    if (ch === '"') { inString = !inString; out.push(ch); continue; }
+    if (inString) {
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) {
+        if (ch === '\n') { out.push('\\n'); continue; }
+        if (ch === '\r') { out.push('\\r'); continue; }
+        if (ch === '\t') { out.push('\\t'); continue; }
+        if (ch === '\b') { out.push('\\b'); continue; }
+        if (ch === '\f') { out.push('\\f'); continue; }
+        out.push('\\u' + code.toString(16).padStart(4, '0'));
+        continue;
+      }
+    }
+    out.push(ch);
+  }
+  return out.join('');
+}
 
 export class WorkflowGeneratorService {
   /**
@@ -317,6 +349,11 @@ export class WorkflowGeneratorService {
     if (firstBrace !== -1 && lastBrace > firstBrace) {
       jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
     }
+
+    // Fix unescaped control characters inside JSON string values.
+    // Walk character by character tracking in-string state, since regex-based
+    // approaches fail when raw newlines break the pattern.
+    jsonStr = fixUnescapedControlChars(jsonStr);
 
     const parsed = JSON.parse(jsonStr);
 

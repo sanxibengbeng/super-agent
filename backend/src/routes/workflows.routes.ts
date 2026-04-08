@@ -567,6 +567,9 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
           history,
         );
 
+        // Collect assistant text blocks to validate JSON at the end
+        const assistantTextBlocks: string[] = [];
+
         for await (const event of generator) {
           if (clientDisconnected) break;
 
@@ -576,12 +579,38 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
             sseData.sessionId = event.sessionId;
           } else if (event.type === 'assistant' || event.type === 'result') {
             sseData.content = (event as ConversationEvent & { content?: unknown }).content;
+            // Collect text from assistant events for post-stream validation
+            if (event.type === 'assistant') {
+              const content = (event as ConversationEvent & { content?: Array<{ type: string; text?: string }> }).content;
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (block.type === 'text' && block.text) {
+                    assistantTextBlocks.push(block.text);
+                  }
+                }
+              }
+            }
           } else if (event.type === 'error') {
             sseData.code = (event as ConversationEvent & { code?: string }).code;
             sseData.message = (event as ConversationEvent & { message?: string }).message;
           }
 
           reply.raw.write(formatSSEEvent({ data: JSON.stringify(sseData) }));
+        }
+
+        // Post-stream validation: try to parse the accumulated text as a workflow plan.
+        // If successful, send a validated_plan event with clean, parseable JSON.
+        if (assistantTextBlocks.length > 0 && !clientDisconnected) {
+          try {
+            const plan = workflowGeneratorService.parseGeneratedPlan(
+              assistantTextBlocks.map(t => ({ type: 'text', text: t }))
+            );
+            reply.raw.write(formatSSEEvent({
+              data: JSON.stringify({ type: 'validated_plan', plan }),
+            }));
+          } catch {
+            // Not a valid plan (could be a conversational reply) — skip
+          }
         }
       } catch (error) {
         if (!clientDisconnected) {

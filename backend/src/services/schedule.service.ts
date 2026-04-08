@@ -69,6 +69,7 @@ export interface ScheduleExecutionRecord {
   triggeredAt: Date | null;
   completedAt: Date | null;
   status: string;
+  triggerType: 'cron' | 'manual';
   errorMessage: string | null;
   retryCount: number;
   logs: any[];
@@ -279,6 +280,7 @@ class ScheduleService {
         scheduled_at: triggeredAt,
         triggered_at: triggeredAt,
         status: 'running',
+        trigger_type: 'manual',
       },
     });
 
@@ -461,6 +463,15 @@ class ScheduleService {
 
     for (const schedule of dueSchedules) {
       try {
+        // Skip if there's already a running execution for this schedule
+        const runningExecution = await prisma.schedule_execution_records.findFirst({
+          where: { schedule_id: schedule.id, status: 'running' },
+        });
+        if (runningExecution) {
+          console.log(`[SCHEDULE_PROCESSOR] Skipping schedule ${schedule.id} — already has a running execution`);
+          continue;
+        }
+
         await this.executeSchedule(schedule);
         processedCount++;
       } catch (error: any) {
@@ -492,16 +503,50 @@ class ScheduleService {
 
     const triggeredAt = new Date();
 
-    // Create execution record
-    const record = await prisma.schedule_execution_records.create({
+    // Calculate next run time BEFORE execution starts, so the next tick won't re-trigger
+    const nextRunAt = this.validateCronExpression(
+      schedule.cron_expression,
+      schedule.timezone
+    );
+
+    // Update next_run_at immediately to prevent duplicate triggers
+    await prisma.workflow_schedules.update({
+      where: { id: schedule.id },
       data: {
-        schedule_id: schedule.id,
-        organization_id: schedule.organization_id,
-        scheduled_at: schedule.next_run_at,
-        triggered_at: triggeredAt,
-        status: 'running',
+        next_run_at: nextRunAt,
+        last_run_at: triggeredAt,
       },
     });
+
+    // Reuse existing 'scheduled' record if one exists, otherwise create new
+    const existingRecord = await prisma.schedule_execution_records.findFirst({
+      where: { schedule_id: schedule.id, status: 'scheduled' },
+    });
+
+    let record;
+    if (existingRecord) {
+      record = await prisma.schedule_execution_records.update({
+        where: { id: existingRecord.id },
+        data: {
+          triggered_at: triggeredAt,
+          status: 'running',
+          trigger_type: 'cron',
+        },
+      });
+    } else {
+      record = await prisma.schedule_execution_records.create({
+        data: {
+          schedule_id: schedule.id,
+          organization_id: schedule.organization_id,
+          scheduled_at: schedule.next_run_at,
+          triggered_at: triggeredAt,
+          status: 'running',
+          trigger_type: 'cron',
+        },
+      });
+    }
+
+    // Next 'scheduled' placeholder is created only after execution completes (see below)
 
     const scopeId = (workflow as any).business_scope_id;
     if (!scopeId) {
@@ -516,60 +561,18 @@ class ScheduleService {
       // Build V2 plan (same as the manual Run button)
       const plan = buildV2Plan(workflow, schedule.variables as any[]);
 
-      // Execute using V2 executor
-      const generator = workflowExecutorV2.execute(
-        plan,
-        schedule.organization_id,
-        scopeId,
-        'system',
-      );
+      // Execute using runV2Execution (same as manual trigger — collects logs)
+      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id);
 
-      // Drain the generator to completion
-      for await (const event of generator) {
-        if (event.type === 'error') {
-          console.error(`[SCHEDULE] Execution error for ${schedule.id}: ${event.message}`);
-        }
-      }
-
-      // Mark record as completed
-      await prisma.schedule_execution_records.update({
-        where: { id: record.id },
-        data: { status: 'completed', completed_at: new Date() },
-      });
-
-      // Calculate next run time
-      const nextRunAt = this.validateCronExpression(
-        schedule.cron_expression,
-        schedule.timezone
-      );
-
-      // Update schedule
+      // runV2Execution handles status updates and failure_count internally.
+      // We just need to update run_count and create the next scheduled placeholder.
       await prisma.workflow_schedules.update({
         where: { id: schedule.id },
-        data: {
-          last_run_at: triggeredAt,
-          next_run_at: nextRunAt,
-          run_count: { increment: 1 },
-        },
+        data: { run_count: { increment: 1 } },
       });
-    } catch (error: any) {
-      // Update record with error
-      await prisma.schedule_execution_records.update({
-        where: { id: record.id },
-        data: {
-          status: 'failed',
-          error_message: error.message,
-          completed_at: new Date(),
-        },
-      });
-
-      // Increment failure count
-      await prisma.workflow_schedules.update({
-        where: { id: schedule.id },
-        data: { failure_count: { increment: 1 } },
-      });
-
-      throw error;
+    } finally {
+      // Always create next scheduled placeholder, whether execution succeeded or failed
+      await this.createScheduledRecord(schedule.id, schedule.organization_id, nextRunAt);
     }
   }
 
@@ -656,6 +659,7 @@ class ScheduleService {
       triggeredAt: record.triggered_at,
       completedAt: record.completed_at,
       status: record.status,
+      triggerType: record.trigger_type || 'cron',
       errorMessage: record.error_message,
       retryCount: record.retry_count,
       logs: record.logs || [],

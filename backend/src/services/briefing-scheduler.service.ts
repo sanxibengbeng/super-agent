@@ -31,10 +31,11 @@ export class BriefingSchedulerService {
   // Main generation logic
   private async generateBriefings() {
     const scopes = await prisma.business_scopes.findMany({
+      where: { deleted_at: null },
       select: { id: true, name: true, organization_id: true },
     });
 
-    console.log(`Generating briefings for ${scopes.length} scopes...`);
+    console.log(`Checking briefings for ${scopes.length} active scopes...`);
 
     for (const scope of scopes) {
       try {

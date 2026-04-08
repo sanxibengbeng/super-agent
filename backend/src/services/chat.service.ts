@@ -305,6 +305,18 @@ export class ChatService {
       }
 
       this.maybeSetTitle(options.organizationId, sessionId, options.message).catch(() => {});
+
+      // Auto-distill memories (same as streamChat)
+      if (allContentBlocks.length > 0 && options.businessScopeId) {
+        distillationService.enqueue({
+          organizationId: options.organizationId,
+          scopeId: options.businessScopeId,
+          sessionId,
+          agentId: agentConfig.id,
+          contentBlocks: allContentBlocks,
+          userMessage: options.message,
+        }).catch(() => {});
+      }
     }
 
     // Extract text from content blocks
