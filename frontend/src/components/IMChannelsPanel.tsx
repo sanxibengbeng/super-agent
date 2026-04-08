@@ -13,10 +13,11 @@ import type { CreateIMChannelRequest } from '@/services/useIMChannels'
 
 const CHANNEL_TYPES = [
   { value: 'slack', label: 'Slack', icon: '💬', description: 'Connect a Slack channel via Events API' },
-  { value: 'discord', label: 'Discord', icon: '🎮', description: 'Connect a Discord channel via bot' },
+  { value: 'discord', label: 'Discord', icon: '🎮', description: 'Connect via Discord Gateway (WebSocket)' },
   { value: 'telegram', label: 'Telegram', icon: '✈️', description: 'Connect a Telegram group via Bot API' },
-  { value: 'feishu', label: 'Feishu', icon: '🪶', description: 'Connect a Feishu group via Event Subscription' },
-  { value: 'dingtalk', label: 'DingTalk', icon: '🔔', description: 'Connect a DingTalk group via Robot' },
+  { value: 'feishu', label: 'Feishu', icon: '🪶', description: 'Connect via Feishu WSClient (WebSocket)' },
+  { value: 'dingtalk', label: 'DingTalk', icon: '🔔', description: 'Connect via DingTalk Stream (WebSocket)' },
+  { value: 'whatsapp', label: 'WhatsApp', icon: '📱', description: 'Connect via Meta Cloud API' },
   { value: 'webhook', label: 'Generic Webhook', icon: '🔗', description: 'Any platform via HTTP webhook' },
 ] as const
 
@@ -133,7 +134,8 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                  formData.channel_type === 'discord' ? 'Discord Channel ID' :
                  formData.channel_type === 'telegram' ? 'Telegram Chat ID' :
                  formData.channel_type === 'feishu' ? 'Feishu Chat ID' :
-                 formData.channel_type === 'dingtalk' ? 'DingTalk Conversation ID' : 'Channel Identifier'}
+                 formData.channel_type === 'dingtalk' ? 'DingTalk Conversation ID' :
+                 formData.channel_type === 'whatsapp' ? 'Phone Number ID' : 'Channel Identifier'}
               </label>
               <input
                 type="text"
@@ -159,7 +161,9 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
           {formData.channel_type !== 'webhook' && (
             <div>
               <label className="block text-xs text-gray-400 mb-1">
-                {formData.channel_type === 'feishu' ? 'App Secret' : 'Bot Token'}
+                {formData.channel_type === 'feishu' ? 'App Secret' :
+                 formData.channel_type === 'dingtalk' ? 'Client Secret (App Secret)' :
+                 formData.channel_type === 'whatsapp' ? 'Access Token' : 'Bot Token'}
               </label>
               <input
                 type="password"
@@ -167,8 +171,9 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                 onChange={e => setFormData(prev => ({ ...prev, bot_token: e.target.value }))}
                 placeholder={formData.channel_type === 'slack' ? 'xoxb-...' :
                              formData.channel_type === 'telegram' ? '123456:ABC-DEF...' :
-                             formData.channel_type === 'feishu' ? 'cli_a...' :
-                             formData.channel_type === 'dingtalk' ? 'App Secret' : 'Bot token'}
+                             formData.channel_type === 'feishu' ? 'App Secret from Feishu console' :
+                             formData.channel_type === 'dingtalk' ? 'App Secret from DingTalk console' :
+                             formData.channel_type === 'whatsapp' ? 'Meta permanent access token' : 'Bot token'}
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
               />
             </div>
@@ -255,15 +260,78 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
           )}
 
           {formData.channel_type === 'dingtalk' && (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Outgoing Webhook URL (for replies)</label>
-              <input
-                type="text"
-                value={formData.webhook_url || ''}
-                onChange={e => setFormData(prev => ({ ...prev, webhook_url: e.target.value }))}
-                placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Client ID (App Key)</label>
+                <input
+                  type="text"
+                  value={(formData.config as Record<string, string>)?.client_id || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    config: { ...prev.config, client_id: e.target.value },
+                  }))}
+                  placeholder="dingxxxxxxxx"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Signing Secret (optional)</label>
+                <input
+                  type="password"
+                  value={(formData.config as Record<string, string>)?.signing_secret || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    config: { ...prev.config, signing_secret: e.target.value },
+                  }))}
+                  placeholder="For legacy webhook verification"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {formData.channel_type === 'whatsapp' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Phone Number ID</label>
+                <input
+                  type="text"
+                  value={(formData.config as Record<string, string>)?.phone_number_id || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    channel_id: e.target.value,
+                    config: { ...prev.config, phone_number_id: e.target.value },
+                  }))}
+                  placeholder="1234567890"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Verify Token (for webhook setup)</label>
+                <input
+                  type="text"
+                  value={(formData.config as Record<string, string>)?.verify_token || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    config: { ...prev.config, verify_token: e.target.value },
+                  }))}
+                  placeholder="my-verify-token-123"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">App Secret (for signature verification)</label>
+                <input
+                  type="password"
+                  value={(formData.config as Record<string, string>)?.app_secret || ''}
+                  onChange={e => setFormData(prev => ({
+                    ...prev,
+                    config: { ...prev.config, app_secret: e.target.value },
+                  }))}
+                  placeholder="Meta App Secret"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
             </div>
           )}
 
@@ -382,21 +450,23 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
             {' '}and subscribe to <code className="text-blue-400 bg-gray-900 px-1 rounded">message.channels</code>.
           </p>
           <p className="text-xs text-gray-400">
-            <strong className="text-gray-300">Telegram:</strong> Call{' '}
+            <strong className="text-gray-300">Telegram:</strong> Use the "Register Webhook" button, or call{' '}
             <code className="text-blue-400 bg-gray-900 px-1 rounded">setWebhook</code> with URL{' '}
             <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/telegram/webhook</code>
           </p>
           <p className="text-xs text-gray-400">
-            <strong className="text-gray-300">Feishu:</strong> Set Event Subscription URL to{' '}
-            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/feishu/events</code>
+            <strong className="text-gray-300">Discord:</strong> Connects automatically via Gateway WebSocket. Just provide the Bot Token.
           </p>
           <p className="text-xs text-gray-400">
-            <strong className="text-gray-300">Discord:</strong> Set Interactions Endpoint URL to{' '}
-            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/discord/interactions</code>
+            <strong className="text-gray-300">Feishu:</strong> Connects automatically via WSClient. Provide App ID + App Secret.
           </p>
           <p className="text-xs text-gray-400">
-            <strong className="text-gray-300">DingTalk:</strong> Set Robot callback URL to{' '}
-            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/dingtalk/callback</code>
+            <strong className="text-gray-300">DingTalk:</strong> Connects automatically via Stream mode. Provide Client ID + Client Secret.
+          </p>
+          <p className="text-xs text-gray-400">
+            <strong className="text-gray-300">WhatsApp:</strong> Set webhook URL in Meta Developer Console to{' '}
+            <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/whatsapp/webhook</code>
+            {' '}and subscribe to <code className="text-blue-400 bg-gray-900 px-1 rounded">messages</code>.
           </p>
         </div>
       )}

@@ -7,6 +7,7 @@
 import { FastifyInstance } from 'fastify';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
 import { documentGroupRepository } from '../repositories/document-group.repository.js';
+import { prisma } from '../config/database.js';
 import { config } from '../config/index.js';
 import { join } from 'path';
 import { mkdir, writeFile, unlink, rm } from 'fs/promises';
@@ -179,6 +180,13 @@ export async function scopeDocGroupRoutes(fastify: FastifyInstance): Promise<voi
         const assignment = await documentGroupRepository.assignToScope(
           request.user!.orgId, request.params.scopeId, document_group_id,
         );
+
+        // Bump config_version so active sessions pick up the new document group
+        await prisma.$executeRaw`
+          UPDATE business_scopes SET config_version = config_version + 1, updated_at = NOW()
+          WHERE id = ${request.params.scopeId}::uuid AND organization_id = ${request.user!.orgId}::uuid
+        `;
+
         return reply.status(201).send({ data: assignment });
       } catch (err: any) {
         if (err.code === 'P2002') return reply.status(409).send({ error: 'Already assigned' });
@@ -196,6 +204,13 @@ export async function scopeDocGroupRoutes(fastify: FastifyInstance): Promise<voi
         request.params.assignmentId, request.user!.orgId,
       );
       if (!ok) return reply.status(404).send({ error: 'Not found' });
+
+      // Bump config_version so active sessions pick up the removal
+      await prisma.$executeRaw`
+        UPDATE business_scopes SET config_version = config_version + 1, updated_at = NOW()
+        WHERE id = ${request.params.scopeId}::uuid AND organization_id = ${request.user!.orgId}::uuid
+      `;
+
       return reply.status(204).send();
     },
   );

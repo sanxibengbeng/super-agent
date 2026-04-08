@@ -23,6 +23,8 @@ import { devServerManager } from './services/dev-server-manager.js';
 import { workspaceManager } from './services/workspace-manager.js';
 import { shutdownLangfuse } from './services/langfuse.service.js';
 import { briefingScheduler } from './services/briefing-scheduler.service.js';
+import { imService } from './services/im.service.js';
+import { imQueueService } from './services/im-queue.service.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   // Configure logger based on environment
@@ -205,6 +207,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Start briefing generation scheduler (runs every 5 minutes)
   briefingScheduler.start();
 
+  // Initialize IM message queue (BullMQ) for async message processing
+  await imQueueService.initialize();
+
+  // Start IM gateway connections (Discord Gateway, DingTalk Stream, Feishu WSClient)
+  imService.startGateways().catch((err) => {
+    app.log.error({ err }, 'Failed to start IM gateways');
+  });
+
   // Start Claude session cleanup timer and periodic workspace pruning
   claudeAgentService.startCleanupTimer();
   const workspacePruneInterval = setInterval(async () => {
@@ -222,6 +232,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addHook('onClose', async (_instance) => {
     clearInterval(workspacePruneInterval);
     briefingScheduler.stop();
+
+    // Stop IM gateways and queue
+    app.log.info('Stopping IM gateways and message queue...');
+    await imService.stopGateways();
+    await imQueueService.shutdown();
+
     app.log.info('Server shutting down — disconnecting all Claude Agent SDK sessions...');
     try {
       const count = await claudeAgentService.disconnectAll();

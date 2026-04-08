@@ -317,7 +317,81 @@ export class WorkspaceManager {
     // 4. Regenerate settings
     await this.generateSettings(workspacePath, scope.mcpServers);
 
-    // 5. Update manifest
+    // 5. Sync document group symlinks
+    const docGroups = scope.documentGroups ?? [];
+    const docsDir = join(workspacePath, 'documents');
+    if (docGroups.length > 0) {
+      await mkdir(docsDir, { recursive: true });
+
+      // Remove stale symlinks for groups no longer assigned
+      const desiredNames = new Set(docGroups.map(g => g.name.replace(/[/\\:*?"<>|]/g, '-')));
+      try {
+        const existing = await readdir(docsDir);
+        for (const entry of existing) {
+          if (!desiredNames.has(entry)) {
+            await rm(join(docsDir, entry), { force: true }).catch(() => {});
+          }
+        }
+      } catch { /* docsDir may not exist yet */ }
+
+      // Create missing symlinks
+      for (const group of docGroups) {
+        const linkName = group.name.replace(/[/\\:*?"<>|]/g, '-');
+        const linkPath = join(docsDir, linkName);
+        try {
+          await symlink(group.storagePath, linkPath);
+        } catch (err: any) {
+          if (err.code !== 'EEXIST') {
+            console.error(`Failed to symlink doc group "${group.name}":`, err.message);
+          }
+        }
+      }
+    } else {
+      // No document groups — remove the documents directory if it exists
+      await rm(docsDir, { recursive: true, force: true }).catch(() => {});
+    }
+
+    // 6. Regenerate RAG knowledge-search skill if applicable
+    const skillsDir = join(workspacePath, '.claude', 'skills');
+    const ragSkillPath = join(skillsDir, 'knowledge-search.md');
+    const { isRagEnabled } = await import('./rag/document-indexer.service.js');
+    if (isRagEnabled() && docGroups.length > 0) {
+      const backendUrl = `http://localhost:${process.env.PORT || 3001}`;
+      const ragSkillContent = [
+        '# Knowledge Search',
+        '',
+        'Use this skill to search the knowledge base for relevant document passages.',
+        'This performs semantic similarity search — much more accurate than grep for finding relevant information.',
+        '',
+        '## When to Use',
+        '- User asks about specific policies, procedures, or regulations',
+        '- User needs information that might be in uploaded documents',
+        '- You need to cite or reference specific document content',
+        '- Grep/ripgrep returns too many or irrelevant results',
+        '',
+        '## How to Use',
+        `Use the WebFetch tool to call: ${backendUrl}/api/rag/search?scope_id=${scope.id}&q={URL_ENCODED_QUERY}&top_k=5`,
+        '',
+        '## Response Format',
+        'JSON with a `data` array. Each result contains:',
+        '- `filename`: source document name',
+        '- `content`: relevant text passage (~500 tokens)',
+        '- `similarity`: relevance score (0-1, higher is better)',
+        '- `chunkIndex`: position within the document',
+        '',
+        '## Tips',
+        '- Use natural language queries, not keywords',
+        '- If the first search is not specific enough, refine your query',
+        '- Always cite the source filename when using retrieved information',
+        '',
+      ].join('\n');
+      await writeFile(ragSkillPath, ragSkillContent, 'utf-8');
+    } else {
+      // Remove stale RAG skill if no longer applicable
+      await rm(ragSkillPath, { force: true }).catch(() => {});
+    }
+
+    // 7. Update manifest
     await this.writeManifest(workspacePath, {
       ...manifest,
       configVersion: scope.configVersion,
@@ -495,9 +569,24 @@ export class WorkspaceManager {
       },
     };
 
+    const mcpConfig: Record<string, unknown> = {};
+
+    // In agentcore mode, add built-in AgentCore tools (Browser + Code Interpreter)
+    if (config.agentRuntime === 'agentcore') {
+      const agentcoreRegion = config.agentcore.runtimeArn?.split(':')[3] || config.aws.region;
+      mcpConfig['agentcore-tools'] = {
+        type: 'stdio',
+        command: 'uvx',
+        args: ['awslabs.amazon-bedrock-agentcore-mcp-server@latest'],
+        env: {
+          AWS_REGION: agentcoreRegion,
+          FASTMCP_LOG_LEVEL: 'ERROR',
+        },
+      };
+    }
+
     // Write scope-level MCP servers so Claude Code discovers them via project settings
     if (mcpServers && mcpServers.length > 0) {
-      const mcpConfig: Record<string, unknown> = {};
       for (const server of mcpServers) {
         // Prefer structured config if available
         if (server.config && typeof server.config === 'object') {
@@ -529,9 +618,10 @@ export class WorkspaceManager {
           };
         }
       }
-      if (Object.keys(mcpConfig).length > 0) {
-        settings.mcpServers = mcpConfig;
-      }
+    }
+
+    if (Object.keys(mcpConfig).length > 0) {
+      settings.mcpServers = mcpConfig;
     }
 
     const settingsDir = join(workspacePath, '.claude');
@@ -1080,6 +1170,13 @@ export class WorkspaceManager {
     const resolved = join(workspacePath, filePath);
     if (!resolved.startsWith(workspacePath)) return null;
     try {
+      // stat follows symlinks — check if target is a directory
+      const fileStat = await stat(resolved);
+      if (fileStat.isDirectory()) {
+        // Return a listing of the directory contents
+        const entries = await readdir(resolved);
+        return entries.join('\n');
+      }
       return await readFile(resolved, 'utf-8');
     } catch {
       return null;
@@ -1158,6 +1255,42 @@ export class WorkspaceManager {
     }
   }
 
+  /**
+   * Write raw binary data (Buffer) to a workspace file.
+   * Unlike writeWorkspaceFile, this does NOT apply UTF-8 encoding,
+   * so binary files (images, PDFs, etc.) are preserved correctly.
+   */
+  async writeWorkspaceFileRaw(
+    orgId: string,
+    scopeId: string,
+    sessionId: string,
+    filePath: string,
+    content: Buffer,
+  ): Promise<boolean> {
+    const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
+    const resolved = join(workspacePath, filePath);
+    if (!resolved.startsWith(workspacePath)) return false;
+    try {
+      await mkdir(dirname(resolved), { recursive: true });
+      await writeFile(resolved, content);
+
+      // In agentcore mode, also upload to S3 so the container picks it up
+      if (config.agentRuntime === 'agentcore') {
+        const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+        const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+        await this.s3Client.send(new PutObjectCommand({
+          Bucket: config.agentcore.workspaceS3Bucket,
+          Key: key,
+          Body: content,
+        })).catch(err => console.warn('[workspace-manager] S3 upload failed:', err));
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
 
   /** Directories to show in the tree but NOT recurse into (too large / not useful). */
   private static readonly SHALLOW_DIRS = new Set([
@@ -1168,15 +1301,34 @@ export class WorkspaceManager {
   private async readDirRecursive(dir: string, rootDir: string): Promise<WorkspaceFileNode[]> {
     const entries = await readdir(dir, { withFileTypes: true });
     const nodes: WorkspaceFileNode[] = [];
-    for (const entry of entries.sort((a, b) => {
+
+    // Resolve whether each entry is a directory, following symlinks
+    const resolvedEntries: Array<{ entry: import('fs').Dirent; isDir: boolean }> = [];
+    for (const entry of entries) {
+      let isDir = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          const targetStat = await stat(join(dir, entry.name)); // stat follows symlinks
+          isDir = targetStat.isDirectory();
+        } catch {
+          // Broken symlink — treat as file
+          isDir = false;
+        }
+      }
+      resolvedEntries.push({ entry, isDir });
+    }
+
+    resolvedEntries.sort((a, b) => {
       // Directories first, then alphabetical
-      if (a.isDirectory() && !b.isDirectory()) return -1;
-      if (!a.isDirectory() && b.isDirectory()) return 1;
-      return a.name.localeCompare(b.name);
-    })) {
+      if (a.isDir && !b.isDir) return -1;
+      if (!a.isDir && b.isDir) return 1;
+      return a.entry.name.localeCompare(b.entry.name);
+    });
+
+    for (const { entry, isDir } of resolvedEntries) {
       const fullPath = join(dir, entry.name);
       const relativePath = relative(rootDir, fullPath);
-      if (entry.isDirectory()) {
+      if (isDir) {
         if (WorkspaceManager.SHALLOW_DIRS.has(entry.name)) {
           nodes.push({ name: entry.name, path: relativePath, type: 'directory', children: [] });
         } else {

@@ -53,10 +53,12 @@ export class IMChannelRepository {
 
   async findById(
     id: string,
-    organizationId: string,
+    organizationId?: string,
   ): Promise<IMChannelBindingEntity | null> {
+    const where: Record<string, unknown> = { id };
+    if (organizationId) where.organization_id = organizationId;
     return prisma.im_channel_bindings.findFirst({
-      where: { id, organization_id: organizationId },
+      where,
     }) as Promise<IMChannelBindingEntity | null>;
   }
 

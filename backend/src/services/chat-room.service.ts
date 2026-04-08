@@ -15,8 +15,6 @@ export interface CreateRoomOptions {
   title?: string;
   businessScopeId?: string;
   agentIds: string[];
-  primaryAgentId?: string;
-  routingStrategy?: 'auto' | 'mention' | 'round_robin';
 }
 
 export class ChatRoomService {
@@ -50,17 +48,15 @@ export class ChatRoomService {
         sop_context: null,
         context: {},
         room_mode: 'group',
-        routing_strategy: options.routingStrategy ?? 'auto',
+        routing_strategy: 'auto',
       },
       organizationId,
       userId,
     );
 
-    // Add members
-    const primaryId = options.primaryAgentId ?? options.agentIds[0];
+    // Add members — all agents are equal (no primary)
     for (const agentId of options.agentIds) {
-      const role = agentId === primaryId ? 'primary' : 'member';
-      await chatRoomMemberRepository.addMember(session.id, agentId, role, userId);
+      await chatRoomMemberRepository.addMember(session.id, agentId, 'member', userId);
     }
 
     const members = await chatRoomMemberRepository.findBySession(session.id);
@@ -84,7 +80,6 @@ export class ChatRoomService {
       title: (scope as Record<string, unknown>).name as string,
       businessScopeId,
       agentIds: agents.map(a => a.id),
-      primaryAgentId: agents[0].id,
     });
   }
 
@@ -96,7 +91,6 @@ export class ChatRoomService {
     organizationId: string,
     roomId: string,
     agentId: string,
-    role: 'primary' | 'member' = 'member',
     addedBy?: string,
   ): Promise<void> {
     const session = await chatSessionRepository.findById(roomId, organizationId);
@@ -108,7 +102,7 @@ export class ChatRoomService {
     const agent = await agentRepository.findById(agentId, organizationId);
     if (!agent) throw AppError.notFound(`Agent with ID ${agentId} not found`);
 
-    await chatRoomMemberRepository.addMember(roomId, agentId, role, addedBy);
+    await chatRoomMemberRepository.addMember(roomId, agentId, 'member', addedBy);
 
     // Add system message
     await chatMessageRepository.create({
@@ -126,10 +120,6 @@ export class ChatRoomService {
     if (!session) throw AppError.notFound(`Room with ID ${roomId} not found`);
 
     await chatRoomMemberRepository.removeMember(roomId, agentId);
-  }
-
-  async setMemberRole(organizationId: string, roomId: string, agentId: string, role: 'primary' | 'member'): Promise<void> {
-    await chatRoomMemberRepository.setRole(roomId, agentId, role);
   }
 
   async getMembers(organizationId: string, roomId: string): Promise<ChatRoomMemberWithAgent[]> {
@@ -159,7 +149,6 @@ export class ChatRoomService {
       mentionAgentId,
       members,
       recentMessages: recentMessages.reverse(),
-      routingStrategy: session.routing_strategy,
     });
   }
 

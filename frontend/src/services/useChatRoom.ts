@@ -12,6 +12,8 @@ import {
   type RouteDecision,
   type SuggestedAgent,
 } from './api/restChatRoomService';
+import { getAuthToken } from './api/restClient';
+import { parseSSEFrames, parseSSEData, type ContentBlock } from './chatStreamService';
 
 interface UseChatRoomOptions {
   roomId?: string;
@@ -30,12 +32,12 @@ interface UseChatRoomReturn {
   createRoomFromScope: (scopeId: string) => Promise<ChatRoom>;
 
   // Member actions
-  addMember: (agentId: string, role?: 'primary' | 'member') => Promise<void>;
+  addMember: (agentId: string) => Promise<void>;
   removeMember: (agentId: string) => Promise<void>;
-  setMemberRole: (agentId: string, role: 'primary' | 'member') => Promise<void>;
 
   // Messaging
   sendMessage: (content: string, mentionAgentId?: string) => Promise<RouteDecision | null>;
+  isSending: boolean;
   loadMoreMessages: () => Promise<void>;
 
   // In-room agent creation
@@ -51,6 +53,7 @@ export function useChatRoom(options: UseChatRoomOptions = {}): UseChatRoomReturn
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const roomIdRef = useRef(options.roomId);
 
@@ -107,9 +110,9 @@ export function useChatRoom(options: UseChatRoomOptions = {}): UseChatRoomReturn
     return newRoom;
   }, []);
 
-  const addMember = useCallback(async (agentId: string, role?: 'primary' | 'member') => {
+  const addMember = useCallback(async (agentId: string) => {
     if (!room) return;
-    await RestChatRoomService.addMember(room.id, agentId, role);
+    await RestChatRoomService.addMember(room.id, agentId);
     const updated = await RestChatRoomService.getMembers(room.id);
     setMembers(updated);
   }, [room]);
@@ -121,20 +124,123 @@ export function useChatRoom(options: UseChatRoomOptions = {}): UseChatRoomReturn
     setMembers(updated);
   }, [room]);
 
-  const setMemberRole = useCallback(async (agentId: string, role: 'primary' | 'member') => {
-    if (!room) return;
-    await RestChatRoomService.setMemberRole(room.id, agentId, role);
-    const updated = await RestChatRoomService.getMembers(room.id);
-    setMembers(updated);
-  }, [room]);
-
   const sendMessage = useCallback(async (content: string, mentionAgentId?: string): Promise<RouteDecision | null> => {
     if (!room) return null;
-    const result = await RestChatRoomService.sendMessage(room.id, content, mentionAgentId);
-    // Refresh messages after sending
-    const msgs = await RestChatRoomService.getMessages(room.id, 50);
-    setMessages(msgs);
-    return result.route;
+
+    // Optimistically add user message to UI
+    const userMsg: RoomMessage = {
+      id: `temp-user-${Date.now()}`,
+      session_id: room.id,
+      type: 'user',
+      content,
+      agent_id: null,
+      mention_agent_id: mentionAgentId ?? null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setIsSending(true);
+
+    // Add placeholder AI message for streaming
+    const aiMsgId = `temp-ai-${Date.now()}`;
+    const aiMsg: RoomMessage = {
+      id: aiMsgId,
+      session_id: room.id,
+      type: 'ai',
+      content: '',
+      agent_id: null,
+      mention_agent_id: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, aiMsg]);
+
+    let routeDecision: RouteDecision | null = null;
+
+    try {
+      const token = getAuthToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
+      const response = await fetch(`${baseUrl}/api/chat/rooms/${room.id}/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ content, mention_agent_id: mentionAgentId }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const allBlocks: ContentBlock[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lastDoubleNewline = buffer.lastIndexOf('\n\n');
+        if (lastDoubleNewline === -1) continue;
+
+        const complete = buffer.slice(0, lastDoubleNewline + 2);
+        buffer = buffer.slice(lastDoubleNewline + 2);
+
+        const frames = parseSSEFrames(complete);
+        for (const frame of frames) {
+          const data = frame.data.trim();
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+
+            if (parsed.type === 'route') {
+              routeDecision = parsed as RouteDecision;
+              // Update AI message placeholder with agent info
+              setMessages(prev => prev.map(m =>
+                m.id === aiMsgId ? { ...m, agent_id: parsed.targetAgentId } : m
+              ));
+            } else if (parsed.type === 'assistant' && Array.isArray(parsed.content)) {
+              allBlocks.push(...parsed.content);
+              // Extract text from accumulated blocks
+              const text = allBlocks
+                .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+                .map(b => b.text)
+                .join('\n');
+              setMessages(prev => prev.map(m =>
+                m.id === aiMsgId ? { ...m, content: text } : m
+              ));
+            } else if (parsed.type === 'error') {
+              setMessages(prev => prev.map(m =>
+                m.id === aiMsgId ? { ...m, content: parsed.message || 'Error' } : m
+              ));
+            }
+          } catch { /* skip non-JSON */ }
+        }
+      }
+
+      // After stream ends, reload messages from backend to get persisted versions
+      setTimeout(async () => {
+        try {
+          const msgs = await RestChatRoomService.getMessages(room.id, 50);
+          setMessages(msgs);
+        } catch { /* ignore */ }
+      }, 500);
+
+    } catch (err) {
+      setMessages(prev => prev.map(m =>
+        m.id === aiMsgId ? { ...m, content: err instanceof Error ? err.message : 'Failed to send' } : m
+      ));
+    } finally {
+      setIsSending(false);
+    }
+
+    return routeDecision;
   }, [room]);
 
   const loadMoreMessages = useCallback(async () => {
@@ -161,9 +267,9 @@ export function useChatRoom(options: UseChatRoomOptions = {}): UseChatRoomReturn
   }, [room, loadRoom]);
 
   return {
-    room, members, messages, isLoading, error,
+    room, members, messages, isLoading, error, isSending,
     createRoom, createRoomFromScope,
-    addMember, removeMember, setMemberRole,
+    addMember, removeMember,
     sendMessage, loadMoreMessages,
     suggestAgent, confirmCreateAgent,
     refresh,

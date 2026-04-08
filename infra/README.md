@@ -161,6 +161,32 @@ cat << 'EOF' > /tmp/agentcore-permissions.json
       "Effect": "Allow",
       "Action": ["ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:GetAuthorizationToken"],
       "Resource": "*"
+    },
+    {
+      "Sid": "BrowserTool",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:StartBrowserSession",
+        "bedrock-agentcore:StopBrowserSession",
+        "bedrock-agentcore:GetBrowserSession",
+        "bedrock-agentcore:ListBrowserSessions",
+        "bedrock-agentcore:ConnectBrowserAutomationStream",
+        "bedrock-agentcore:ConnectBrowserLiveViewStream",
+        "bedrock-agentcore:UpdateBrowserStream"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:browser/*"
+    },
+    {
+      "Sid": "CodeInterpreter",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:StartCodeInterpreterSession",
+        "bedrock-agentcore:InvokeCodeInterpreter",
+        "bedrock-agentcore:StopCodeInterpreterSession",
+        "bedrock-agentcore:GetCodeInterpreterSession",
+        "bedrock-agentcore:ListCodeInterpreterSessions"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:code-interpreter/*"
     }
   ]
 }

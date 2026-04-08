@@ -1,11 +1,23 @@
 /**
  * Chat Room Routes
  * REST API endpoints for group chat room management.
+ *
+ * Group chat always uses the local Claude runtime (ClaudeAgentRuntime),
+ * regardless of the AGENT_RUNTIME env var, to avoid AgentCore latency
+ * and keep the interactive group experience responsive.
  */
 
 import { FastifyInstance } from 'fastify';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
 import { chatRoomService } from '../services/chat-room.service.js';
+import { ClaudeAgentRuntime } from '../services/agent-runtime-claude.js';
+import { ChatService } from '../services/chat.service.js';
+
+/**
+ * Dedicated ChatService instance for group chat — always uses local Claude runtime.
+ * This bypasses the global AGENT_RUNTIME setting (which may be 'agentcore').
+ */
+const roomChatService = new ChatService(new ClaudeAgentRuntime());
 
 export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
 
@@ -21,8 +33,6 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
       title?: string;
       business_scope_id?: string;
       agent_ids: string[];
-      primary_agent_id?: string;
-      routing_strategy?: 'auto' | 'mention' | 'round_robin';
     };
   }>(
     '/',
@@ -35,8 +45,6 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
           title: request.body.title,
           businessScopeId: request.body.business_scope_id,
           agentIds: request.body.agent_ids,
-          primaryAgentId: request.body.primary_agent_id,
-          routingStrategy: request.body.routing_strategy,
         },
       );
       return reply.status(201).send(room);
@@ -107,7 +115,7 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * POST /api/chat/rooms/:roomId/members — Add agent to room
    */
-  fastify.post<{ Params: { roomId: string }; Body: { agent_id: string; role?: 'primary' | 'member' } }>(
+  fastify.post<{ Params: { roomId: string }; Body: { agent_id: string } }>(
     '/:roomId/members',
     { preHandler: [authenticate, requireModifyAccess] },
     async (request, reply) => {
@@ -115,7 +123,6 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
         request.user!.orgId,
         request.params.roomId,
         request.body.agent_id,
-        request.body.role ?? 'member',
         request.user!.id,
       );
       return reply.status(201).send({ ok: true });
@@ -138,29 +145,24 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
     }
   );
 
-  /**
-   * PATCH /api/chat/rooms/:roomId/members/:agentId — Update member role
-   */
-  fastify.patch<{ Params: { roomId: string; agentId: string }; Body: { role: 'primary' | 'member' } }>(
-    '/:roomId/members/:agentId',
-    { preHandler: [authenticate, requireModifyAccess] },
-    async (request, reply) => {
-      await chatRoomService.setMemberRole(
-        request.user!.orgId,
-        request.params.roomId,
-        request.params.agentId,
-        request.body.role,
-      );
-      return reply.status(200).send({ ok: true });
-    }
-  );
-
   // ==========================================================================
   // Group Chat Messaging
   // ==========================================================================
 
   /**
-   * POST /api/chat/rooms/:roomId/messages — Send message and get routed response
+   * POST /api/chat/rooms/:roomId/messages — Send message, route to agent, and get response
+   */
+  /**
+   * POST /api/chat/rooms/:roomId/messages — Send message, route to agent, stream response via SSE.
+   *
+   * Returns SSE stream with events:
+   *   - route: { type: 'route', ...routeDecision }
+   *   - assistant: { type: 'assistant', content: ContentBlock[] }
+   *   - done: data: [DONE]
+   *   - error: { type: 'error', message: string }
+   *
+   * The user's original message (not the contextual prompt) is persisted.
+   * The AI response is persisted as plain text (not raw content blocks).
    */
   fastify.post<{
     Params: { roomId: string };
@@ -173,8 +175,10 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
       const roomId = request.params.roomId;
       const { content, mention_agent_id } = request.body;
 
-      // Persist user message
-      const { chatMessageRepository } = await import('../repositories/chat.repository.js');
+      const { chatMessageRepository, chatSessionRepository } = await import('../repositories/chat.repository.js');
+      const { formatSSEEvent } = await import('../utils/sse.js');
+
+      // Persist the user's original message (not the contextual prompt)
       await chatMessageRepository.create({
         session_id: roomId,
         type: 'user',
@@ -184,13 +188,115 @@ export async function chatRoomRoutes(fastify: FastifyInstance): Promise<void> {
         metadata: {},
       }, orgId);
 
-      // Route the message
+      // Route the message to the appropriate agent
       const route = await chatRoomService.routeMessage(orgId, roomId, content, mention_agent_id);
 
-      return reply.status(200).send({
-        route,
-        message: 'Message received. Use POST /api/chat/rooms/:roomId/stream for streaming response.',
+      // Get the session's business_scope_id
+      const session = await chatSessionRepository.findById(roomId, orgId);
+      const scopeId = session?.business_scope_id;
+
+      if (!scopeId) {
+        return reply.status(400).send({ route, error: 'Room has no business scope' });
+      }
+
+      // Set SSE headers
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
       });
+
+      // Send route decision immediately so frontend knows who's answering
+      reply.raw.write(formatSSEEvent({
+        data: JSON.stringify({ type: 'route', ...route }),
+      }));
+
+      // Build room context for the agent
+      const roomContext = await chatRoomService.buildRoomContext(orgId, roomId, route.targetAgentId);
+      const contextualMessage = `${roomContext}\n\n---\nUser message: ${content}`;
+
+      // Prepare workspace + run conversation via local Claude runtime
+      try {
+        const result = await roomChatService.prepareScopeSessionPublic(orgId, request.user!.id, {
+          businessScopeId: scopeId,
+          sessionId: roomId,
+          message: contextualMessage,
+        });
+
+        const { agentConfig, skills, claudeSessionId, workspacePath, pluginPaths, mcpServers } = result;
+        const { ClaudeAgentRuntime } = await import('../services/agent-runtime-claude.js');
+        const claudeRuntime = new ClaudeAgentRuntime();
+
+        const generator = claudeRuntime.runConversation(
+          {
+            agentId: agentConfig.id,
+            sessionId: roomId,
+            providerSessionId: claudeSessionId,
+            message: contextualMessage,
+            organizationId: orgId,
+            userId: request.user!.id,
+            workspacePath,
+            scopeId,
+          },
+          agentConfig,
+          skills,
+          pluginPaths.length > 0 ? pluginPaths : undefined,
+          Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+        );
+
+        const allContentBlocks: import('../services/claude-agent.service.js').ContentBlock[] = [];
+
+        for await (const event of generator) {
+          if (event.type === 'session_start' && event.sessionId) {
+            chatSessionRepository.updateClaudeSessionId(roomId, orgId, event.sessionId).catch(() => {});
+          }
+          if (event.type === 'assistant' && event.content) {
+            allContentBlocks.push(...event.content);
+            try {
+              reply.raw.write(formatSSEEvent({
+                data: JSON.stringify({ type: 'assistant', content: event.content }),
+              }));
+            } catch { break; }
+          }
+          if (event.type === 'error') {
+            try {
+              reply.raw.write(formatSSEEvent({
+                data: JSON.stringify({ type: 'error', message: event.message }),
+              }));
+            } catch { break; }
+          }
+        }
+
+        // Extract plain text and persist AI response
+        const text = allContentBlocks
+          .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+          .map(b => b.text)
+          .join('\n');
+
+        if (text) {
+          await chatMessageRepository.create({
+            session_id: roomId,
+            type: 'ai',
+            content: text,
+            agent_id: route.targetAgentId,
+            mention_agent_id: null,
+            metadata: { routedBy: route.routedBy, confidence: route.confidence },
+          }, orgId).catch(() => {});
+        }
+      } catch (err) {
+        console.error(`[ROOM] Stream failed for room ${roomId}:`, err instanceof Error ? err.message : err);
+        try {
+          reply.raw.write(formatSSEEvent({
+            data: JSON.stringify({ type: 'error', message: 'Agent failed to respond. Please try again.' }),
+          }));
+        } catch { /* client gone */ }
+      }
+
+      try {
+        reply.raw.write(formatSSEEvent({ data: '[DONE]' }));
+        reply.raw.end();
+      } catch { /* client gone */ }
     }
   );
 

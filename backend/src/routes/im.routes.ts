@@ -14,6 +14,8 @@ import { telegramAdapter } from '../services/telegram-adapter.js';
 import { discordAdapter, DiscordAdapter } from '../services/discord-adapter.js';
 import { feishuAdapter, FeishuAdapter } from '../services/feishu-adapter.js';
 import { dingtalkAdapter } from '../services/dingtalk-adapter.js';
+import { whatsappAdapter, WhatsAppAdapter } from '../services/whatsapp-adapter.js';
+import { imQueueService } from '../services/im-queue.service.js';
 
 // Register adapters on import
 imService.registerAdapter('slack', slackAdapter);
@@ -21,6 +23,7 @@ imService.registerAdapter('telegram', telegramAdapter);
 imService.registerAdapter('discord', discordAdapter);
 imService.registerAdapter('feishu', feishuAdapter);
 imService.registerAdapter('dingtalk', dingtalkAdapter);
+imService.registerAdapter('whatsapp', whatsappAdapter);
 
 // ============================================================================
 // Admin Routes — Manage IM channel bindings (requires auth)
@@ -427,6 +430,96 @@ export async function imWebhookRoutes(fastify: FastifyInstance): Promise<void> {
         await imService.handleMessage(msg);
       } catch (error) {
         console.error('[DINGTALK] Failed to handle message:', error instanceof Error ? error.message : error);
+      }
+    },
+  );
+
+  /**
+   * GET /api/im/whatsapp/webhook — Meta webhook verification challenge.
+   * Meta sends hub.mode=subscribe with hub.challenge and hub.verify_token.
+   * We validate verify_token against the binding config, then echo back the challenge.
+   */
+  fastify.get<{
+    Querystring: { 'hub.mode'?: string; 'hub.challenge'?: string; 'hub.verify_token'?: string };
+  }>(
+    '/whatsapp/webhook',
+    async (request, reply) => {
+      const query = request.query as Record<string, string | undefined>;
+      const check = WhatsAppAdapter.isVerificationChallenge(query);
+
+      if (!check.isChallenge) {
+        return reply.status(403).send('Forbidden');
+      }
+
+      // Find a WhatsApp binding that matches this verify_token
+      const { prisma } = await import('../config/database.js');
+      const bindings = await prisma.im_channel_bindings.findMany({
+        where: { channel_type: 'whatsapp', is_enabled: true },
+      });
+
+      const matched = bindings.find((b) => {
+        const cfg = (b.config as Record<string, string>) ?? {};
+        return cfg.verify_token === check.verifyToken;
+      });
+
+      if (!matched) {
+        console.warn('[WHATSAPP] Verification challenge: no binding matches verify_token');
+        return reply.status(403).send('Forbidden');
+      }
+
+      console.log(`[WHATSAPP] Webhook verified for binding ${matched.id}`);
+      return reply.status(200).send(check.challenge);
+    },
+  );
+
+  /**
+   * POST /api/im/whatsapp/webhook — WhatsApp Cloud API incoming messages.
+   * Verified via HMAC-SHA256 signature (X-Hub-Signature-256 header).
+   */
+  fastify.post(
+    '/whatsapp/webhook',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = request.body;
+
+      // Parse all messages from the payload (Meta can batch multiple)
+      const messages = whatsappAdapter.parseAllEvents(body);
+      if (messages.length === 0) {
+        return reply.status(200).send({ ok: true });
+      }
+
+      // Verify signature using the first message's channelId to find the binding
+      const firstMsg = messages[0];
+      const headers = request.headers as Record<string, string>;
+      const rawBody = JSON.stringify(request.body);
+
+      // Look up binding by phone_number_id
+      const binding = await imChannelRepository.findByChannelTypeAndId('whatsapp', firstMsg.channelId);
+      if (!binding) {
+        console.warn(`[WHATSAPP] No active binding for phone_number_id: ${firstMsg.channelId}`);
+        return reply.status(200).send({ ok: true });
+      }
+
+      // Inject app_secret for signature verification
+      const cfg = (binding.config ?? {}) as Record<string, string>;
+      if (cfg.app_secret) {
+        headers['x-whatsapp-app-secret-internal'] = cfg.app_secret;
+      }
+
+      if (!whatsappAdapter.verifyRequest(headers, rawBody)) {
+        console.warn('[WHATSAPP] Signature verification failed');
+        return reply.status(200).send({ ok: true }); // Return 200 to prevent Meta retries
+      }
+
+      // Acknowledge immediately
+      reply.status(200).send({ ok: true });
+
+      // Enqueue each message for async processing
+      for (const msg of messages) {
+        try {
+          await imQueueService.enqueue(msg);
+        } catch (error) {
+          console.error('[WHATSAPP] Failed to enqueue message:', error instanceof Error ? error.message : error);
+        }
       }
     },
   );

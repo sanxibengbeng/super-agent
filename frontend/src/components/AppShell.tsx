@@ -70,7 +70,7 @@ export function AppShell({ children }: AppShellProps) {
       <AdminMenu isOpen={isAdminMenuOpen} onClose={closeAdminMenu} />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top Bar */}
         {isHeaderCollapsed ? (
           <div className="h-8 bg-gray-900/85 border-b border-white/[0.08] flex items-center justify-end px-4">

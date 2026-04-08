@@ -5,10 +5,13 @@
 FROM public.ecr.aws/docker/library/node:22-slim
 WORKDIR /app
 
-# System dependencies for Claude Code CLI
+# System dependencies for Claude Code CLI + Python for AgentCore MCP tools
 RUN apt-get update && apt-get install -y \
-    curl git unzip \
+    curl git unzip python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv/uvx for running AgentCore MCP server (Browser + Code Interpreter tools)
+RUN pip3 install --break-system-packages uv
 
 # Install Claude Code CLI globally
 RUN npm install -g @anthropic-ai/claude-code

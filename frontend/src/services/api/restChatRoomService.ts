@@ -35,7 +35,7 @@ export interface ChatRoom {
   title: string | null;
   status: string;
   room_mode: 'single' | 'group';
-  routing_strategy: 'auto' | 'mention' | 'round_robin';
+  routing_strategy: 'auto';
   created_at: string;
   updated_at: string;
   members: RoomMember[];
@@ -46,7 +46,7 @@ export interface RouteDecision {
   targetAgentName: string;
   confidence: number;
   reasoning: string;
-  routedBy: 'mention' | 'auto' | 'primary' | 'fallback';
+  routedBy: 'mention' | 'context' | 'auto' | 'uncertain';
 }
 
 export interface RoomMessage {
@@ -81,8 +81,6 @@ export const RestChatRoomService = {
     title?: string;
     business_scope_id?: string;
     agent_ids: string[];
-    primary_agent_id?: string;
-    routing_strategy?: 'auto' | 'mention' | 'round_robin';
   }): Promise<ChatRoom> {
     return restClient.post<ChatRoom>('/api/chat/rooms', options);
   },
@@ -105,21 +103,17 @@ export const RestChatRoomService = {
     return res.members;
   },
 
-  async addMember(roomId: string, agentId: string, role?: 'primary' | 'member'): Promise<void> {
-    await restClient.post(`/api/chat/rooms/${roomId}/members`, { agent_id: agentId, role });
+  async addMember(roomId: string, agentId: string): Promise<void> {
+    await restClient.post(`/api/chat/rooms/${roomId}/members`, { agent_id: agentId });
   },
 
   async removeMember(roomId: string, agentId: string): Promise<void> {
     await restClient.delete(`/api/chat/rooms/${roomId}/members/${agentId}`);
   },
 
-  async setMemberRole(roomId: string, agentId: string, role: 'primary' | 'member'): Promise<void> {
-    await restClient.patch(`/api/chat/rooms/${roomId}/members/${agentId}`, { role });
-  },
-
   // Messaging
-  async sendMessage(roomId: string, content: string, mentionAgentId?: string): Promise<{ route: RouteDecision }> {
-    return restClient.post<{ route: RouteDecision }>(`/api/chat/rooms/${roomId}/messages`, {
+  async sendMessage(roomId: string, content: string, mentionAgentId?: string): Promise<{ route: RouteDecision; response?: string; error?: string }> {
+    return restClient.post<{ route: RouteDecision; response?: string; error?: string }>(`/api/chat/rooms/${roomId}/messages`, {
       content,
       mention_agent_id: mentionAgentId,
     });

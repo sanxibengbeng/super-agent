@@ -1145,8 +1145,8 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'No workspace for this session' });
       }
 
-      const decoded = Buffer.from(request.body.content, 'base64').toString('utf-8');
-      const ok = await workspaceManager.writeWorkspaceFile(
+      const decoded = Buffer.from(request.body.content, 'base64');
+      const ok = await workspaceManager.writeWorkspaceFileRaw(
         request.user!.orgId,
         session.business_scope_id,
         session.id,

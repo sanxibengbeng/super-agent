@@ -42,7 +42,7 @@ export class ChatRoomMemberRepository {
           },
         },
       },
-      orderBy: [{ role: 'asc' }, { joined_at: 'asc' }],
+      orderBy: [{ joined_at: 'asc' }],
     }) as unknown as Promise<ChatRoomMemberWithAgent[]>;
   }
 
@@ -54,8 +54,8 @@ export class ChatRoomMemberRepository {
   ): Promise<ChatRoomMemberEntity> {
     return prisma.chat_room_members.upsert({
       where: { unique_room_member: { session_id: sessionId, agent_id: agentId } },
-      update: { is_active: true, role },
-      create: { session_id: sessionId, agent_id: agentId, role, added_by: addedBy ?? null },
+      update: { is_active: true },
+      create: { session_id: sessionId, agent_id: agentId, role: 'member', added_by: addedBy ?? null },
     }) as unknown as Promise<ChatRoomMemberEntity>;
   }
 
@@ -64,34 +64,6 @@ export class ChatRoomMemberRepository {
       where: { session_id: sessionId, agent_id: agentId },
       data: { is_active: false },
     });
-  }
-
-  async setRole(sessionId: string, agentId: string, role: 'primary' | 'member'): Promise<void> {
-    // If setting as primary, demote existing primary first
-    if (role === 'primary') {
-      await prisma.chat_room_members.updateMany({
-        where: { session_id: sessionId, role: 'primary' },
-        data: { role: 'member' },
-      });
-    }
-    await prisma.chat_room_members.updateMany({
-      where: { session_id: sessionId, agent_id: agentId },
-      data: { role },
-    });
-  }
-
-  async findPrimary(sessionId: string): Promise<ChatRoomMemberWithAgent | null> {
-    return prisma.chat_room_members.findFirst({
-      where: { session_id: sessionId, role: 'primary', is_active: true },
-      include: {
-        agent: {
-          select: {
-            id: true, name: true, display_name: true,
-            role: true, avatar: true, system_prompt: true, status: true,
-          },
-        },
-      },
-    }) as unknown as Promise<ChatRoomMemberWithAgent | null>;
   }
 
   async isMember(sessionId: string, agentId: string): Promise<boolean> {

@@ -8,7 +8,7 @@
  *   - Stop hook: full diff sync to S3 as safety net
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk'; 
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { syncWorkspaceToS3 } from './workspace-sync.js';
 import fs from 'fs';

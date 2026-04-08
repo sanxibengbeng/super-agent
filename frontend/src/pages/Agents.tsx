@@ -142,7 +142,7 @@ export function Agents() {
       </div>
 
       {/* Right Panel */}
-      <div className="flex-1 bg-gray-950">
+      <div className="flex-1 min-w-0 bg-gray-950 overflow-hidden">
         {isLoadingAgent ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />

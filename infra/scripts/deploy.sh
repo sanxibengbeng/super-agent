@@ -220,39 +220,43 @@ else
 JWT_SECRET=$(openssl rand -hex 32)"
 fi
 
-# Fetch DATABASE_URL on EC2 and merge
+# Fetch DATABASE_URL on EC2 and merge (production-first: existing values win)
 $SSH_CMD << REMOTE_ENV
 set -euo pipefail
 
 # Fetch DATABASE_URL
 DATABASE_URL=\$(/opt/super-agent/fetch-db-url.sh "$DB_SECRET_ARN")
 
-# Write base env to temp file
-cat > /tmp/new-env << 'BASE_MARKER'
+# Write base env (defaults for missing keys) to temp file
+cat > /tmp/base-env << 'BASE_MARKER'
 $BASE_ENV
 BASE_MARKER
+echo "DATABASE_URL=\${DATABASE_URL}" >> /tmp/base-env
 
-# Add DATABASE_URL
-echo "DATABASE_URL=\${DATABASE_URL}" >> /tmp/new-env
-
-# Merge: preserve user-added vars from existing .env
+# Merge: production .env wins — base only fills in missing keys
 if [ -f /opt/super-agent/.env ]; then
   cp /opt/super-agent/.env /opt/super-agent/.env.bak.\$(date +%s)
+  # Start from existing production .env (strip comments/blanks for key lookup)
+  cp /opt/super-agent/.env /tmp/new-env
+
+  # Append any base keys that are missing from production
   while IFS= read -r line; do
-    # Skip comments and empty lines
     [[ "\$line" =~ ^#.*$ ]] && continue
     [[ -z "\$line" ]] && continue
     key=\$(echo "\$line" | cut -d= -f1)
-    # If this key is NOT in the base env, preserve it
     if ! grep -q "^\${key}=" /tmp/new-env; then
       echo "\$line" >> /tmp/new-env
     fi
-  done < /opt/super-agent/.env
+  done < /tmp/base-env
+else
+  # Fresh deploy — no existing .env, use base as-is
+  cp /tmp/base-env /tmp/new-env
 fi
 
 mv /tmp/new-env /opt/super-agent/.env
 chmod 600 /opt/super-agent/.env
-echo "  .env written (user vars preserved)."
+echo "  .env written (existing values preserved, missing keys added)."
+rm -f /tmp/base-env
 REMOTE_ENV
 
 # Apply --env-file overrides (if provided)
@@ -347,7 +351,7 @@ npx tsc --noUnusedLocals false --noUnusedParameters false --strict false --noImp
 
 echo "  DB grants..."
 source /opt/super-agent/.env
-PSQL_URL=$(echo "$DATABASE_URL" | sed 's/sslmode=no-verify/sslmode=require/')
+PSQL_URL=$(echo "$DATABASE_URL" | sed 's/?schema=public//' | sed 's/sslmode=no-verify/sslmode=require/')
 psql "$PSQL_URL" << 'GRANTS_SQL'
 GRANT ALL PRIVILEGES ON DATABASE super_agent TO superagent;
 GRANT ALL ON SCHEMA public TO superagent;

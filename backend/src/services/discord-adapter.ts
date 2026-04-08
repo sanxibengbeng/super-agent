@@ -1,125 +1,218 @@
 /**
- * Discord Adapter
+ * Discord Adapter — Gateway WebSocket Mode
  *
- * Handles Discord Interactions/webhook events, message parsing, and reply posting.
- * Implements the IMAdapter interface for Discord-specific behavior.
+ * Uses discord.js Client to connect to Discord Gateway and receive
+ * real-time message events. This is the standard way to build Discord bots.
  *
- * Discord bots typically use Gateway (WebSocket), but for webhook-based integration
- * this adapter handles HTTP interaction endpoints.
+ * The old Interactions API approach only works for slash commands,
+ * not regular chat messages.
  */
 
-import crypto from 'crypto';
+import { Client, Events, GatewayIntentBits, Partials, type Message as DjsMessage } from 'discord.js';
 import type { IMAdapter, NormalizedIMMessage } from './im.service.js';
 import type { IMChannelBindingEntity } from '../repositories/im-channel.repository.js';
+import { imChannelRepository } from '../repositories/im-channel.repository.js';
+import { imQueueService } from './im-queue.service.js';
 
-interface DiscordMessage {
-  type: number; // 0 = PING, 1 = message create (via webhook relay)
-  id?: string;
-  channel_id?: string;
-  content?: string;
-  author?: { id: string; username: string; bot?: boolean };
-  message_reference?: { message_id?: string };
-  /** For Interactions API verification */
-  d?: {
-    id?: string;
-    channel_id?: string;
-    content?: string;
-    author?: { id: string; username: string; bot?: boolean };
-    message_reference?: { message_id?: string };
-  };
-}
+/** Active bot connections: bindingId → Client */
+const activeClients = new Map<string, Client>();
 
 export class DiscordAdapter implements IMAdapter {
-  /**
-   * Verify Discord request using Ed25519 signature.
-   * Discord sends X-Signature-Ed25519 and X-Signature-Timestamp headers.
-   */
-  verifyRequest(headers: Record<string, string>, body: string): boolean {
-    const publicKey = headers['x-discord-public-key-internal'];
-    if (!publicKey) return true; // No key configured — skip
+  // ── Webhook verification (kept for PING/PONG endpoint compatibility) ──
 
-    const signature = headers['x-signature-ed25519'];
-    const timestamp = headers['x-signature-timestamp'];
-    if (!signature || !timestamp) return false;
-
-    try {
-      const message = Buffer.from(timestamp + body);
-      const sig = Buffer.from(signature, 'hex');
-      const key = Buffer.from(publicKey, 'hex');
-      return crypto.verify(undefined, message, { key, format: 'der', type: 'spki' } as any, sig);
-    } catch {
-      return false;
-    }
+  verifyRequest(_headers: Record<string, string>, _body: string): boolean {
+    // Gateway mode doesn't use HTTP webhooks for messages.
+    // Signature verification is handled by discord.js internally.
+    return true;
   }
 
-  parseEvent(body: unknown): NormalizedIMMessage | null {
-    const payload = body as DiscordMessage;
-
-    // Handle Discord PING (type 1 in Interactions API)
-    if (payload.type === 1 && !payload.content && !payload.d) return null;
-
-    const msg = payload.d || payload;
-    if (!msg.content || !msg.channel_id) return null;
-
-    // Ignore bot messages
-    if (msg.author?.bot) return null;
-
-    // Thread = message reference (reply chain) or own message ID
-    const threadId = msg.message_reference?.message_id || msg.id || String(Date.now());
-
-    return {
-      channelType: 'discord',
-      channelId: msg.channel_id,
-      threadId,
-      userId: msg.author?.id ?? 'unknown',
-      userName: msg.author?.username,
-      text: msg.content,
-    };
+  parseEvent(_body: unknown): NormalizedIMMessage | null {
+    // Gateway mode receives messages via WebSocket, not HTTP.
+    // This method is only called for legacy webhook fallback.
+    return null;
   }
+
+  // ── Gateway lifecycle ──
 
   /**
-   * Check if payload is a Discord PING that needs a PONG response.
+   * Start Gateway connections for all enabled Discord bindings.
+   * Called once at app startup.
    */
-  static isPing(body: unknown): boolean {
-    return (body as DiscordMessage).type === 1 && !(body as DiscordMessage).content;
-  }
-
-  async sendReply(binding: IMChannelBindingEntity, _threadId: string, text: string): Promise<void> {
-    const botToken = binding.bot_token_enc; // TODO: decrypt in production
-    if (!botToken) {
-      console.error(`No bot token for Discord binding ${binding.id}`);
+  async startGateway(): Promise<void> {
+    const bindings = await this.discoverBindings();
+    if (bindings.length === 0) {
+      console.log('[DISCORD] No enabled Discord bindings found, gateway idle');
       return;
     }
 
-    // Discord has a 2000 char limit per message
-    const chunks = this.splitMessage(text, 2000);
+    for (const binding of bindings) {
+      try {
+        await this.connectBot(binding);
+      } catch (err) {
+        console.error(`[DISCORD] Failed to connect binding ${binding.id}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  }
 
+  /**
+   * Stop all Gateway connections. Called on graceful shutdown.
+   */
+  async stopGateway(): Promise<void> {
+    for (const [bindingId, client] of activeClients) {
+      try {
+        client.destroy();
+        console.log(`[DISCORD] Disconnected binding ${bindingId}`);
+      } catch (err) {
+        console.error(`[DISCORD] Error disconnecting ${bindingId}:`, err instanceof Error ? err.message : err);
+      }
+    }
+    activeClients.clear();
+  }
+
+  /**
+   * Dynamically add a new bot connection (e.g. when a binding is created via API).
+   */
+  async addBot(binding: IMChannelBindingEntity): Promise<void> {
+    if (activeClients.has(binding.id)) return;
+    await this.connectBot(binding);
+  }
+
+  /**
+   * Remove a bot connection (e.g. when a binding is deleted).
+   */
+  removeBot(bindingId: string): void {
+    const client = activeClients.get(bindingId);
+    if (client) {
+      client.destroy();
+      activeClients.delete(bindingId);
+    }
+  }
+
+  // ── Send reply via REST API ──
+
+  async sendReply(binding: IMChannelBindingEntity, _threadId: string, text: string): Promise<void> {
+    const botToken = binding.bot_token_enc;
+    if (!botToken) {
+      console.error(`[DISCORD] No bot token for binding ${binding.id}`);
+      return;
+    }
+
+    const chunks = this.splitMessage(text, 2000);
     for (const chunk of chunks) {
       const response = await fetch(
         `https://discord.com/api/v10/channels/${binding.channel_id}/messages`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bot ${botToken}`,
+            Authorization: `Bot ${botToken}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ content: chunk }),
         },
       );
-
       if (!response.ok) {
-        console.error(`Discord API error: ${response.status} ${await response.text()}`);
+        console.error(`[DISCORD] API error: ${response.status} ${await response.text()}`);
       }
     }
+  }
+
+  // ── Private ──
+
+  private async connectBot(binding: IMChannelBindingEntity): Promise<void> {
+    const botToken = binding.bot_token_enc;
+    if (!botToken) {
+      console.warn(`[DISCORD] Missing bot token for binding ${binding.id}, skipping`);
+      return;
+    }
+
+    const client = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+      ],
+      partials: [Partials.Channel, Partials.Message],
+    });
+
+    let botUserId = '';
+
+    client.on(Events.ClientReady, (c) => {
+      botUserId = c.user.id;
+      console.log(`[DISCORD] Gateway connected: ${c.user.tag} (binding ${binding.id})`);
+    });
+
+    client.on(Events.MessageCreate, (message: DjsMessage) => {
+      // Ignore bot messages (including self)
+      if (message.author.bot) return;
+      if (!message.content?.trim()) return;
+
+      // In guilds, only respond when @mentioned
+      const isGroup = !!message.guild;
+      const isMentioned = message.mentions.users.has(botUserId);
+      if (isGroup && !isMentioned) return;
+
+      // Strip @mention from content
+      let content = message.content;
+      if (isMentioned) {
+        content = content.replace(new RegExp(`<@!?${botUserId}>`, 'g'), '').trim();
+      }
+      if (!content) return;
+
+      const threadId = message.reference?.messageId || message.id;
+
+      const normalized: NormalizedIMMessage = {
+        channelType: 'discord',
+        channelId: message.channelId,
+        threadId,
+        userId: message.author.id,
+        userName: message.author.username,
+        text: content,
+        bindingId: binding.id,
+      };
+
+      // Enqueue for async processing
+      imQueueService.enqueue(normalized).catch((err) => {
+        console.error('[DISCORD] Failed to enqueue message:', err instanceof Error ? err.message : err);
+      });
+    });
+
+    client.on(Events.Error, (err) => {
+      console.error(`[DISCORD] Client error (binding ${binding.id}):`, err);
+    });
+
+    await client.login(botToken);
+    activeClients.set(binding.id, client);
+  }
+
+  private async discoverBindings(): Promise<IMChannelBindingEntity[]> {
+    const { prisma } = await import('../config/database.js');
+    const bindings = await prisma.im_channel_bindings.findMany({
+      where: { channel_type: 'discord', is_enabled: true },
+    });
+    return bindings as unknown as IMChannelBindingEntity[];
   }
 
   private splitMessage(text: string, maxLen: number): string[] {
     if (text.length <= maxLen) return [text];
     const chunks: string[] = [];
-    for (let i = 0; i < text.length; i += maxLen) {
-      chunks.push(text.substring(i, i + maxLen));
+    let remaining = text;
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLen) { chunks.push(remaining); break; }
+      let splitIdx = remaining.lastIndexOf('\n', maxLen);
+      if (splitIdx <= 0) splitIdx = remaining.lastIndexOf(' ', maxLen);
+      if (splitIdx <= 0) splitIdx = maxLen;
+      chunks.push(remaining.substring(0, splitIdx));
+      remaining = remaining.substring(splitIdx).trimStart();
     }
     return chunks;
+  }
+
+  /**
+   * Check if payload is a Discord PING (for Interactions endpoint compatibility).
+   */
+  static isPing(body: unknown): boolean {
+    return (body as { type?: number }).type === 1 && !(body as { content?: string }).content;
   }
 }
 

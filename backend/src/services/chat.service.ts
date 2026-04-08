@@ -299,7 +299,9 @@ export class ChatService {
       await chatSessionRepository.updateStatus(sessionId, options.organizationId, 'idle').catch(() => {});
 
       if (allContentBlocks.length > 0) {
-        await this.addMessage(options.organizationId, sessionId, 'ai', JSON.stringify(allContentBlocks)).catch(() => {});
+        await this.addMessage(options.organizationId, sessionId, 'ai', JSON.stringify(allContentBlocks)).catch((err) => {
+          console.error('[ChatService] Failed to save AI reply:', err instanceof Error ? err.message : err);
+        });
       }
 
       this.maybeSetTitle(options.organizationId, sessionId, options.message).catch(() => {});
@@ -317,6 +319,18 @@ export class ChatService {
   // ==========================================================================
   // Streaming
   // ==========================================================================
+
+  /**
+   * Public wrapper for prepareScopeSession — used by group chat routes
+   * that need to run the conversation generator directly (for SSE streaming).
+   */
+  async prepareScopeSessionPublic(
+    organizationId: string,
+    userId: string,
+    options: ChatStreamOptions,
+  ) {
+    return this.prepareScopeSession(organizationId, userId, options);
+  }
 
   /**
    * Stream a chat response using SSE.

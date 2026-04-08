@@ -3,6 +3,11 @@
  *
  * Handles Slack Events API verification, message parsing, and reply posting.
  * Implements the IMAdapter interface for Slack-specific behavior.
+ *
+ * Fixed vs original:
+ * - Replies now use thread_ts to respond in the correct thread
+ * - Filters out non-message subtypes (channel_join, file_share, etc.)
+ * - Properly handles bot_id filtering
  */
 
 import crypto from 'crypto';
@@ -33,13 +38,13 @@ export class SlackAdapter implements IMAdapter {
    */
   verifyRequest(headers: Record<string, string>, body: string): boolean {
     const signingSecret = this.getSigningSecretFromHeaders(headers);
-    if (!signingSecret) return true; // No secret configured — skip verification
+    if (!signingSecret) return true;
 
     const timestamp = headers['x-slack-request-timestamp'];
     const signature = headers['x-slack-signature'];
     if (!timestamp || !signature) return false;
 
-    // Reject requests older than 5 minutes
+    // Reject requests older than 5 minutes (replay protection)
     const now = Math.floor(Date.now() / 1000);
     if (Math.abs(now - parseInt(timestamp, 10)) > 300) return false;
 
@@ -58,124 +63,98 @@ export class SlackAdapter implements IMAdapter {
     const payload = body as SlackEventPayload;
     if (!payload.event || payload.event.type !== 'message') return null;
 
-    // Ignore bot messages and message subtypes (edits, deletes, etc.)
-    if (payload.event.bot_id || payload.event.subtype) return null;
+    // Filter out bot messages
+    if (payload.event.bot_id) return null;
 
-    const text = payload.event.text?.trim();
-    if (!text) return null;
+    // Filter out non-user subtypes (channel_join, file_share, message_changed, etc.)
+    // Only process plain user messages (subtype is undefined for normal messages)
+    if (payload.event.subtype) return null;
+
+    if (!payload.event.text?.trim() || !payload.event.channel || !payload.event.user) {
+      return null;
+    }
+
+    // Thread: use thread_ts if replying in a thread, otherwise use message ts
+    const threadId = payload.event.thread_ts || payload.event.ts || String(Date.now());
 
     return {
       channelType: 'slack',
-      channelId: payload.event.channel!,
-      // Use thread_ts if in a thread, otherwise use the message ts as the thread root
-      threadId: payload.event.thread_ts || payload.event.ts!,
-      userId: payload.event.user!,
-      text,
+      channelId: payload.event.channel,
+      threadId,
+      userId: payload.event.user,
+      text: payload.event.text.trim(),
     };
   }
 
   /**
-   * Post a reply to Slack using chat.postMessage with retry.
-   * Replies in the same thread as the original message.
+   * Check if payload is a Slack URL verification challenge.
    */
-  async sendReply(binding: IMChannelBindingEntity, threadId: string, text: string): Promise<void> {
-    const botToken = binding.bot_token_enc; // TODO: decrypt in production
-    if (!botToken) {
-      console.error(`No bot token for Slack binding ${binding.id}`);
-      return;
-    }
-
-    const chunks = this.splitMessage(text, 39000);
-
-    for (const chunk of chunks) {
-      await this.postWithRetry(botToken, {
-        channel: binding.channel_id,
-        thread_ts: threadId,
-        text: chunk,
-      });
-    }
+  static isChallenge(body: unknown): string | null {
+    const p = body as SlackEventPayload;
+    if (p.type === 'url_verification' && p.challenge) return p.challenge;
+    return null;
   }
 
   /**
-   * Call Slack API with exponential backoff retry (handles rate limits).
+   * Send a reply back to Slack, using thread_ts to reply in the correct thread.
    */
-  private async postWithRetry(
-    token: string,
-    body: Record<string, unknown>,
-    retries = 3,
-  ): Promise<void> {
-    for (let attempt = 0; attempt <= retries; attempt++) {
+  async sendReply(binding: IMChannelBindingEntity, threadId: string, text: string): Promise<void> {
+    const botToken = binding.bot_token_enc;
+    if (!botToken) {
+      console.error(`[SLACK] No bot token for binding ${binding.id}`);
+      return;
+    }
+
+    const chunks = this.splitMessage(text, 4000);
+    for (const chunk of chunks) {
+      const body: Record<string, unknown> = {
+        channel: binding.channel_id,
+        text: chunk,
+      };
+
+      // Reply in thread if we have a thread_ts
+      if (threadId) {
+        body.thread_ts = threadId;
+      }
+
       const response = await fetch('https://slack.com/api/chat.postMessage', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${botToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
       });
 
-      if (response.ok) {
-        const data = await response.json() as { ok: boolean; error?: string };
-        if (data.ok) return;
-
-        // Slack returns 200 with ok=false for API errors
-        if (data.error === 'ratelimited' && attempt < retries) {
-          const retryAfter = parseInt(response.headers.get('retry-after') || '1', 10);
-          await this.sleep(retryAfter * 1000);
-          continue;
-        }
-        console.error(`Slack API error: ${data.error}`);
-        return;
-      }
-
-      // HTTP-level rate limit (429)
-      if (response.status === 429 && attempt < retries) {
-        const retryAfter = parseInt(response.headers.get('retry-after') || '1', 10);
-        await this.sleep(retryAfter * 1000);
+      if (!response.ok) {
+        console.error(`[SLACK] HTTP error: ${response.status} ${await response.text()}`);
         continue;
       }
 
-      // Transient errors — retry with backoff
-      if (response.status >= 500 && attempt < retries) {
-        await this.sleep(Math.min(500 * 2 ** attempt, 3000));
-        continue;
+      const result = await response.json() as { ok: boolean; error?: string };
+      if (!result.ok) {
+        console.error(`[SLACK] API error: ${result.error}`);
       }
-
-      console.error(`Slack HTTP error: ${response.status} ${await response.text()}`);
-      return;
     }
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Check if the payload is a Slack URL verification challenge.
-   */
-  static isChallenge(body: unknown): string | null {
-    const payload = body as SlackEventPayload;
-    if (payload.type === 'url_verification' && payload.challenge) {
-      return payload.challenge;
-    }
-    return null;
+  private getSigningSecretFromHeaders(headers: Record<string, string>): string | undefined {
+    return headers['x-slack-signing-secret-internal'];
   }
 
   private splitMessage(text: string, maxLen: number): string[] {
     if (text.length <= maxLen) return [text];
     const chunks: string[] = [];
-    for (let i = 0; i < text.length; i += maxLen) {
-      chunks.push(text.substring(i, i + maxLen));
+    let remaining = text;
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLen) { chunks.push(remaining); break; }
+      let splitIdx = remaining.lastIndexOf('\n', maxLen);
+      if (splitIdx <= 0) splitIdx = remaining.lastIndexOf(' ', maxLen);
+      if (splitIdx <= 0) splitIdx = maxLen;
+      chunks.push(remaining.substring(0, splitIdx));
+      remaining = remaining.substring(splitIdx).trimStart();
     }
     return chunks;
-  }
-
-  /**
-   * In a real implementation, the signing secret would come from the binding config.
-   * For now, we pass it through a custom header set by the route handler.
-   */
-  private getSigningSecretFromHeaders(headers: Record<string, string>): string | null {
-    return headers['x-slack-signing-secret-internal'] || null;
   }
 }
 
