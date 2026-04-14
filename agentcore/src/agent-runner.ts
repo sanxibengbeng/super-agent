@@ -162,6 +162,39 @@ async function* runWithOptions(
     }
 
     if (msg.type === 'result') {
+      const resultMsg = msg as Record<string, unknown>;
+      // Extract token usage from SDK result message
+      const usage = resultMsg.usage as Record<string, number> | undefined;
+      const modelUsage = resultMsg.modelUsage as Record<string, Record<string, number>> | undefined;
+      let tokenUsage: import('./types.js').TokenUsage | undefined;
+
+      if (usage) {
+        tokenUsage = {
+          input_tokens: usage.input_tokens ?? 0,
+          output_tokens: usage.output_tokens ?? 0,
+          cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+          cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+          total_cost_usd: (resultMsg.total_cost_usd as number) ?? 0,
+        };
+      } else if (modelUsage) {
+        // Aggregate from per-model usage
+        let inputTokens = 0, outputTokens = 0, cacheRead = 0, cacheCreation = 0, cost = 0;
+        for (const mu of Object.values(modelUsage)) {
+          inputTokens += mu.inputTokens ?? 0;
+          outputTokens += mu.outputTokens ?? 0;
+          cacheRead += mu.cacheReadInputTokens ?? 0;
+          cacheCreation += mu.cacheCreationInputTokens ?? 0;
+          cost += mu.costUSD ?? 0;
+        }
+        tokenUsage = {
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_read_input_tokens: cacheRead,
+          cache_creation_input_tokens: cacheCreation,
+          total_cost_usd: cost,
+        };
+      }
+
       yield {
         type: 'result',
         session_id: msg.session_id as string | undefined,
@@ -169,6 +202,7 @@ async function* runWithOptions(
         num_turns: msg.num_turns as number | undefined,
         is_error: msg.is_error as boolean | undefined,
         result: msg.result as string | undefined,
+        token_usage: tokenUsage,
       };
       continue;
     }

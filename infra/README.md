@@ -163,9 +163,27 @@ cat << 'EOF' > /tmp/agentcore-permissions.json
       "Resource": "*"
     },
     {
+      "Sid": "WorkspaceS3",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:ListBucket",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::super-agent-workspaces-<ACCOUNT_ID>",
+        "arn:aws:s3:::super-agent-workspaces-<ACCOUNT_ID>/*"
+      ]
+    },
+    {
       "Sid": "BrowserTool",
       "Effect": "Allow",
       "Action": [
+        "bedrock-agentcore:CreateBrowser",
+        "bedrock-agentcore:ListBrowsers",
+        "bedrock-agentcore:GetBrowser",
+        "bedrock-agentcore:DeleteBrowser",
         "bedrock-agentcore:StartBrowserSession",
         "bedrock-agentcore:StopBrowserSession",
         "bedrock-agentcore:GetBrowserSession",
@@ -174,7 +192,7 @@ cat << 'EOF' > /tmp/agentcore-permissions.json
         "bedrock-agentcore:ConnectBrowserLiveViewStream",
         "bedrock-agentcore:UpdateBrowserStream"
       ],
-      "Resource": "arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:browser/*"
+      "Resource": "arn:aws:bedrock-agentcore:*:*:browser/*"
     },
     {
       "Sid": "CodeInterpreter",
@@ -186,7 +204,7 @@ cat << 'EOF' > /tmp/agentcore-permissions.json
         "bedrock-agentcore:GetCodeInterpreterSession",
         "bedrock-agentcore:ListCodeInterpreterSessions"
       ],
-      "Resource": "arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:code-interpreter/*"
+      "Resource": "arn:aws:bedrock-agentcore:*:*:code-interpreter/*"
     }
   ]
 }
@@ -198,8 +216,8 @@ aws iam put-role-policy \
   --policy-document file:///tmp/agentcore-permissions.json
 ```
 
-> S3 workspace 权限不需要加到 execution role 上 — CDK stack 已经创建了 workspace bucket 并授权给 EC2 instance role。
-> Execution role 只需要 Bedrock + ECR 权限。
+> S3 workspace 权限已加到 execution role 上，容器内 `restoreWorkspaceFromS3` 和 `syncWorkspaceToS3` 需要读写 workspace bucket。
+> Browser Tool 和 Code Interpreter 是 AWS 托管资源，ARN 中 region 和 account 不固定（如 `us-east-1:aws:browser/aws.browser.v1`），因此 Resource 必须用 `*:*` 通配。
 
 ### 步骤 D：创建 AgentCore Runtime
 
@@ -214,7 +232,8 @@ aws bedrock-agentcore-control create-agent-runtime \
     "ANTHROPIC_MODEL":"us.anthropic.claude-opus-4-6-v1",
     "AWS_ACCESS_KEY_ID":"<your-bedrock-access-key>",
     "AWS_SECRET_ACCESS_KEY":"<your-bedrock-secret-key>",
-    "AWS_REGION":"us-west-2"
+    "AWS_REGION":"us-west-2",
+    "WORKSPACE_S3_REGION":"us-east-1"
   }' \
   --description "Super Agent AgentCore Runtime" \
   --region us-west-2
@@ -246,6 +265,7 @@ cat > agentcore-overrides.env << EOF
 AGENT_RUNTIME=agentcore
 AGENTCORE_RUNTIME_ARN=<步骤 D 输出的 agentRuntimeArn>
 AGENTCORE_EXECUTION_ROLE_ARN=arn:aws:iam::<ACCOUNT_ID>:role/super-agent-agentcore-execution-role
+AGENTCORE_WORKSPACE_S3_BUCKET=super-agent-workspaces-<ACCOUNT_ID>
 EOF
 ```
 
@@ -264,9 +284,13 @@ aws ssm start-session --target <InstanceId> --region us-west-2
 
 # 在 EC2 上
 sudo -u ubuntu vi /opt/super-agent/.env
-# 添加上面三行
-sudo systemctl restart super-agent-backend
+# 添加上面四行
+sudo systemctl restart backend
 ```
+
+> 注意：systemd service 的 `EnvironmentFile` 指向 `/opt/super-agent/.env`，不是 `/opt/super-agent/backend/.env`。
+> 后端代码也会通过 dotenv 加载 `backend/.env`，但 dotenv 不覆盖已存在的环境变量，
+> 所以 systemd 注入的值优先。手动修改时务必改 `/opt/super-agent/.env`。
 
 ### 步骤 F：验证
 
@@ -287,7 +311,7 @@ sudo systemctl restart super-agent-backend
 ```bash
 # SSH 到 EC2
 sed -i 's/^AGENT_RUNTIME=agentcore/AGENT_RUNTIME=claude/' /opt/super-agent/.env
-sudo systemctl restart super-agent-backend
+sudo systemctl restart backend
 ```
 
 ### 更新 AgentCore 容器代码
@@ -300,14 +324,22 @@ docker buildx build --platform linux/arm64 \
 docker push <ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/super-agent-agentcore:latest
 
 # 通知 AgentCore 拉取新镜像
+# ⚠️ 必须传完整的 --environment-variables，否则 AWS 会清空已有环境变量
 aws bedrock-agentcore-control update-agent-runtime \
   --agent-runtime-id <runtime-id> \
   --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"<ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/super-agent-agentcore:latest"}}' \
   --role-arn "arn:aws:iam::<ACCOUNT_ID>:role/super-agent-agentcore-execution-role" \
   --network-configuration '{"networkMode":"PUBLIC"}' \
-  --environment-variables '{...same as before...}' \
+  --environment-variables '{
+    "CLAUDE_CODE_USE_BEDROCK":"1",
+    "ANTHROPIC_MODEL":"us.anthropic.claude-opus-4-6-v1",
+    "AWS_REGION":"us-west-2",
+    "WORKSPACE_S3_REGION":"us-east-1"
+  }' \
   --region us-west-2
 ```
+
+> ⚠️ `--environment-variables` 是全量替换，不是增量更新。每次 update 都必须传完整的环境变量集合，漏传的变量会被清空。如果 Bedrock 使用跨账号 AK/SK，也要一并传入。
 
 ### 更换 Bedrock 模型或轮换 AK/SK
 

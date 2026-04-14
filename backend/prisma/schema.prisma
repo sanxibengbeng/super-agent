@@ -59,6 +59,13 @@ model organizations {
   rehearsal_sessions         rehearsal_sessions[]
   scope_evolution_proposals  scope_evolution_proposals[]
   user_groups                user_groups[]
+  showcase_industries        showcase_industries[]
+  showcase_domains           showcase_domains[]
+  showcase_cases             showcase_cases[]
+  credential_vault           credential_vault[]
+  data_connectors            data_connectors[]
+  connector_audit_log        connector_audit_log[]
+  connector_oauth_providers  connector_oauth_providers[]
   @@index([slug])
   @@index([plan_type])
   @@index([created_at(sort: Desc)])
@@ -1396,4 +1403,258 @@ model mcp_group_access {
   @@id([mcp_server_id, group_id])
   @@index([group_id])
   @@index([mcp_server_id])
+}
+
+// ============================================================================
+// Showcase Industries — top-level industry tabs for "企业Agent大赏"
+// ============================================================================
+model showcase_industries {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  name            String   @db.VarChar(100)
+  slug            String   @db.VarChar(100)
+  sort_order      Int      @default(0)
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamptz
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization organizations       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  domains      showcase_domains[]
+
+  @@unique([organization_id, slug], name: "unique_industry_slug_per_org")
+  @@index([organization_id])
+  @@index([sort_order])
+}
+
+// ============================================================================
+// Showcase Domains — business domain sections within an industry
+// ============================================================================
+model showcase_domains {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  industry_id     String   @db.Uuid
+  name            String   @db.VarChar(100)
+  name_en         String?  @db.VarChar(100)
+  icon            String?  @db.VarChar(10)
+  sort_order      Int      @default(0)
+  created_at      DateTime @default(now()) @db.Timestamptz
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization organizations        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  industry     showcase_industries  @relation(fields: [industry_id], references: [id], onDelete: Cascade)
+  cases        showcase_cases[]
+
+  @@index([organization_id])
+  @@index([industry_id])
+  @@index([sort_order])
+}
+
+// ============================================================================
+// Showcase Cases — individual agent capability cards
+// ============================================================================
+model showcase_cases {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  domain_id       String   @db.Uuid
+  title           String   @db.VarChar(100)
+  description     String?
+  initial_prompt  String?
+  session_id      String?  @db.Uuid
+  agent_id        String?  @db.Uuid
+  workflow_id     String?  @db.Uuid
+  scope_id        String?  @db.Uuid
+  run_config      Json     @default("{}")
+  sort_order      Int      @default(0)
+  is_active       Boolean  @default(true)
+  created_by      String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization organizations     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  domain       showcase_domains  @relation(fields: [domain_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([domain_id])
+  @@index([sort_order])
+}
+
+// ============================================================================
+// Token Usage Monthly — per-user per-month token consumption tracking
+// ============================================================================
+model token_usage_monthly {
+  id                          String   @id @default(uuid()) @db.Uuid
+  organization_id             String   @db.Uuid
+  user_id                     String   @db.Uuid
+  month                       String   @db.VarChar(7) // YYYY-MM
+  input_tokens                BigInt   @default(0)
+  output_tokens               BigInt   @default(0)
+  cache_read_input_tokens     BigInt   @default(0)
+  cache_creation_input_tokens BigInt   @default(0)
+  total_cost_usd              Decimal  @default(0) @db.Decimal(12, 6)
+  invocation_count            Int      @default(0)
+  updated_at                  DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  @@unique([organization_id, user_id, month])
+  @@index([organization_id])
+  @@index([user_id])
+  @@index([month])
+  @@index([organization_id, month])
+}
+
+// ============================================================================
+// Token Usage Log — individual invocation records for audit trail
+// ============================================================================
+model token_usage_log {
+  id                          String   @id @default(uuid()) @db.Uuid
+  organization_id             String   @db.Uuid
+  user_id                     String   @db.Uuid
+  session_id                  String?  @db.Uuid
+  agent_id                    String?
+  source                      String   @db.VarChar(30) // chat | workflow | scope_generator
+  input_tokens                Int      @default(0)
+  output_tokens               Int      @default(0)
+  cache_read_input_tokens     Int      @default(0)
+  cache_creation_input_tokens Int      @default(0)
+  total_cost_usd              Decimal  @default(0) @db.Decimal(12, 6)
+  model                       String?  @db.VarChar(100)
+  created_at                  DateTime @default(now()) @db.Timestamptz
+
+  @@index([organization_id])
+  @@index([user_id])
+  @@index([session_id])
+  @@index([created_at(sort: Desc)])
+  @@index([organization_id, user_id, created_at])
+}
+
+
+// ============================================================================
+// Credential Vault — encrypted credential storage for Data Connectors
+// ============================================================================
+model credential_vault {
+  id                String    @id @default(uuid()) @db.Uuid
+  organization_id   String    @db.Uuid
+  name              String    @db.VarChar(255)
+  description       String?
+  auth_type         String    @db.VarChar(50)
+  encrypted_data    String
+  kms_key_arn       String?   @db.VarChar(512)
+  encrypted_dek     String?
+  oauth_provider    String?   @db.VarChar(100)
+  oauth_scopes      String[]  @default([])
+  token_expires_at  DateTime? @db.Timestamptz
+  refresh_token_enc String?
+  status            String    @default("active") @db.VarChar(50)
+  last_verified_at  DateTime? @db.Timestamptz
+  expires_at        DateTime? @db.Timestamptz
+  created_by        String?   @db.Uuid
+  created_at        DateTime  @default(now()) @db.Timestamptz
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz
+
+  organization organizations    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  connectors   data_connectors[]
+
+  @@unique([organization_id, name], name: "unique_credential_name_per_org")
+  @@index([organization_id])
+  @@index([auth_type])
+  @@index([status])
+  @@index([token_expires_at])
+}
+
+// ============================================================================
+// Data Connectors — Gateway Lambda Target + Credential binding
+// ============================================================================
+model data_connectors {
+  id                    String    @id @default(uuid()) @db.Uuid
+  organization_id       String    @db.Uuid
+  name                  String    @db.VarChar(255)
+  display_name          String    @db.VarChar(255)
+  description           String?
+  icon                  String?
+  connector_type        String    @db.VarChar(50)
+  credential_id         String    @db.Uuid
+  gateway_target_id     String?   @db.VarChar(255)
+  gateway_target_arn    String?   @db.VarChar(512)
+  identity_provider_arn String?   @db.VarChar(512)
+  config                Json      @default("{}")
+  template_id           String?   @db.VarChar(100)
+  status                String    @default("configured") @db.VarChar(50)
+  last_health_check     DateTime? @db.Timestamptz
+  health_message        String?
+  error_count           Int       @default(0)
+  usage_count           Int       @default(0)
+  last_used_at          DateTime? @db.Timestamptz
+  created_by            String?   @db.Uuid
+  created_at            DateTime  @default(now()) @db.Timestamptz
+  updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz
+
+  organization     organizations    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  credential       credential_vault @relation(fields: [credential_id], references: [id], onDelete: Restrict)
+  scope_connectors scope_data_connectors[]
+
+  @@unique([organization_id, name], name: "unique_connector_name_per_org")
+  @@index([organization_id])
+  @@index([connector_type])
+  @@index([credential_id])
+  @@index([status])
+}
+
+// ============================================================================
+// Scope ↔ Data Connector bindings
+// ============================================================================
+model scope_data_connectors {
+  id                String   @id @default(uuid()) @db.Uuid
+  business_scope_id String   @db.Uuid
+  connector_id      String   @db.Uuid
+  assigned_at       DateTime @default(now()) @db.Timestamptz
+  assigned_by       String?  @db.Uuid
+  scope_config      Json?    @db.JsonB
+
+  connector data_connectors @relation(fields: [connector_id], references: [id], onDelete: Cascade)
+
+  @@unique([business_scope_id, connector_id], name: "unique_scope_connector")
+  @@index([business_scope_id])
+  @@index([connector_id])
+}
+
+// ============================================================================
+// Connector Audit Log — tracks all connector and credential operations
+// ============================================================================
+model connector_audit_log {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  connector_id    String?  @db.Uuid
+  credential_id   String?  @db.Uuid
+  action          String   @db.VarChar(50)
+  actor_id        String?  @db.Uuid
+  actor_type      String   @default("user") @db.VarChar(20)
+  details         Json     @default("{}")
+  ip_address      String?  @db.VarChar(45)
+  created_at      DateTime @default(now()) @db.Timestamptz
+
+  organization organizations @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, created_at(sort: Desc)])
+  @@index([connector_id])
+  @@index([credential_id])
+}
+
+// ============================================================================
+// Connector OAuth Providers — per-org OAuth app credentials (Client ID/Secret)
+// ============================================================================
+model connector_oauth_providers {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  provider        String   @db.VarChar(50)  // google, salesforce, microsoft, etc.
+  client_id       String
+  client_secret_enc String  // encrypted via credential vault encryption
+  scopes          String[] @default([])
+  extra_config    Json     @default("{}")   // provider-specific settings
+  created_by      String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  organization organizations @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, provider], name: "unique_oauth_provider_per_org")
+  @@index([organization_id])
 }

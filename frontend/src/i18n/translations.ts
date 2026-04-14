@@ -31,8 +31,8 @@ export const translations: TranslationData = {
     cn: '应用'
   },
   'nav.starred': {
-    en: 'Starred',
-    cn: '明星案例'
+    en: 'Showcase',
+    cn: '企业Agent大赏'
   },
   'nav.tasks': {
     en: 'Tasks',
@@ -1241,5 +1241,147 @@ export const translations: TranslationData = {
   'customizer.color.indigo': {
     en: 'Indigo',
     cn: '靛蓝'
+  },
+
+  // Data Connectors
+  'connector.title': {
+    en: 'Data Connectors',
+    cn: '数据连接器'
+  },
+  'connector.manage': {
+    en: 'Manage Connectors',
+    cn: '管理连接器'
+  },
+  'connector.description': {
+    en: 'Securely connect to external systems (Gmail, Salesforce, BigQuery, etc.) via AgentCore Gateway. Zero credential exposure in agent processes.',
+    cn: '通过 AgentCore Gateway 安全连接外部系统（Gmail、Salesforce、BigQuery 等），Agent 进程中零凭证暴露。'
+  },
+  'connector.connected': {
+    en: 'Connected',
+    cn: '已连接'
+  },
+  'connector.catalog': {
+    en: 'Connector Catalog',
+    cn: '连接器目录'
+  },
+  'connector.noConnectors': {
+    en: 'No data connectors',
+    cn: '暂无数据连接器'
+  },
+  'connector.noConnectorsHint': {
+    en: 'Add connectors from the catalog below',
+    cn: '从下方目录添加连接器'
+  },
+  'connector.connect': {
+    en: 'Connect',
+    cn: '连接'
+  },
+  'connector.alreadyConnected': {
+    en: 'Connected',
+    cn: '已连接'
+  },
+  'connector.search': {
+    en: 'Search connectors...',
+    cn: '搜索连接器...'
+  },
+  'connector.wizard.name': {
+    en: 'Connector Name',
+    cn: '连接器名称'
+  },
+  'connector.wizard.instanceUrl': {
+    en: 'Instance URL (optional)',
+    cn: '实例 URL（可选）'
+  },
+  'connector.wizard.next': {
+    en: 'Next →',
+    cn: '下一步 →'
+  },
+  'connector.wizard.prev': {
+    en: '← Back',
+    cn: '← 上一步'
+  },
+  'connector.wizard.securityNote': {
+    en: 'Credentials are transmitted via AWS managed secure gateway',
+    cn: '凭证通过 AWS 托管安全网关传输'
+  },
+  'connector.wizard.securityDetail': {
+    en: 'Agent processes never touch your passwords or tokens',
+    cn: 'Agent 进程中不会接触到你的密码或 Token'
+  },
+  'connector.wizard.apiKey': {
+    en: 'API Key',
+    cn: 'API Key'
+  },
+  'connector.wizard.authorize': {
+    en: 'Authorize',
+    cn: '授权连接'
+  },
+  'connector.wizard.host': {
+    en: 'Host',
+    cn: 'Host'
+  },
+  'connector.wizard.username': {
+    en: 'Username',
+    cn: '用户名'
+  },
+  'connector.wizard.password': {
+    en: 'Password',
+    cn: '密码'
+  },
+  'connector.wizard.iamRoleArn': {
+    en: 'IAM Role ARN',
+    cn: 'IAM Role ARN'
+  },
+  'connector.wizard.serviceAccountJson': {
+    en: 'Service Account JSON',
+    cn: 'Service Account JSON'
+  },
+  'connector.wizard.createAndTest': {
+    en: 'Create & Test',
+    cn: '创建并测试'
+  },
+  'connector.wizard.creating': {
+    en: 'Creating...',
+    cn: '创建中...'
+  },
+  'connector.wizard.success': {
+    en: 'Connection successful',
+    cn: '连接成功'
+  },
+  'connector.wizard.done': {
+    en: 'Done ✓',
+    cn: '完成 ✓'
+  },
+  'connector.wizard.cancel': {
+    en: 'Cancel',
+    cn: '取消'
+  },
+  'connector.status.connected': {
+    en: 'Healthy',
+    cn: '正常'
+  },
+  'connector.status.error': {
+    en: 'Error',
+    cn: '错误'
+  },
+  'connector.status.disabled': {
+    en: 'Disabled',
+    cn: '已禁用'
+  },
+  'connector.status.pending': {
+    en: 'Pending',
+    cn: '待连接'
+  },
+  'connector.footer': {
+    en: 'Data connectors are securely routed via AgentCore Gateway. Zero credential exposure in agent processes.',
+    cn: '数据连接器通过 AgentCore Gateway 安全路由，Agent 进程中零凭证暴露。'
+  },
+  'connector.uses': {
+    en: 'uses',
+    cn: '次'
+  },
+  'connector.items': {
+    en: 'items',
+    cn: '个'
   }
 }

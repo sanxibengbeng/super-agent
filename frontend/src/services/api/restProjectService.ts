@@ -80,7 +80,7 @@ export const RestProjectService = {
   async getProject(id: string): Promise<Project> {
     return restClient.get<Project>(`/api/projects/${id}`);
   },
-  async updateProject(id: string, input: Partial<{ name: string; description: string; repo_url: string }>): Promise<Project> {
+  async updateProject(id: string, input: Partial<{ name: string; description: string; repo_url: string; business_scope_id: string; agent_id: string }>): Promise<Project> {
     return restClient.put<Project>(`/api/projects/${id}`, input);
   },
   async deleteProject(id: string): Promise<void> {
@@ -154,6 +154,9 @@ export const RestProjectService = {
   async ensureWorkspace(projectId: string): Promise<string> {
     const res = await restClient.post<{ session_id: string }>(`/api/projects/${projectId}/ensure-workspace`, {});
     return res.session_id;
+  },
+  async syncWorkspace(projectId: string): Promise<{ synced: number; path: string }> {
+    return restClient.post(`/api/projects/${projectId}/sync-workspace`, {});
   },
 
   // Settings

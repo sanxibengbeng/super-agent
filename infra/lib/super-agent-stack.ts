@@ -102,6 +102,13 @@ export class SuperAgentStack extends cdk.Stack {
     });
     dbSg.addIngressRule(ec2Sg, ec2.Port.tcp(5432), 'PostgreSQL from EC2');
 
+    const redisSg = new ec2.SecurityGroup(this, 'RedisSG', {
+      vpc,
+      description: 'ElastiCache Redis',
+      allowAllOutbound: false,
+    });
+    redisSg.addIngressRule(ec2Sg, ec2.Port.tcp(6379), 'Redis from EC2');
+
     // =========================================================================
     // RDS PostgreSQL
     // =========================================================================
@@ -126,6 +133,27 @@ export class SuperAgentStack extends cdk.Stack {
       backupRetention: cdk.Duration.days(7),
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
     });
+
+    // =========================================================================
+    // ElastiCache Redis (replaces EC2-local Redis for BullMQ + distributed locks)
+    // =========================================================================
+    const redisSubnetGroup = new cdk.aws_elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
+      description: 'Subnets for ElastiCache Redis',
+      subnetIds: vpc.publicSubnets.map(s => s.subnetId),
+      cacheSubnetGroupName: `${id}-redis-subnets`.toLowerCase(),
+    });
+
+    const redisCluster = new cdk.aws_elasticache.CfnCacheCluster(this, 'RedisCluster', {
+      engine: 'redis',
+      cacheNodeType: 'cache.t4g.micro',
+      numCacheNodes: 1,
+      clusterName: `${id}-redis`.toLowerCase(),
+      vpcSecurityGroupIds: [redisSg.securityGroupId],
+      cacheSubnetGroupName: redisSubnetGroup.cacheSubnetGroupName,
+      engineVersion: '7.1',
+      port: 6379,
+    });
+    redisCluster.addDependency(redisSubnetGroup);
 
     // =========================================================================
     // IAM Role for EC2
@@ -355,6 +383,8 @@ export class SuperAgentStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DBSecretArn', { value: dbInstance.secret!.secretArn });
     new cdk.CfnOutput(this, 'AvatarBucketName', { value: avatarBucket.bucketName });
     new cdk.CfnOutput(this, 'WorkspaceBucketName', { value: workspaceBucket.bucketName });
+    new cdk.CfnOutput(this, 'RedisEndpoint', { value: redisCluster.attrRedisEndpointAddress });
+    new cdk.CfnOutput(this, 'RedisPort', { value: redisCluster.attrRedisEndpointPort });
     new cdk.CfnOutput(this, 'AuthMode', { value: authMode });
     new cdk.CfnOutput(this, 'EnableCdn', { value: enableCdn ? 'true' : 'false' });
 

@@ -91,12 +91,15 @@ COGNITO_DOMAIN=$(get_output "CognitoDomainUrl")
 FRONTEND_BUCKET=$(get_output "FrontendBucketName")
 CF_DIST_ID=$(get_output "CloudFrontDistributionId")
 DOMAIN_NAME=$(get_output "DomainName")
+REDIS_ENDPOINT=$(get_output "RedisEndpoint")
+REDIS_PORT_OUTPUT=$(get_output "RedisPort")
 
 echo "  InstanceId:       $INSTANCE_ID"
 echo "  PublicIP:         $PUBLIC_IP"
 echo "  AuthMode:         $AUTH_MODE"
 echo "  EnableCdn:        $ENABLE_CDN"
 echo "  WorkspaceBucket:  $WORKSPACE_BUCKET"
+[ -n "$REDIS_ENDPOINT" ] && echo "  RedisEndpoint:    $REDIS_ENDPOINT:${REDIS_PORT_OUTPUT:-6379}"
 [ -n "$DOMAIN_NAME" ] && echo "  DomainName:       $DOMAIN_NAME"
 [ -n "$CF_DIST_ID" ]  && echo "  CloudFrontDistId: $CF_DIST_ID"
 
@@ -195,9 +198,9 @@ PORT=3000
 HOST=0.0.0.0
 NODE_ENV=production
 LOG_LEVEL=info
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=super-agent-redis-password
+REDIS_HOST=${REDIS_ENDPOINT:-localhost}
+REDIS_PORT=${REDIS_PORT_OUTPUT:-6379}
+REDIS_PASSWORD=${REDIS_ENDPOINT:+}
 AUTH_MODE=$AUTH_MODE
 AWS_REGION=$REGION
 S3_BUCKET_NAME=$AVATAR_BUCKET
@@ -281,7 +284,7 @@ fi
 if [ "$SKIP_FRONTEND" = false ]; then
   echo ""
   echo "=== Building frontend ==="
-  cd "$PROJECT_ROOT/super-agent-platform"
+  cd "$PROJECT_ROOT/frontend"
 
   # Generate .env.production for Vite
   if [ "$AUTH_MODE" = "cognito" ] && [ -n "$COGNITO_USER_POOL_ID" ]; then
@@ -306,11 +309,11 @@ VITE_EOF
   # Always sync to EC2 (Nginx 443 fallback)
   echo "=== Syncing frontend to EC2 ==="
   cd "$PROJECT_ROOT"
-  $SSH_CMD "mkdir -p /opt/super-agent/super-agent-platform/dist"
+  $SSH_CMD "mkdir -p /opt/super-agent/frontend/dist"
   rsync -avz --delete \
     -e "$RSYNC_SSH" \
-    super-agent-platform/dist/ \
-    "$SSH_USER@localhost:/opt/super-agent/super-agent-platform/dist/"
+    frontend/dist/ \
+    "$SSH_USER@localhost:/opt/super-agent/frontend/dist/"
 
   # If CDN enabled (via stack output or CLI override), also sync to S3 + invalidate CloudFront
   EFFECTIVE_BUCKET="${FRONTEND_S3_BUCKET:-$FRONTEND_BUCKET}"
@@ -318,14 +321,14 @@ VITE_EOF
 
   if [ -n "$EFFECTIVE_BUCKET" ]; then
     echo "=== Syncing frontend to S3 ($EFFECTIVE_BUCKET) ==="
-    aws s3 sync super-agent-platform/dist/ "s3://$EFFECTIVE_BUCKET/" --delete --region "$REGION"
+    aws s3 sync frontend/dist/ "s3://$EFFECTIVE_BUCKET/" --delete --region "$REGION"
     if [ -n "$EFFECTIVE_CF_ID" ]; then
       echo "=== Invalidating CloudFront ($EFFECTIVE_CF_ID) ==="
       aws cloudfront create-invalidation --distribution-id "$EFFECTIVE_CF_ID" --paths "/*" --region "$REGION" 2>/dev/null || true
     fi
   elif [ "$ENABLE_CDN" = "true" ] && [ -n "$FRONTEND_BUCKET" ]; then
     echo "=== Syncing frontend to S3 + CloudFront invalidation ==="
-    aws s3 sync super-agent-platform/dist/ "s3://$FRONTEND_BUCKET/" --delete --region "$REGION"
+    aws s3 sync frontend/dist/ "s3://$FRONTEND_BUCKET/" --delete --region "$REGION"
     if [ -n "$CF_DIST_ID" ]; then
       aws cloudfront create-invalidation --distribution-id "$CF_DIST_ID" --paths "/*" --region "$REGION" 2>/dev/null || true
     fi
@@ -338,7 +341,7 @@ fi
 if [ "$SKIP_BACKEND" = false ]; then
   echo ""
   echo "=== Building backend locally ==="
-  cd "$PROJECT_ROOT/super-agent-backend"
+  cd "$PROJECT_ROOT/backend"
   npx tsc --noUnusedLocals false --noUnusedParameters false --strict false --noImplicitAny false --strictNullChecks false 2>&1 || true
   [ ! -f dist/index.js ] && echo "ERROR: local tsc failed, dist/index.js not found" && exit 1
 
@@ -348,13 +351,13 @@ if [ "$SKIP_BACKEND" = false ]; then
     -e "$RSYNC_SSH" \
     --exclude='node_modules' \
     --exclude='.env' \
-    super-agent-backend/ \
-    "$SSH_USER@localhost:/opt/super-agent/super-agent-backend/"
+    backend/ \
+    "$SSH_USER@localhost:/opt/super-agent/backend/"
 
   echo "=== Installing deps, migrating, restarting ==="
   $SSH_CMD << 'REMOTE_DEPLOY'
 set -euo pipefail
-cd /opt/super-agent/super-agent-backend
+cd /opt/super-agent/backend
 ln -sf /opt/super-agent/.env .env
 
 echo "  npm ci..."
@@ -388,10 +391,10 @@ else
 fi
 
 echo "  Restarting backend..."
-sudo systemctl restart super-agent-backend
-sudo systemctl enable super-agent-backend
+sudo systemctl restart backend
+sudo systemctl enable backend
 sleep 3
-sudo systemctl status super-agent-backend --no-pager || true
+sudo systemctl status backend --no-pager || true
 REMOTE_DEPLOY
 fi
 

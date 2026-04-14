@@ -5,7 +5,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { 
-  Briefcase, 
   ChevronDown, 
   Check, 
   Loader2, 
@@ -41,17 +40,8 @@ import type { WorkflowVariable } from '@/types/workflow-plan';
 import { createCanvasNode } from '@/lib/canvas/nodes';
 import { getAuthToken } from '@/services/api/restClient';
 import { ExecutionDetailModal } from '@/components/ExecutionDetailModal';
+import { BusinessScopeDropdown } from '@/components/BusinessScopeDropdown';
 import { RunWorkflowModal } from '@/components/RunWorkflowModal';
-
-// Default colors for business scope tabs
-const SCOPE_COLORS = [
-  'bg-blue-600',
-  'bg-emerald-700',
-  'bg-purple-600',
-  'bg-orange-600',
-  'bg-pink-600',
-  'bg-cyan-600',
-];
 
 // Convert legacy workflow to canvas data
 function workflowToCanvasData(workflow: WorkflowType): CanvasData {
@@ -670,34 +660,13 @@ export function WorkflowEditor() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
-        {/* Business Scope Tabs */}
-        <div className="flex gap-1 bg-gray-800/50 p-1 rounded-lg w-fit overflow-x-auto">
-          {businessScopes.map((scope, index) => {
-            const isActive = activeScopeId === scope.id;
-            const bgColor = SCOPE_COLORS[index % SCOPE_COLORS.length];
-            
-            return (
-              <button
-                key={scope.id}
-                onClick={() => handleScopeChange(scope.id)}
-                className={`
-                  flex items-center gap-2 px-4 py-2 rounded-md transition-all whitespace-nowrap
-                  ${isActive 
-                    ? `${bgColor} text-white` 
-                    : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-                  }
-                `}
-              >
-                {scope.icon ? (
-                  <span>{scope.icon}</span>
-                ) : (
-                  <Briefcase className="w-4 h-4" />
-                )}
-                <span className="text-sm font-medium">{scope.name}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* Business Scope Selector (dropdown) */}
+        <BusinessScopeDropdown
+          scopes={businessScopes}
+          activeScopeId={activeScopeId}
+          onScopeChange={handleScopeChange}
+          placeholder="Select scope"
+        />
       </div>
 
       {/* Main Content */}

@@ -32,7 +32,7 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send(project);
   });
 
-  fastify.put<{ Params: { id: string }; Body: { name?: string; description?: string; repo_url?: string } }>(
+  fastify.put<{ Params: { id: string }; Body: { name?: string; description?: string; repo_url?: string; business_scope_id?: string; agent_id?: string } }>(
     '/:id',
     { preHandler: [authenticate, requireModifyAccess] },
     async (request, reply) => {
@@ -243,6 +243,28 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const project = await projectService.updateSettings(request.user!.orgId, request.params.id, request.user!.id, request.body);
       return reply.send(project);
+    }
+  );
+
+  /**
+   * POST /:id/sync-workspace — Sync workspace files from S3 back to local
+   */
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/sync-workspace',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const result = await projectService.syncWorkspaceFromS3(
+          request.user!.orgId, request.params.id, request.user!.id,
+        );
+        return reply.send(result);
+      } catch (err) {
+        request.log.error({ err }, 'Workspace sync failed');
+        return reply.status(500).send({
+          error: err instanceof Error ? err.message : 'Sync failed',
+          code: 'SYNC_FAILED',
+        });
+      }
     }
   );
 }

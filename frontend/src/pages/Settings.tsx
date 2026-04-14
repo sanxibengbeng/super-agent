@@ -4,20 +4,22 @@
  */
 
 import { useState } from 'react';
-import { Users, Building2, Key, AlertCircle, Palette, UsersRound } from 'lucide-react';
+import { Users, Building2, Key, AlertCircle, Palette, UsersRound, BarChart3 } from 'lucide-react';
 import { MembersTab } from './settings/MembersTab';
 import { OrganizationTab } from './settings/OrganizationTab';
 import { ApiKeysTab } from './settings/ApiKeysTab';
 import { AppearanceTab } from './settings/AppearanceTab';
 import { GroupsTab } from './settings/GroupsTab';
+import { TokenUsageTab } from './settings/TokenUsageTab';
 import { useAuth } from '@/services/AuthContext';
 import { useMembers } from '@/services/useMembers';
 
-type Tab = 'members' | 'groups' | 'organization' | 'api-keys' | 'appearance';
+type Tab = 'members' | 'groups' | 'organization' | 'api-keys' | 'appearance' | 'token-usage';
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'members', label: 'Members', icon: <Users className="w-4 h-4" /> },
   { id: 'groups', label: 'Groups', icon: <UsersRound className="w-4 h-4" /> },
+  { id: 'token-usage', label: 'Token Usage', icon: <BarChart3 className="w-4 h-4" /> },
   { id: 'organization', label: 'Organization', icon: <Building2 className="w-4 h-4" /> },
   { id: 'api-keys', label: 'API Keys', icon: <Key className="w-4 h-4" /> },
   { id: 'appearance', label: 'Appearance', icon: <Palette className="w-4 h-4" /> },
@@ -65,6 +67,7 @@ export function Settings() {
       {/* Tab Content */}
       {activeTab === 'members' && <MembersTab isAdmin={isAdmin} currentUserId={user?.id ?? ''} />}
       {activeTab === 'groups' && <GroupsTab isAdmin={isAdmin} orgMembers={orgMembers.map(m => ({ id: m.id, user_id: m.user_id, name: m.name, email: m.email }))} />}
+      {activeTab === 'token-usage' && <TokenUsageTab isAdmin={isAdmin} />}
       {activeTab === 'organization' && <OrganizationTab isOwner={user?.role === 'owner'} />}
       {activeTab === 'api-keys' && <ApiKeysTab isAdmin={isAdmin} />}
       {activeTab === 'appearance' && <AppearanceTab />}

@@ -234,6 +234,8 @@ export class ChatService {
     message: string;
     organizationId: string;
     userId: string;
+    /** Override the agent's system prompt (used by Project module to inject dev-focused instructions) */
+    systemPromptOverride?: string;
   }): Promise<{ text: string; sessionId: string; contentBlocks: ContentBlock[] }> {
     const result = await this.prepareScopeSession(
       options.organizationId,
@@ -246,6 +248,11 @@ export class ChatService {
     );
 
     const { sessionId, agentConfig, skills, claudeSessionId, workspacePath, pluginPaths, mcpServers } = result;
+
+    // Apply system prompt override if provided (e.g., for Project module)
+    if (options.systemPromptOverride) {
+      agentConfig.systemPrompt = options.systemPromptOverride;
+    }
 
     // Persist user message
     await this.addMessage(options.organizationId, sessionId, 'user', options.message);
@@ -419,6 +426,8 @@ export class ChatService {
       organizationId,
       sessionId,
       agentId: agentConfig.id,
+      userId,
+      source: 'chat',
       subAgentNames: new Set(subAgentNames),
       subAgentNameToId,
       activeSubAgentCalls: new Map(),
@@ -634,6 +643,7 @@ export class ChatService {
 
       // Auto-distill memories from the conversation (fire-and-forget)
       if (useScopeFlow && allContentBlocks.length > 0 && options.businessScopeId) {
+        console.log(`[distillation-debug] Enqueuing: scope=${options.businessScopeId}, session=${sessionId}, blocks=${allContentBlocks.length}`);
         distillationService.enqueue({
           organizationId,
           scopeId: options.businessScopeId,

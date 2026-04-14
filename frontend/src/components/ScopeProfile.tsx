@@ -17,11 +17,21 @@ import { ScopeMemoryPanel } from './ScopeMemoryPanel'
 import { DocGroupsPanel } from './DocGroupsPanel'
 import { RehearsalPanel } from './RehearsalPanel'
 import { MCPCatalogPanel, type CustomMcpServer } from './MCPCatalogPanel'
+import { ConnectorPanel } from './ConnectorPanel'
 import {
   getAvatarDisplayUrl,
   getAvatarFallback,
   shouldShowAvatarImage,
 } from '@/utils/avatarUtils'
+import { translations } from '@/i18n/translations'
+
+/** Module-level t() — no React context dependency */
+function t(key: string): string {
+  const lang = (typeof window !== 'undefined' && localStorage.getItem('super-agent-language')) || 'en'
+  const entry = translations[key]
+  if (!entry) return key
+  return entry[lang as 'en' | 'cn'] ?? entry.en ?? key
+}
 
 interface ScopeProfileProps {
   scope: BusinessScope
@@ -296,6 +306,7 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
   const [isAdding, setIsAdding] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
   const [showCatalogPanel, setShowCatalogPanel] = useState(false)
+  const [showConnectorPanel, setShowConnectorPanel] = useState(false)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const [editingConfigId, setEditingConfigId] = useState<string | null>(null)
   const [configDraft, setConfigDraft] = useState('')
@@ -883,12 +894,12 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800">
             <div className="flex items-center gap-2">
-              <Server className="w-3.5 h-3.5 text-gray-500" />
+              <Server className="w-4 h-4 text-gray-400" />
               <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">MCP Servers</h3>
             </div>
             <button
               onClick={() => setShowCatalogPanel(true)}
-              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-600 hover:bg-blue-700 rounded text-white transition-colors"
+              className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
             >
               <Plus className="w-3 h-3" />
               Add
@@ -1000,6 +1011,34 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
             </div>
           )}
         </div>
+
+        {/* ============================================================ */}
+        {/*  Data Connectors                                               */}
+        {/* ============================================================ */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-gray-400" />
+              <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">{t('connector.title')}</h3>
+            </div>
+            <button
+              onClick={() => setShowConnectorPanel(true)}
+              className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+            >
+              <Settings className="w-3 h-3" />
+              {t('connector.manage')}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500">
+            {t('connector.description')}
+          </p>
+        </div>
+
+        <ConnectorPanel
+          open={showConnectorPanel}
+          onClose={() => setShowConnectorPanel(false)}
+          scopeId={scope.id}
+        />
 
         {/* ============================================================ */}
         {/*  Knowledge Base (Document Groups)                              */}

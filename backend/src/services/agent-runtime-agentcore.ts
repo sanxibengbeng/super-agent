@@ -181,8 +181,19 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       }
     }
 
-    // --- S3 sync-back disabled: local workspace is read-only cache, not critical ---
-    // if (options.workspacePath) { ... }
+    // --- S3 sync-back: pull container changes back to local workspace ---
+    if (options.workspacePath && chatSessionId) {
+      const syncS3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
+      try {
+        const count = await this.syncBackFromS3(syncS3Prefix, options.workspacePath);
+        if (count > 0) {
+          console.log(`[agentcore-runtime] Synced back ${count} files from S3 to local workspace`);
+        }
+      } catch (err) {
+        // Non-critical — local workspace is a cache, container/S3 is source of truth
+        console.warn('[agentcore-runtime] S3 sync-back failed:', err instanceof Error ? err.message : err);
+      }
+    }
   }
 
   async disconnectSession(_sessionId: string): Promise<void> { /* managed by AgentCore */ }
@@ -392,8 +403,18 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         return { type: 'session_start', sessionId: event.session_id };
       case 'assistant':
         return { type: 'assistant', sessionId: event.session_id, content: (event.content ?? []) as ContentBlock[] };
-      case 'result':
-        return { type: 'result', sessionId: event.session_id, durationMs: event.duration_ms, numTurns: event.num_turns };
+      case 'result': {
+        // Map token_usage from AgentCore container format to backend format
+        const tu = (event as any).token_usage;
+        const tokenUsage = tu ? {
+          inputTokens: tu.input_tokens ?? 0,
+          outputTokens: tu.output_tokens ?? 0,
+          cacheReadInputTokens: tu.cache_read_input_tokens ?? 0,
+          cacheCreationInputTokens: tu.cache_creation_input_tokens ?? 0,
+          totalCostUsd: tu.total_cost_usd ?? 0,
+        } : undefined;
+        return { type: 'result', sessionId: event.session_id, durationMs: event.duration_ms, numTurns: event.num_turns, tokenUsage };
+      }
       case 'error':
         return { type: 'error', sessionId: event.session_id, code: event.code ?? 'AGENTCORE_ERROR', message: event.message ?? 'Unknown error' };
       default:

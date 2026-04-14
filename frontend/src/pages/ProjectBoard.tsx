@@ -5,8 +5,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp } from 'lucide-react'
-import { RestProjectService, type Project, type ProjectIssue } from '@/services/api/restProjectService'
+import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp, Send, RefreshCw } from 'lucide-react'
+import { RestProjectService, type Project, type ProjectIssue, type IssueComment } from '@/services/api/restProjectService'
 import { WorkspaceExplorer } from '@/components'
 
 const LANES = [
@@ -45,6 +45,13 @@ export function ProjectBoard() {
   const [editPriority, setEditPriority] = useState('medium')
   const [editStatus, setEditStatus] = useState('backlog')
   const [isSavingIssue, setIsSavingIssue] = useState(false)
+
+  // Issue detail comments
+  const [issueComments, setIssueComments] = useState<IssueComment[]>([])
+  const [loadingComments, setLoadingComments] = useState(false)
+  const [newComment, setNewComment] = useState('')
+  const [postingComment, setPostingComment] = useState(false)
+  const commentsEndRef = useRef<HTMLDivElement>(null)
 
   // Create issue form
   const [newIssueTitle, setNewIssueTitle] = useState('')
@@ -108,10 +115,10 @@ export function ProjectBoard() {
     const loadMessages = async () => {
       try {
         const { restClient } = await import('@/services/api/restClient')
-        const res = await restClient.get<{ data: Array<{ id: string; type: string; content: string; created_at: string }> }>(
-          `/api/chat/sessions/${sessionId}/messages?limit=50`
+        const messages = await restClient.get<Array<{ id: string; type: string; content: string; created_at: string }>>(
+          `/api/chat/history/${sessionId}?limit=50`
         )
-        setConsoleMessages(res.data ?? [])
+        setConsoleMessages(Array.isArray(messages) ? messages : [])
         setTimeout(() => consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
       } catch { /* ignore */ }
     }
@@ -122,6 +129,7 @@ export function ProjectBoard() {
   }, [showConsole, project?.workspace_session_id])
 
   // Auto-process polling: when enabled, check every 10s if there's a todo to pick up
+  // Also refresh the board periodically to pick up status changes from backend auto-processor
   useEffect(() => {
     if (autoProcessTimerRef.current) {
       clearInterval(autoProcessTimerRef.current)
@@ -131,13 +139,15 @@ export function ProjectBoard() {
       autoProcessTimerRef.current = setInterval(async () => {
         if (!autoProcessRef.current || !projectId) return
         try {
+          // Refresh board to pick up any status changes from backend auto-processor
+          loadData()
           const result = await RestProjectService.autoProcessNext(projectId)
           if (result.status === 'started') {
             if (result.session_id) {
               setProject(prev => prev ? { ...prev, workspace_session_id: result.session_id! } : prev)
             }
             setWsRefreshKey(k => k + 1)
-            loadData() // refresh board
+            loadData() // refresh board again after starting
           }
         } catch (err) {
           console.error('Auto-process error:', err)
@@ -187,9 +197,11 @@ export function ProjectBoard() {
       setProject(prev => prev ? { ...prev, workspace_session_id: result.session_id } : prev)
       setShowExecuteConfirm(null)
       setWsRefreshKey(k => k + 1)
+      setShowConsole(true) // auto-open console to show agent activity
       loadData()
     } catch (err) {
       console.error('Execute failed:', err)
+      alert(`Agent execution failed: ${err instanceof Error ? err.message : 'Unknown error'}. Make sure the project has a Business Scope configured.`)
     }
   }
 
@@ -229,6 +241,35 @@ export function ProjectBoard() {
     setEditDesc(issue.description ?? '')
     setEditPriority(issue.priority)
     setEditStatus(issue.status)
+    setIssueComments([])
+    setNewComment('')
+    // Load comments
+    if (projectId) {
+      setLoadingComments(true)
+      RestProjectService.listComments(projectId, issue.id)
+        .then(comments => {
+          setIssueComments(comments)
+          setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+        })
+        .catch(() => {})
+        .finally(() => setLoadingComments(false))
+    }
+  }
+
+  const handlePostComment = async () => {
+    if (!projectId || !selectedIssue || !newComment.trim()) return
+    setPostingComment(true)
+    try {
+      const comment = await RestProjectService.addComment(projectId, selectedIssue.id, newComment.trim())
+      setIssueComments(prev => [...prev, comment])
+      setNewComment('')
+      setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+      loadData() // refresh comment counts on cards
+    } catch (err) {
+      console.error('Failed to post comment:', err)
+    } finally {
+      setPostingComment(false)
+    }
   }
 
   const handleSaveIssue = async () => {
@@ -302,6 +343,22 @@ export function ProjectBoard() {
           </button>
           <button onClick={() => setShowSettings(true)} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors" title="Project Settings">
             <Settings size={18} />
+          </button>
+          <button
+            onClick={async () => {
+              if (!projectId) return
+              try {
+                const result = await RestProjectService.syncWorkspace(projectId)
+                setWsRefreshKey(k => k + 1)
+                console.log(`Synced ${result.synced} files`)
+              } catch (err) {
+                console.error('Sync failed:', err)
+              }
+            }}
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+            title="Sync workspace from S3"
+          >
+            <RefreshCw size={18} />
           </button>
           <button
             onClick={() => setShowConsole(!showConsole)}
@@ -423,27 +480,42 @@ export function ProjectBoard() {
                   : 'No workspace session yet. Start a task to see agent output.'}
               </div>
             ) : (
-              consoleMessages.map(msg => (
-                <div key={msg.id} className="flex gap-2">
-                  <span className="text-gray-600 flex-shrink-0 w-16">
-                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                  <span className={`flex-shrink-0 w-4 ${
-                    msg.type === 'user' ? 'text-blue-400' :
-                    msg.type === 'agent' || msg.type === 'ai' ? 'text-green-400' :
-                    'text-gray-500'
-                  }`}>
-                    {msg.type === 'user' ? '→' : msg.type === 'agent' || msg.type === 'ai' ? '←' : '•'}
-                  </span>
-                  <span className={`flex-1 break-words ${
-                    msg.type === 'user' ? 'text-blue-300' :
-                    msg.type === 'agent' || msg.type === 'ai' ? 'text-green-300' :
-                    'text-gray-500'
-                  }`}>
-                    {msg.content.length > 500 ? msg.content.substring(0, 500) + '...' : msg.content}
-                  </span>
-                </div>
-              ))
+              consoleMessages.map(msg => {
+                // Parse content: AI messages may be JSON content blocks or plain text
+                let displayContent = msg.content
+                if (msg.type === 'ai' || msg.type === 'agent') {
+                  try {
+                    const blocks = JSON.parse(msg.content)
+                    if (Array.isArray(blocks)) {
+                      displayContent = blocks
+                        .filter((b: { type: string }) => b.type === 'text')
+                        .map((b: { text: string }) => b.text)
+                        .join('\n')
+                    }
+                  } catch { /* plain text, use as-is */ }
+                }
+                return (
+                  <div key={msg.id} className="flex gap-2">
+                    <span className="text-gray-600 flex-shrink-0 w-16">
+                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                    <span className={`flex-shrink-0 w-4 ${
+                      msg.type === 'user' ? 'text-blue-400' :
+                      msg.type === 'agent' || msg.type === 'ai' ? 'text-green-400' :
+                      'text-gray-500'
+                    }`}>
+                      {msg.type === 'user' ? '→' : msg.type === 'agent' || msg.type === 'ai' ? '←' : '•'}
+                    </span>
+                    <span className={`flex-1 break-words whitespace-pre-wrap ${
+                      msg.type === 'user' ? 'text-blue-300' :
+                      msg.type === 'agent' || msg.type === 'ai' ? 'text-green-300' :
+                      'text-gray-500'
+                    }`}>
+                      {displayContent.length > 800 ? displayContent.substring(0, 800) + '...' : displayContent}
+                    </span>
+                  </div>
+                )
+              })
             )}
             <div ref={consoleEndRef} />
           </div>
@@ -637,6 +709,68 @@ export function ProjectBoard() {
                   )}
                 </div>
               </div>
+
+              {/* Comments */}
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <MessageSquare size={12} className="text-gray-400" />
+                  <label className="text-xs text-gray-400">
+                    Comments {issueComments.length > 0 && `(${issueComments.length})`}
+                  </label>
+                </div>
+
+                {loadingComments ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 size={14} className="text-gray-500 animate-spin" />
+                  </div>
+                ) : issueComments.length === 0 ? (
+                  <p className="text-xs text-gray-600 py-2">No comments yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {issueComments.map(c => (
+                      <div key={c.id} className={`rounded-lg p-2.5 text-xs ${
+                        c.comment_type === 'status_change'
+                          ? 'bg-yellow-500/5 border border-yellow-500/10'
+                          : c.author_agent_id
+                            ? 'bg-purple-500/5 border border-purple-500/10'
+                            : 'bg-gray-800 border border-gray-700'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] text-gray-500">
+                            {c.comment_type === 'status_change' ? '⚡ System' :
+                             c.author_agent_id ? '🤖 Agent' : '👤 User'}
+                          </span>
+                          <span className="text-[10px] text-gray-600">
+                            {new Date(c.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+                          {c.content.length > 500 ? c.content.substring(0, 500) + '...' : c.content}
+                        </p>
+                      </div>
+                    ))}
+                    <div ref={commentsEndRef} />
+                  </div>
+                )}
+
+                {/* Add comment */}
+                <div className="flex gap-2 mt-2">
+                  <input
+                    value={newComment}
+                    onChange={e => setNewComment(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlePostComment() } }}
+                    placeholder="Add a comment..."
+                    className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-600 outline-none focus:border-blue-500"
+                  />
+                  <button
+                    onClick={handlePostComment}
+                    disabled={postingComment || !newComment.trim()}
+                    className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors"
+                  >
+                    {postingComment ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Footer */}
@@ -654,40 +788,149 @@ export function ProjectBoard() {
 
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowSettings(false)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-96 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">Project Settings</h3>
-              <button onClick={() => setShowSettings(false)} className="text-gray-500 hover:text-white"><X size={16} /></button>
-            </div>
+        <ProjectSettingsModal
+          project={project}
+          autoProcess={autoProcess}
+          onToggleAutoProcess={handleToggleAutoProcess}
+          onClose={() => setShowSettings(false)}
+          onProjectUpdated={(updated) => { setProject(updated); loadData() }}
+        />
+      )}
+    </div>
+  )
+}
 
-            <div className="space-y-4">
-              <label className="flex items-center justify-between px-3 py-3 bg-gray-800 border border-gray-700 rounded-lg cursor-pointer hover:border-gray-600 transition-colors">
-                <div>
-                  <div className="text-sm text-white">Auto-process Todo items</div>
-                  <div className="text-xs text-gray-400 mt-0.5">
-                    When enabled, the system automatically picks up Todo items one by one and assigns them to an agent. The current item moves to In Progress.
-                  </div>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <button
-                    onClick={() => handleToggleAutoProcess(!autoProcess)}
-                    className={`relative w-10 h-5 rounded-full transition-colors ${autoProcess ? 'bg-green-600' : 'bg-gray-600'}`}
-                  >
-                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${autoProcess ? 'left-5.5 translate-x-0.5' : 'left-0.5'}`} />
-                  </button>
-                </div>
-              </label>
-            </div>
+// ============================================================================
+// Project Settings Modal
+// ============================================================================
 
-            <div className="mt-4 flex justify-end">
-              <button onClick={() => setShowSettings(false)} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors">
-                Done
-              </button>
-            </div>
+function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClose, onProjectUpdated }: {
+  project: Project
+  autoProcess: boolean
+  onToggleAutoProcess: (enabled: boolean) => void
+  onClose: () => void
+  onProjectUpdated: (p: Project) => void
+}) {
+  const [scopes, setScopes] = useState<Array<{ id: string; name: string }>>([])
+  const [agents, setAgents] = useState<Array<{ id: string; display_name: string }>>([])
+  const [selectedScopeId, setSelectedScopeId] = useState(project.business_scope_id ?? '')
+  const [selectedAgentId, setSelectedAgentId] = useState(project.agent_id ?? '')
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    // Load scopes
+    import('@/services/api/restBusinessScopeService').then(({ RestBusinessScopeService }) => {
+      RestBusinessScopeService.getBusinessScopes().then(list => {
+        setScopes(list.map(s => ({ id: s.id, name: s.name })))
+      }).catch(() => {})
+    })
+    // Load agents
+    import('@/services/api').then(({ AgentService }) => {
+      AgentService.getAgents().then((list: Array<{ id: string; displayName: string }>) => {
+        setAgents(list.map(a => ({ id: a.id, display_name: a.displayName })))
+      }).catch(() => {})
+    })
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const updated = await RestProjectService.updateProject(project.id, {
+        business_scope_id: selectedScopeId || undefined,
+        agent_id: selectedAgentId || undefined,
+      })
+      onProjectUpdated(updated)
+      setDirty(false)
+    } catch (err) {
+      console.error('Failed to update project:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const noScope = !selectedScopeId
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-[420px] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-white">Project Settings</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={16} /></button>
+        </div>
+
+        <div className="space-y-4">
+          {/* Business Scope — required for agent execution */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Business Scope</label>
+            <select
+              value={selectedScopeId}
+              onChange={e => { setSelectedScopeId(e.target.value); setDirty(true) }}
+              className={`w-full px-3 py-2 bg-gray-800 border rounded-lg text-sm text-white outline-none focus:border-blue-500 ${
+                noScope ? 'border-yellow-500/50' : 'border-gray-700'
+              }`}
+            >
+              <option value="">— None (agent execution disabled) —</option>
+              {scopes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            {noScope && (
+              <p className="text-[10px] text-yellow-400 mt-1">
+                A business scope is required for agent execution. Without it, tasks cannot be automatically processed.
+              </p>
+            )}
+          </div>
+
+          {/* Agent */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Agent</label>
+            <select
+              value={selectedAgentId}
+              onChange={e => { setSelectedAgentId(e.target.value); setDirty(true) }}
+              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none focus:border-blue-500"
+            >
+              <option value="">Default (scope's primary agent)</option>
+              {agents.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
+            </select>
+          </div>
+
+          {/* Save button for scope/agent changes */}
+          {dirty && (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              {saving ? 'Saving...' : 'Save Scope & Agent'}
+            </button>
+          )}
+
+          <div className="border-t border-gray-800 pt-4">
+            {/* Auto-process toggle */}
+            <label className="flex items-center justify-between px-3 py-3 bg-gray-800 border border-gray-700 rounded-lg cursor-pointer hover:border-gray-600 transition-colors">
+              <div>
+                <div className="text-sm text-white">Auto-process Todo items</div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  Automatically picks up Todo items and assigns them to the agent.
+                </div>
+              </div>
+              <div className="ml-4 flex-shrink-0">
+                <button
+                  onClick={() => onToggleAutoProcess(!autoProcess)}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${autoProcess ? 'bg-green-600' : 'bg-gray-600'}`}
+                >
+                  <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${autoProcess ? 'left-5.5 translate-x-0.5' : 'left-0.5'}`} />
+                </button>
+              </div>
+            </label>
           </div>
         </div>
-      )}
+
+        <div className="mt-4 flex justify-end">
+          <button onClick={onClose} className="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

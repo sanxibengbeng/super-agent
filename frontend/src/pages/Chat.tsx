@@ -32,6 +32,7 @@ interface FileTab {
 
 const PREVIEWABLE_EXTENSIONS = new Set(['md', 'markdown', 'html', 'htm'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp'])
+const PDF_EXTENSIONS = new Set(['pdf'])
 
 function getFileExtension(path: string): string {
   const dot = path.lastIndexOf('.')
@@ -126,6 +127,7 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
   const ext = getFileExtension(path)
   const canPreview = PREVIEWABLE_EXTENSIONS.has(ext)
   const isImage = IMAGE_EXTENSIONS.has(ext)
+  const isPdf = PDF_EXTENSIONS.has(ext)
   const highlightedHtml = useHighlightedCode(content, ext)
 
   useEffect(() => {
@@ -243,6 +245,18 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
             <span className="text-gray-500">Failed to load image</span>
           )}
         </div>
+      </div>
+    )
+  }
+
+  // PDF files — render in browser's native PDF viewer via iframe
+  if (isPdf) {
+    const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
+    const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+    const pdfUrl = `${baseUrl}/api/chat/sessions/${sessionId}/workspace/file/raw?path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
+        <iframe src={pdfUrl} className="flex-1 w-full border-0" title={path} />
       </div>
     )
   }
@@ -1335,6 +1349,26 @@ function ChatInterfaceContent() {
     clearConversation,
   } = useContext(ChatContext)
 
+  // Auto-send initial prompt from showcase "Run" button
+  const autoPromptSent = useRef(false)
+  useEffect(() => {
+    if (autoPromptSent.current) return
+    const params = new URLSearchParams(window.location.search)
+    const prompt = params.get('prompt')
+    // Send when: we have a prompt, loading is done, not already sending,
+    // and no existing backend session (fresh state from showcase).
+    if (prompt && !isLoading && !isSending && !backendSessionId) {
+      autoPromptSent.current = true
+      // Clean the URL so refreshing doesn't re-send
+      const cleanParams = new URLSearchParams(window.location.search)
+      cleanParams.delete('prompt')
+      cleanParams.delete('showcase_case_id')
+      const cleanUrl = cleanParams.toString() ? `${window.location.pathname}?${cleanParams}` : window.location.pathname
+      window.history.replaceState({}, '', cleanUrl)
+      sendMessage(prompt)
+    }
+  }, [isLoading, isSending, backendSessionId, sendMessage])
+
   // Track workspace + session refresh — increment after each completed response
   const [wsRefreshKey, setWsRefreshKey] = useState(0)
   const [sessionRefreshKey, setSessionRefreshKey] = useState(0)
@@ -1686,8 +1720,26 @@ function ChatInterfaceContent() {
 }
 
 export function Chat() {
+  // Read URL params so showcase "Run" and other deep-links work
+  const params = new URLSearchParams(window.location.search)
+  const urlScope = params.get('scope') || undefined
+  const urlAgent = params.get('agent') || undefined
+  const urlSession = params.get('session') || undefined
+  const urlPrompt = params.get('prompt') || undefined
+
+  // If coming from showcase with a prompt, force a fresh session by NOT passing
+  // an initialSessionId — and clear the stored session so ChatProvider doesn't
+  // restore the old one.
+  if (urlPrompt && !urlSession) {
+    localStorage.removeItem('super-agent-chat-backend-session')
+  }
+
   return (
-    <ChatProvider>
+    <ChatProvider
+      initialSessionId={urlSession}
+      initialScopeId={urlScope}
+      initialAgentId={urlAgent}
+    >
       <div className="h-full">
         <ChatInterfaceContent />
       </div>
