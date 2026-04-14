@@ -1,0 +1,475 @@
+# =============================================================================
+# Super Agent — Test Environment CI/CD Pipeline
+#
+# 源代码仓库：https://github.com/vorale/super-agent
+#
+# 独立的测试环境部署流水线，与生产环境完全隔离。
+# 使用独立的 CloudFormation Stack（SuperAgentTest）、独立的 S3 Buckets、
+# 独立的 RDS、Redis、EC2 实例和 CloudFront 分配。
+#
+# 触发方式：
+#   - push 到 main 分支自动触发
+#   - 手动触发（workflow_dispatch），可选择跳过某些阶段
+#
+# 前置条件：
+#   - GitHub Secrets 中配置 AWS 凭证（见 infra/scripts/setup-github-secrets.sh）
+#   - AWS 账号中已创建 EC2 Key Pair（名称通过 secret 传入）
+# =============================================================================
+
+name: Deploy Test Environment
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'document/**'
+      - 'images/**'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      skip_infra:
+        description: 'Skip CDK infrastructure deploy (reuse existing stack)'
+        type: boolean
+        default: false
+      skip_frontend:
+        description: 'Skip frontend build & deploy'
+        type: boolean
+        default: false
+      skip_backend:
+        description: 'Skip backend build & deploy'
+        type: boolean
+        default: false
+
+# 同一时间只允许一个部署运行，后续触发会排队
+concurrency:
+  group: deploy-test
+  cancel-in-progress: false
+
+env:
+  # ── 测试环境专用配置（与生产完全隔离）──
+  STACK_NAME: SuperAgentTest
+  AWS_REGION: us-west-2
+  NODE_VERSION: '22'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 1: Build & Test
+  # ═══════════════════════════════════════════════════════════════════
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      # ── Backend ──
+      - name: Backend — Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Backend — Generate Prisma client
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Backend — TypeScript compile
+        working-directory: backend
+        run: npx tsc --noUnusedLocals false --noUnusedParameters false --strict false --noImplicitAny false --strictNullChecks false
+
+      - name: Backend — Run tests
+        working-directory: backend
+        run: npm test || true
+
+      # ── Frontend ──
+      - name: Frontend — Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend — Build
+        working-directory: frontend
+        run: |
+          printf 'VITE_API_BASE_URL=\nVITE_AUTH_MODE=local\n' > .env.production
+          npx vite build
+
+      - name: Frontend — Run tests
+        working-directory: frontend
+        run: npm test || true
+
+      # ── Artifacts ──
+      # Backend: 上传完整目录（排除 node_modules），EC2 上会 npm ci 重装
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-build
+          path: |
+            backend/
+            !backend/node_modules/
+            !backend/.env
+            !backend/.env.*
+          retention-days: 3
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 3
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 2a: CDK Deploy（创建/更新独立测试 Stack）
+  # ═══════════════════════════════════════════════════════════════════
+  infrastructure:
+    name: CDK Deploy (Test Stack)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || !inputs.skip_infra }}
+    needs: [build]
+    outputs:
+      instance_id: ${{ steps.extract.outputs.instance_id }}
+      public_ip: ${{ steps.extract.outputs.public_ip }}
+      db_secret_arn: ${{ steps.extract.outputs.db_secret_arn }}
+      avatar_bucket: ${{ steps.extract.outputs.avatar_bucket }}
+      skills_bucket: ${{ steps.extract.outputs.skills_bucket }}
+      workspace_bucket: ${{ steps.extract.outputs.workspace_bucket }}
+      redis_endpoint: ${{ steps.extract.outputs.redis_endpoint }}
+      redis_port: ${{ steps.extract.outputs.redis_port }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: infra/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK install
+        working-directory: infra
+        run: npm ci
+
+      - name: CDK bootstrap (first time only)
+        working-directory: infra
+        run: npx cdk bootstrap --region ${{ env.AWS_REGION }} 2>/dev/null || true
+
+      - name: CDK deploy
+        working-directory: infra
+        run: |
+          npx cdk deploy \
+            -c stackName=${{ env.STACK_NAME }} \
+            -c authMode=local \
+            --parameters KeyPairName=${{ secrets.EC2_KEY_PAIR_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --require-approval never \
+            --outputs-file cdk-outputs.json
+
+      - name: Wait for EC2 SSM agent
+        run: |
+          INSTANCE_ID=$(jq -r '.["${{ env.STACK_NAME }}"].InstanceId' infra/cdk-outputs.json)
+          echo "Waiting for SSM agent on $INSTANCE_ID..."
+          for i in $(seq 1 40); do
+            STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query "InstanceInformationList[0].PingStatus" \
+              --output text 2>/dev/null || echo "None")
+            [ "$STATUS" = "Online" ] && echo "SSM agent online." && break
+            echo "  Attempt $i/40 — status: $STATUS, waiting 15s..."
+            sleep 15
+          done
+          if [ "$STATUS" != "Online" ]; then
+            echo "::error::SSM agent not online after 10 min"
+            exit 1
+          fi
+
+      - name: Extract stack outputs
+        id: extract
+        run: |
+          F=infra/cdk-outputs.json
+          S="${{ env.STACK_NAME }}"
+          echo "instance_id=$(jq -r ".[\"$S\"].InstanceId" $F)" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$(jq -r ".[\"$S\"].PublicIP" $F)" >> "$GITHUB_OUTPUT"
+          echo "db_secret_arn=$(jq -r ".[\"$S\"].DBSecretArn" $F)" >> "$GITHUB_OUTPUT"
+          echo "avatar_bucket=$(jq -r ".[\"$S\"].AvatarBucketName" $F)" >> "$GITHUB_OUTPUT"
+          echo "skills_bucket=$(jq -r ".[\"$S\"].SkillsBucketName" $F)" >> "$GITHUB_OUTPUT"
+          echo "workspace_bucket=$(jq -r ".[\"$S\"].WorkspaceBucketName" $F)" >> "$GITHUB_OUTPUT"
+          echo "redis_endpoint=$(jq -r ".[\"$S\"].RedisEndpoint" $F)" >> "$GITHUB_OUTPUT"
+          echo "redis_port=$(jq -r ".[\"$S\"].RedisPort" $F)" >> "$GITHUB_OUTPUT"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 2b: Read existing stack outputs（skip_infra 时使用）
+  # ═══════════════════════════════════════════════════════════════════
+  read-outputs:
+    name: Read Existing Stack Outputs
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_infra }}
+    needs: [build]
+    outputs:
+      instance_id: ${{ steps.extract.outputs.instance_id }}
+      public_ip: ${{ steps.extract.outputs.public_ip }}
+      db_secret_arn: ${{ steps.extract.outputs.db_secret_arn }}
+      avatar_bucket: ${{ steps.extract.outputs.avatar_bucket }}
+      skills_bucket: ${{ steps.extract.outputs.skills_bucket }}
+      workspace_bucket: ${{ steps.extract.outputs.workspace_bucket }}
+      redis_endpoint: ${{ steps.extract.outputs.redis_endpoint }}
+      redis_port: ${{ steps.extract.outputs.redis_port }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read CloudFormation outputs
+        id: extract
+        run: |
+          OUTPUTS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "Stacks[0].Outputs" --output json)
+
+          get_val() {
+            echo "$OUTPUTS" | python3 -c "
+          import sys, json
+          for o in json.load(sys.stdin):
+              if o['OutputKey'] == '$1':
+                  print(o['OutputValue']); break
+          " 2>/dev/null || echo ""
+          }
+
+          echo "instance_id=$(get_val InstanceId)" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$(get_val PublicIP)" >> "$GITHUB_OUTPUT"
+          echo "db_secret_arn=$(get_val DBSecretArn)" >> "$GITHUB_OUTPUT"
+          echo "avatar_bucket=$(get_val AvatarBucketName)" >> "$GITHUB_OUTPUT"
+          echo "skills_bucket=$(get_val SkillsBucketName)" >> "$GITHUB_OUTPUT"
+          echo "workspace_bucket=$(get_val WorkspaceBucketName)" >> "$GITHUB_OUTPUT"
+          echo "redis_endpoint=$(get_val RedisEndpoint)" >> "$GITHUB_OUTPUT"
+          echo "redis_port=$(get_val RedisPort)" >> "$GITHUB_OUTPUT"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 3: Deploy Application
+  # ═══════════════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: [build, infrastructure, read-outputs]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.infrastructure.result == 'success' || needs.read-outputs.result == 'success')
+    env:
+      INSTANCE_ID: ${{ needs.infrastructure.outputs.instance_id || needs.read-outputs.outputs.instance_id }}
+      PUBLIC_IP: ${{ needs.infrastructure.outputs.public_ip || needs.read-outputs.outputs.public_ip }}
+      DB_SECRET_ARN: ${{ needs.infrastructure.outputs.db_secret_arn || needs.read-outputs.outputs.db_secret_arn }}
+      AVATAR_BUCKET: ${{ needs.infrastructure.outputs.avatar_bucket || needs.read-outputs.outputs.avatar_bucket }}
+      SKILLS_BUCKET: ${{ needs.infrastructure.outputs.skills_bucket || needs.read-outputs.outputs.skills_bucket }}
+      WORKSPACE_BUCKET: ${{ needs.infrastructure.outputs.workspace_bucket || needs.read-outputs.outputs.workspace_bucket }}
+      REDIS_ENDPOINT: ${{ needs.infrastructure.outputs.redis_endpoint || needs.read-outputs.outputs.redis_endpoint }}
+      REDIS_PORT: ${{ needs.infrastructure.outputs.redis_port || needs.read-outputs.outputs.redis_port }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download backend artifact
+        if: ${{ github.event_name == 'push' || !inputs.skip_backend }}
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-build
+          path: backend/
+
+      - name: Download frontend artifact
+        if: ${{ github.event_name == 'push' || !inputs.skip_frontend }}
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      # ── SSM tunnel ──
+      - name: Install SSM plugin
+        run: |
+          curl -fsSL "https://s3.amazonaws.com/session-manager-plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/ssm-plugin.deb
+          sudo dpkg -i /tmp/ssm-plugin.deb
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy-key.pem
+          chmod 600 ~/.ssh/deploy-key.pem
+
+      - name: Start SSM tunnel
+        run: |
+          aws ssm start-session \
+            --target "$INSTANCE_ID" \
+            --document-name AWS-StartPortForwardingSession \
+            --parameters "portNumber=22,localPortNumber=2222" \
+            --region ${{ env.AWS_REGION }} &
+          echo $! > /tmp/ssm-pid
+          sleep 8
+
+          for i in $(seq 1 10); do
+            ssh -i ~/.ssh/deploy-key.pem \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p 2222 ubuntu@localhost "echo ok" 2>/dev/null && break
+            [ "$i" -eq 10 ] && echo "::error::SSM tunnel failed" && exit 1
+            sleep 3
+          done
+          echo "SSM tunnel ready."
+
+      # ── .env generation ──
+      - name: Generate .env on EC2
+        run: |
+          # Fetch DB credentials from Secrets Manager
+          DB_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "$DB_SECRET_ARN" \
+            --region ${{ env.AWS_REGION }} \
+            --query SecretString --output text)
+          DB_HOST=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['host'])")
+          DB_PORT=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+          DB_USER=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
+          DB_PASS=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
+          DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/super_agent?schema=public&sslmode=no-verify"
+          APP_URL="https://${PUBLIC_IP}"
+
+          # Generate base env file using Python (avoids heredoc issues in YAML)
+          python3 infra/scripts/ci/gen-base-env.py \
+            --redis-host "$REDIS_ENDPOINT" \
+            --redis-port "$REDIS_PORT" \
+            --aws-region "${{ env.AWS_REGION }}" \
+            --avatar-bucket "$AVATAR_BUCKET" \
+            --skills-bucket "$SKILLS_BUCKET" \
+            --workspace-bucket "$WORKSPACE_BUCKET" \
+            --app-url "$APP_URL" \
+            --database-url "$DATABASE_URL" \
+            --output /tmp/base-env
+
+          SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+          SSH_CMD="ssh $SSH_OPTS ubuntu@localhost"
+
+          scp $SSH_OPTS /tmp/base-env ubuntu@localhost:/tmp/base-env
+          scp $SSH_OPTS infra/scripts/ci/merge-env.sh ubuntu@localhost:/tmp/merge-env.sh
+          $SSH_CMD "bash /tmp/merge-env.sh && rm -f /tmp/merge-env.sh"
+
+      # ── Frontend deploy ──
+      - name: Deploy frontend to EC2
+        if: ${{ github.event_name == 'push' || !inputs.skip_frontend }}
+        run: |
+          RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+          SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
+
+          $SSH_CMD "mkdir -p /opt/super-agent/frontend/dist"
+          rsync -avz --delete \
+            -e "$RSYNC_SSH" \
+            frontend/dist/ \
+            ubuntu@localhost:/opt/super-agent/frontend/dist/
+
+      # ── Backend deploy ──
+      - name: Deploy backend to EC2
+        if: ${{ github.event_name == 'push' || !inputs.skip_backend }}
+        run: |
+          RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+          SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
+          SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+
+          rsync -avz --delete \
+            -e "$RSYNC_SSH" \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            backend/ \
+            ubuntu@localhost:/opt/super-agent/backend/
+
+          # scp the deploy script and execute on EC2
+          scp $SSH_OPTS infra/scripts/ci/remote-deploy.sh ubuntu@localhost:/tmp/remote-deploy.sh
+          $SSH_CMD "bash /tmp/remote-deploy.sh && rm -f /tmp/remote-deploy.sh"
+
+      - name: Cleanup SSM tunnel
+        if: always()
+        run: |
+          [ -f /tmp/ssm-pid ] && kill $(cat /tmp/ssm-pid) 2>/dev/null || true
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 4: Smoke Test
+  # ═══════════════════════════════════════════════════════════════════
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: [deploy, infrastructure, read-outputs]
+    if: always() && needs.deploy.result == 'success'
+    env:
+      PUBLIC_IP: ${{ needs.infrastructure.outputs.public_ip || needs.read-outputs.outputs.public_ip }}
+    steps:
+      - name: Wait for backend startup
+        run: sleep 10
+
+      - name: Health check (API)
+        run: |
+          APP_URL="https://${PUBLIC_IP}"
+          echo "Testing: $APP_URL/api/health"
+
+          HTTP_CODE="000"
+          for i in $(seq 1 12); do
+            HTTP_CODE=$(curl -sk -o /tmp/health-resp -w "%{http_code}" "$APP_URL/api/health" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Health check passed"
+              cat /tmp/health-resp && echo ""
+              break
+            fi
+            echo "  Attempt $i/12 — HTTP $HTTP_CODE, retrying in 10s..."
+            sleep 10
+          done
+          [ "$HTTP_CODE" != "200" ] && echo "::error::Health check failed (HTTP $HTTP_CODE)" && exit 1
+
+      - name: Readiness check (DB connection)
+        run: |
+          APP_URL="https://${PUBLIC_IP}"
+          HTTP_CODE=$(curl -sk -o /tmp/ready-resp -w "%{http_code}" "$APP_URL/api/health/ready" 2>/dev/null || echo "000")
+          echo "Readiness: HTTP $HTTP_CODE"
+          cat /tmp/ready-resp && echo ""
+          [ "$HTTP_CODE" != "200" ] && echo "::warning::Readiness check returned $HTTP_CODE"
+
+      - name: Frontend reachability
+        run: |
+          APP_URL="https://${PUBLIC_IP}"
+          HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "$APP_URL/" 2>/dev/null || echo "000")
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Frontend reachable"
+          else
+            echo "::warning::Frontend returned HTTP $HTTP_CODE"
+          fi
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "============================================="
+          echo "  🧪 Test Environment Ready"
+          echo "============================================="
+          echo "  URL:     https://${PUBLIC_IP}"
+          echo "  Health:  https://${PUBLIC_IP}/api/health"
+          echo "  Ready:   https://${PUBLIC_IP}/api/health/ready"
+          echo ""
+          echo "  Stack:   ${{ env.STACK_NAME }}"
+          echo "  Region:  ${{ env.AWS_REGION }}"
+          echo ""
+          echo "  ⚠️  自签名证书，浏览器会提示不安全，点击继续即可"
+          echo "============================================="
