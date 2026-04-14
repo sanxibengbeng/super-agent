@@ -80,6 +80,7 @@ PUBLIC_IP=$(get_output "PublicIP")
 DB_ENDPOINT=$(get_output "DBEndpoint")
 DB_SECRET_ARN=$(get_output "DBSecretArn")
 AVATAR_BUCKET=$(get_output "AvatarBucketName")
+SKILLS_BUCKET=$(get_output "SkillsBucketName")
 WORKSPACE_BUCKET=$(get_output "WorkspaceBucketName")
 AUTH_MODE=$(get_output "AuthMode")
 ENABLE_CDN=$(get_output "EnableCdn")
@@ -99,6 +100,7 @@ echo "  PublicIP:         $PUBLIC_IP"
 echo "  AuthMode:         $AUTH_MODE"
 echo "  EnableCdn:        $ENABLE_CDN"
 echo "  WorkspaceBucket:  $WORKSPACE_BUCKET"
+echo "  SkillsBucket:     $SKILLS_BUCKET"
 [ -n "$REDIS_ENDPOINT" ] && echo "  RedisEndpoint:    $REDIS_ENDPOINT:${REDIS_PORT_OUTPUT:-6379}"
 [ -n "$DOMAIN_NAME" ] && echo "  DomainName:       $DOMAIN_NAME"
 [ -n "$CF_DIST_ID" ]  && echo "  CloudFrontDistId: $CF_DIST_ID"
@@ -205,6 +207,7 @@ AUTH_MODE=$AUTH_MODE
 AWS_REGION=$REGION
 S3_BUCKET_NAME=$AVATAR_BUCKET
 S3_PRESIGNED_URL_EXPIRES=3600
+SKILLS_S3_BUCKET=$SKILLS_BUCKET
 CORS_ORIGIN=$CORS_VALUE
 APP_URL=$APP_URL
 CLAUDE_CODE_USE_BEDROCK=1

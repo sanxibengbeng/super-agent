@@ -170,6 +170,9 @@ if [ "$SKIP_AGENTCORE" = false ]; then
   # Always update permissions to latest
   echo "  Updating permissions policy..."
   WORKSPACE_BUCKET_NAME="super-agent-workspaces-$ACCOUNT_ID"
+  SKILLS_BUCKET_NAME=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" --region "$REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='SkillsBucketName'].OutputValue" --output text 2>/dev/null || echo "")
   aws iam put-role-policy \
     --role-name "$ROLE_NAME" \
     --policy-name agentcore-permissions \
@@ -189,6 +192,15 @@ if [ "$SKIP_AGENTCORE" = false ]; then
           \"Resource\": [
             \"arn:aws:s3:::$WORKSPACE_BUCKET_NAME\",
             \"arn:aws:s3:::$WORKSPACE_BUCKET_NAME/*\"
+          ]
+        },
+        {
+          \"Sid\": \"SkillsS3\",
+          \"Effect\": \"Allow\",
+          \"Action\": [\"s3:GetObject\", \"s3:ListBucket\"],
+          \"Resource\": [
+            \"arn:aws:s3:::$SKILLS_BUCKET_NAME\",
+            \"arn:aws:s3:::$SKILLS_BUCKET_NAME/*\"
           ]
         },
         {

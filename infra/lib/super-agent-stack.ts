@@ -196,6 +196,14 @@ export class SuperAgentStack extends cdk.Stack {
     });
     avatarBucket.grantReadWrite(role);
 
+    // Skills bucket (for agent skill definitions)
+    const skillsBucket = new s3.Bucket(this, 'SkillsBucket', {
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+    });
+    skillsBucket.grantReadWrite(role);
+
     // Workspace bucket (for AgentCore S3 sync)
     const workspaceBucket = new s3.Bucket(this, 'WorkspaceBucket', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -382,6 +390,7 @@ export class SuperAgentStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DBEndpoint', { value: dbInstance.dbInstanceEndpointAddress });
     new cdk.CfnOutput(this, 'DBSecretArn', { value: dbInstance.secret!.secretArn });
     new cdk.CfnOutput(this, 'AvatarBucketName', { value: avatarBucket.bucketName });
+    new cdk.CfnOutput(this, 'SkillsBucketName', { value: skillsBucket.bucketName });
     new cdk.CfnOutput(this, 'WorkspaceBucketName', { value: workspaceBucket.bucketName });
     new cdk.CfnOutput(this, 'RedisEndpoint', { value: redisCluster.attrRedisEndpointAddress });
     new cdk.CfnOutput(this, 'RedisPort', { value: redisCluster.attrRedisEndpointPort });
