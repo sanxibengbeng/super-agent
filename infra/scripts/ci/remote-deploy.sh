@@ -13,6 +13,12 @@ echo "prisma generate..."
 npx prisma generate
 
 echo "DB grants..."
+# Ensure psql is available
+if ! command -v psql &>/dev/null; then
+  echo "psql not found, installing postgresql-client..."
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq postgresql-client || true
+fi
 # Extract DATABASE_URL safely (avoid sourcing .env which can fail with special chars)
 DATABASE_URL=$(grep '^DATABASE_URL=' /opt/super-agent/.env | head -1 | cut -d= -f2-)
 if [ -z "$DATABASE_URL" ]; then
