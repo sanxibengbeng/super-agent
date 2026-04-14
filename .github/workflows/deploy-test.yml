@@ -391,11 +391,12 @@ jobs:
             --output /tmp/base-env
 
           if [ "$SSM_PLUGIN_AVAILABLE" = "true" ]; then
-            SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-            SSH_CMD="ssh $SSH_OPTS ubuntu@localhost"
-            scp $SSH_OPTS /tmp/base-env ubuntu@localhost:/tmp/base-env
-            scp $SSH_OPTS infra/scripts/ci/merge-env.sh ubuntu@localhost:/tmp/merge-env.sh
-            $SSH_CMD "bash /tmp/merge-env.sh && rm -f /tmp/merge-env.sh"
+            scp -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 2222 \
+              /tmp/base-env ubuntu@localhost:/tmp/base-env
+            scp -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 2222 \
+              infra/scripts/ci/merge-env.sh ubuntu@localhost:/tmp/merge-env.sh
+            ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 \
+              ubuntu@localhost "bash /tmp/merge-env.sh && rm -f /tmp/merge-env.sh"
           else
             # Upload base-env via S3, then run merge via SSM SendCommand
             aws s3 cp /tmp/base-env "s3://${WORKSPACE_BUCKET}/ci-tmp/base-env" --region ${{ env.AWS_REGION }}
@@ -420,8 +421,8 @@ jobs:
         run: |
           if [ "$SSM_PLUGIN_AVAILABLE" = "true" ]; then
             RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-            SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
-            $SSH_CMD "mkdir -p /opt/super-agent/frontend/dist"
+            ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 \
+              ubuntu@localhost "mkdir -p /opt/super-agent/frontend/dist"
             rsync -avz --delete -e "$RSYNC_SSH" frontend/dist/ ubuntu@localhost:/opt/super-agent/frontend/dist/
           else
             # Upload via S3, then copy on EC2
@@ -442,11 +443,11 @@ jobs:
         run: |
           if [ "$SSM_PLUGIN_AVAILABLE" = "true" ]; then
             RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-            SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
-            SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
             rsync -avz --delete -e "$RSYNC_SSH" --exclude='node_modules' --exclude='.env' backend/ ubuntu@localhost:/opt/super-agent/backend/
-            scp $SSH_OPTS infra/scripts/ci/remote-deploy.sh ubuntu@localhost:/tmp/remote-deploy.sh
-            $SSH_CMD "bash /tmp/remote-deploy.sh && rm -f /tmp/remote-deploy.sh"
+            scp -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 2222 \
+              infra/scripts/ci/remote-deploy.sh ubuntu@localhost:/tmp/remote-deploy.sh
+            ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 \
+              ubuntu@localhost "bash /tmp/remote-deploy.sh && rm -f /tmp/remote-deploy.sh"
           else
             # Upload backend via S3, then run deploy script via SSM
             tar czf /tmp/backend.tar.gz --exclude='node_modules' --exclude='.env' -C . backend/
