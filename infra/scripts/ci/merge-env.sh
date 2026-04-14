@@ -3,6 +3,8 @@ set -euo pipefail
 # Merge base-env into /opt/super-agent/.env, preserving existing values.
 # Called by CI/CD pipeline after scp'ing /tmp/base-env to EC2.
 
+mkdir -p /opt/super-agent
+
 echo "JWT_SECRET=$(openssl rand -hex 32)" >> /tmp/base-env
 
 if [ -f /opt/super-agent/.env ]; then
