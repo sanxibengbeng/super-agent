@@ -311,8 +311,9 @@ jobs:
       # ── SSM tunnel ──
       - name: Install SSM plugin
         run: |
-          curl -fsSL "https://s3.amazonaws.com/session-manager-plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/ssm-plugin.deb
-          sudo dpkg -i /tmp/ssm-plugin.deb
+          # Install via snap (official method, works when S3 URLs change)
+          sudo snap install session-manager-plugin --classic 2>/dev/null \
+            || (curl -fsSL "https://s3.amazonaws.com/session-manager-plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/ssm-plugin.deb && sudo dpkg -i /tmp/ssm-plugin.deb)
 
       - name: Setup SSH key
         run: |
