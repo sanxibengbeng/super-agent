@@ -311,16 +311,40 @@ jobs:
       # ── SSM tunnel ──
       - name: Install SSM plugin
         run: |
-          curl -fsSL "https://github.com/aws/session-manager-plugin/releases/latest/download/session-manager-plugin.deb" -o /tmp/ssm-plugin.deb -L
-          sudo dpkg -i /tmp/ssm-plugin.deb
+          # Download from the official S3 path used by AWS docs
+          # Ref: https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-debian-and-ubuntu.html
+          DEB_URL="https://s3.amazonaws.com/session-manager-plugin/latest/ubuntu_64bit/session-manager-plugin.deb"
+          GH_URL="https://github.com/aws/session-manager-plugin/releases/latest/download/session-manager-plugin.deb"
+          for url in "$DEB_URL" "$GH_URL"; do
+            if curl -fsSL -o /tmp/ssm-plugin.deb "$url" 2>/dev/null; then
+              sudo dpkg -i /tmp/ssm-plugin.deb
+              break
+            fi
+          done
+          # Fallback: install from apt if available on runner
+          if ! command -v session-manager-plugin &>/dev/null; then
+            echo "Direct download failed, trying apt..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq amazon-ssm-agent 2>/dev/null || true
+          fi
+          # Final check — if still missing, skip SSM tunnel and use SSM send-command instead
+          if ! command -v session-manager-plugin &>/dev/null; then
+            echo "SSM_PLUGIN_AVAILABLE=false" >> "$GITHUB_ENV"
+            echo "::warning::SSM plugin not available — will use SSM SendCommand instead of SSH tunnel"
+          else
+            echo "SSM_PLUGIN_AVAILABLE=true" >> "$GITHUB_ENV"
+            session-manager-plugin --version
+          fi
 
       - name: Setup SSH key
+        if: env.SSM_PLUGIN_AVAILABLE == 'true'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy-key.pem
           chmod 600 ~/.ssh/deploy-key.pem
 
       - name: Start SSM tunnel
+        if: env.SSM_PLUGIN_AVAILABLE == 'true'
         run: |
           aws ssm start-session \
             --target "$INSTANCE_ID" \
@@ -354,7 +378,7 @@ jobs:
           DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/super_agent?schema=public&sslmode=no-verify"
           APP_URL="https://${PUBLIC_IP}"
 
-          # Generate base env file using Python (avoids heredoc issues in YAML)
+          # Generate base env file
           python3 infra/scripts/ci/gen-base-env.py \
             --redis-host "$REDIS_ENDPOINT" \
             --redis-port "$REDIS_PORT" \
@@ -366,47 +390,87 @@ jobs:
             --database-url "$DATABASE_URL" \
             --output /tmp/base-env
 
-          SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-          SSH_CMD="ssh $SSH_OPTS ubuntu@localhost"
-
-          scp $SSH_OPTS /tmp/base-env ubuntu@localhost:/tmp/base-env
-          scp $SSH_OPTS infra/scripts/ci/merge-env.sh ubuntu@localhost:/tmp/merge-env.sh
-          $SSH_CMD "bash /tmp/merge-env.sh && rm -f /tmp/merge-env.sh"
+          if [ "$SSM_PLUGIN_AVAILABLE" = "true" ]; then
+            SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+            SSH_CMD="ssh $SSH_OPTS ubuntu@localhost"
+            scp $SSH_OPTS /tmp/base-env ubuntu@localhost:/tmp/base-env
+            scp $SSH_OPTS infra/scripts/ci/merge-env.sh ubuntu@localhost:/tmp/merge-env.sh
+            $SSH_CMD "bash /tmp/merge-env.sh && rm -f /tmp/merge-env.sh"
+          else
+            # Upload base-env via S3, then run merge via SSM SendCommand
+            aws s3 cp /tmp/base-env "s3://${WORKSPACE_BUCKET}/ci-tmp/base-env" --region ${{ env.AWS_REGION }}
+            MERGE_SCRIPT=$(cat infra/scripts/ci/merge-env.sh | base64 -w0)
+            aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --document-name AWS-RunShellScript \
+              --parameters "commands=[
+                \"aws s3 cp s3://${WORKSPACE_BUCKET}/ci-tmp/base-env /tmp/base-env --region ${{ env.AWS_REGION }}\",
+                \"echo '$MERGE_SCRIPT' | base64 -d > /tmp/merge-env.sh\",
+                \"bash /tmp/merge-env.sh\",
+                \"rm -f /tmp/merge-env.sh\"
+              ]" \
+              --output text --query "Command.CommandId" --no-cli-pager
+            sleep 10
+          fi
 
       # ── Frontend deploy ──
       - name: Deploy frontend to EC2
         if: ${{ github.event_name == 'push' || !inputs.skip_frontend }}
         run: |
-          RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-          SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
-
-          $SSH_CMD "mkdir -p /opt/super-agent/frontend/dist"
-          rsync -avz --delete \
-            -e "$RSYNC_SSH" \
-            frontend/dist/ \
-            ubuntu@localhost:/opt/super-agent/frontend/dist/
+          if [ "$SSM_PLUGIN_AVAILABLE" = "true" ]; then
+            RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+            SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
+            $SSH_CMD "mkdir -p /opt/super-agent/frontend/dist"
+            rsync -avz --delete -e "$RSYNC_SSH" frontend/dist/ ubuntu@localhost:/opt/super-agent/frontend/dist/
+          else
+            # Upload via S3, then copy on EC2
+            aws s3 sync frontend/dist/ "s3://${WORKSPACE_BUCKET}/ci-tmp/frontend-dist/" --delete --region ${{ env.AWS_REGION }}
+            aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" --region ${{ env.AWS_REGION }} \
+              --document-name AWS-RunShellScript \
+              --parameters "commands=[
+                \"mkdir -p /opt/super-agent/frontend/dist\",
+                \"aws s3 sync s3://${WORKSPACE_BUCKET}/ci-tmp/frontend-dist/ /opt/super-agent/frontend/dist/ --delete --region ${{ env.AWS_REGION }}\"
+              ]" --output text --no-cli-pager
+            sleep 10
+          fi
 
       # ── Backend deploy ──
       - name: Deploy backend to EC2
         if: ${{ github.event_name == 'push' || !inputs.skip_backend }}
         run: |
-          RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-          SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
-          SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
-
-          rsync -avz --delete \
-            -e "$RSYNC_SSH" \
-            --exclude='node_modules' \
-            --exclude='.env' \
-            backend/ \
-            ubuntu@localhost:/opt/super-agent/backend/
-
-          # scp the deploy script and execute on EC2
-          scp $SSH_OPTS infra/scripts/ci/remote-deploy.sh ubuntu@localhost:/tmp/remote-deploy.sh
-          $SSH_CMD "bash /tmp/remote-deploy.sh && rm -f /tmp/remote-deploy.sh"
+          if [ "$SSM_PLUGIN_AVAILABLE" = "true" ]; then
+            RSYNC_SSH="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+            SSH_CMD="ssh -i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 ubuntu@localhost"
+            SSH_OPTS="-i ~/.ssh/deploy-key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222"
+            rsync -avz --delete -e "$RSYNC_SSH" --exclude='node_modules' --exclude='.env' backend/ ubuntu@localhost:/opt/super-agent/backend/
+            scp $SSH_OPTS infra/scripts/ci/remote-deploy.sh ubuntu@localhost:/tmp/remote-deploy.sh
+            $SSH_CMD "bash /tmp/remote-deploy.sh && rm -f /tmp/remote-deploy.sh"
+          else
+            # Upload backend via S3, then run deploy script via SSM
+            tar czf /tmp/backend.tar.gz --exclude='node_modules' --exclude='.env' -C . backend/
+            aws s3 cp /tmp/backend.tar.gz "s3://${WORKSPACE_BUCKET}/ci-tmp/backend.tar.gz" --region ${{ env.AWS_REGION }}
+            aws s3 cp infra/scripts/ci/remote-deploy.sh "s3://${WORKSPACE_BUCKET}/ci-tmp/remote-deploy.sh" --region ${{ env.AWS_REGION }}
+            CMD_ID=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" --region ${{ env.AWS_REGION }} \
+              --document-name AWS-RunShellScript \
+              --timeout-seconds 300 \
+              --parameters "commands=[
+                \"aws s3 cp s3://${WORKSPACE_BUCKET}/ci-tmp/backend.tar.gz /tmp/backend.tar.gz --region ${{ env.AWS_REGION }}\",
+                \"rm -rf /opt/super-agent/backend/dist /opt/super-agent/backend/src /opt/super-agent/backend/prisma\",
+                \"tar xzf /tmp/backend.tar.gz -C /opt/super-agent/ && rm /tmp/backend.tar.gz\",
+                \"aws s3 cp s3://${WORKSPACE_BUCKET}/ci-tmp/remote-deploy.sh /tmp/remote-deploy.sh --region ${{ env.AWS_REGION }}\",
+                \"bash /tmp/remote-deploy.sh && rm -f /tmp/remote-deploy.sh\"
+              ]" --output text --query "Command.CommandId" --no-cli-pager)
+            echo "SSM Command: $CMD_ID — waiting for completion..."
+            aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} 2>/dev/null || true
+            aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} \
+              --query "[Status, StandardOutputContent]" --output text 2>/dev/null | head -50
+          fi
 
       - name: Cleanup SSM tunnel
-        if: always()
+        if: always() && env.SSM_PLUGIN_AVAILABLE == 'true'
         run: |
           [ -f /tmp/ssm-pid ] && kill $(cat /tmp/ssm-pid) 2>/dev/null || true
 
