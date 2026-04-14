@@ -47,6 +47,32 @@ else
 fi
 
 echo "Restarting backend..."
+# Create systemd service if it doesn't exist (user-data may not have finished)
+if ! systemctl list-unit-files backend.service &>/dev/null || ! systemctl cat backend.service &>/dev/null 2>&1; then
+  echo "Creating backend.service..."
+  sudo mkdir -p /opt/super-agent/logs
+  sudo chown ubuntu:ubuntu /opt/super-agent/logs
+  sudo tee /etc/systemd/system/backend.service > /dev/null <<'SERVICE'
+[Unit]
+Description=Super Agent Backend
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/super-agent/backend
+EnvironmentFile=/opt/super-agent/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/super-agent/logs/backend.log
+StandardError=append:/opt/super-agent/logs/backend-error.log
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+  sudo systemctl daemon-reload
+fi
 sudo systemctl restart backend
 sudo systemctl enable backend
 sleep 3
