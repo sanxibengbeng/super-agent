@@ -85,7 +85,7 @@ jobs:
 
       - name: Backend — TypeScript compile
         working-directory: backend
-        run: npx tsc --noUnusedLocals false --noUnusedParameters false --strict false --noImplicitAny false --strictNullChecks false
+        run: npx tsc --noUnusedLocals false --noUnusedParameters false
 
       - name: Backend — Run tests
         working-directory: backend
