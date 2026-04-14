@@ -13,7 +13,12 @@ echo "prisma generate..."
 npx prisma generate
 
 echo "DB grants..."
-source /opt/super-agent/.env
+# Extract DATABASE_URL safely (avoid sourcing .env which can fail with special chars)
+DATABASE_URL=$(grep '^DATABASE_URL=' /opt/super-agent/.env | head -1 | cut -d= -f2-)
+if [ -z "$DATABASE_URL" ]; then
+  echo "ERROR: DATABASE_URL not found in /opt/super-agent/.env"
+  exit 1
+fi
 PSQL_URL=$(echo "$DATABASE_URL" | sed 's/?schema=public//' | sed 's/sslmode=no-verify/sslmode=require/')
 psql "$PSQL_URL" -c "GRANT ALL PRIVILEGES ON DATABASE super_agent TO superagent;"
 psql "$PSQL_URL" -c "GRANT ALL ON SCHEMA public TO superagent;"
