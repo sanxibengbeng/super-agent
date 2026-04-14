@@ -346,22 +346,38 @@ jobs:
       - name: Start SSM tunnel
         if: env.SSM_PLUGIN_AVAILABLE == 'true'
         run: |
+          echo "Starting SSM tunnel to $INSTANCE_ID..."
           aws ssm start-session \
             --target "$INSTANCE_ID" \
             --document-name AWS-StartPortForwardingSession \
             --parameters "portNumber=22,localPortNumber=2222" \
-            --region ${{ env.AWS_REGION }} &
+            --region ${{ env.AWS_REGION }} > /tmp/ssm-stdout.log 2>&1 &
           echo $! > /tmp/ssm-pid
-          sleep 8
+          echo "SSM PID: $(cat /tmp/ssm-pid)"
+          sleep 15
 
-          for i in $(seq 1 10); do
-            ssh -i ~/.ssh/deploy-key.pem \
+          # Show SSM output for debugging
+          echo "--- SSM session output ---"
+          cat /tmp/ssm-stdout.log 2>/dev/null || true
+          echo "--- end ---"
+
+          for i in $(seq 1 15); do
+            if ssh -i ~/.ssh/deploy-key.pem \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p 2222 ubuntu@localhost "echo ok" 2>/dev/null && break
-            [ "$i" -eq 10 ] && echo "::error::SSM tunnel failed" && exit 1
-            sleep 3
+              -o ConnectTimeout=5 \
+              -p 2222 ubuntu@localhost "echo ok" 2>/dev/null; then
+              echo "SSM tunnel ready."
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "--- SSM session output (final) ---"
+              cat /tmp/ssm-stdout.log 2>/dev/null || true
+              echo "::error::SSM tunnel failed after 15 attempts"
+              exit 1
+            fi
+            echo "  Attempt $i/15 — waiting 5s..."
+            sleep 5
           done
-          echo "SSM tunnel ready."
 
       # ── .env generation ──
       - name: Generate .env on EC2
