@@ -25,7 +25,8 @@ if [ -z "$DATABASE_URL" ]; then
   echo "ERROR: DATABASE_URL not found in /opt/super-agent/.env"
   exit 1
 fi
-PSQL_URL=$(echo "$DATABASE_URL" | sed 's/?schema=public//' | sed 's/sslmode=no-verify/sslmode=require/')
+PSQL_URL=$(echo "$DATABASE_URL" | sed 's/?.*//')
+PSQL_URL="${PSQL_URL}?sslmode=require"
 psql "$PSQL_URL" -c "GRANT ALL PRIVILEGES ON DATABASE super_agent TO superagent;"
 psql "$PSQL_URL" -c "GRANT ALL ON SCHEMA public TO superagent;"
 psql "$PSQL_URL" -c "ALTER SCHEMA public OWNER TO superagent;"
