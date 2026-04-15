@@ -31,7 +31,7 @@ def main():
         f'CORS_ORIGIN={args.app_url}',
         f'APP_URL={args.app_url}',
         'CLAUDE_CODE_USE_BEDROCK=1',
-        'CLAUDE_MODEL=claude-sonnet-4-6',
+        'CLAUDE_MODEL=us.anthropic.claude-opus-4-6-v1',
         'AGENT_WORKSPACE_BASE_DIR=/opt/super-agent/workspaces',
         'AGENT_RUNTIME=claude',
         f'AGENTCORE_WORKSPACE_S3_BUCKET={args.workspace_bucket}',

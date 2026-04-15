@@ -16,7 +16,7 @@ apt-get upgrade -y
 echo ">>> Installing Node.js 22..."
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
-npm install -g npm@latest
+npm install -g npm@latest || true
 
 # PostgreSQL client
 echo ">>> Installing PostgreSQL client..."
