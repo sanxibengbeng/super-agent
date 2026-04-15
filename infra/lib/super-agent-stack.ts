@@ -385,24 +385,16 @@ export class SuperAgentStack extends cdk.Stack {
         httpPort: 80,
       });
 
-      const apiCachePolicy = new cloudfront.CachePolicy(this, 'ApiCachePolicy', {
-        cachePolicyName: `${id}-api-no-cache`,
-        defaultTtl: cdk.Duration.seconds(0),
-        minTtl: cdk.Duration.seconds(0),
-        maxTtl: cdk.Duration.seconds(0),
-        headerBehavior: cloudfront.CacheHeaderBehavior.allowList(
-          'Authorization', 'Content-Type', 'Accept', 'Origin', 'Referer',
-        ),
-        queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
-        cookieBehavior: cloudfront.CacheCookieBehavior.all(),
-      });
+      const apiCachePolicy = cloudfront.CachePolicy.CACHING_DISABLED;
+
+      const apiOriginRequestPolicy = cloudfront.OriginRequestPolicy.ALL_VIEWER;
 
       // /api/* → EC2
       distribution.addBehavior('/api/*', ec2Origin, {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: apiCachePolicy,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        originRequestPolicy: apiOriginRequestPolicy,
       });
 
       // /v1/* → EC2 (OpenAI-compatible LLM proxy)
@@ -410,7 +402,7 @@ export class SuperAgentStack extends cdk.Stack {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: apiCachePolicy,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        originRequestPolicy: apiOriginRequestPolicy,
       });
 
       // /ws/* → EC2 (WebSocket)
@@ -418,7 +410,7 @@ export class SuperAgentStack extends cdk.Stack {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        originRequestPolicy: apiOriginRequestPolicy,
       });
     }
 
