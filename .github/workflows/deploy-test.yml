@@ -145,6 +145,9 @@ jobs:
       workspace_bucket: ${{ steps.extract.outputs.workspace_bucket }}
       redis_endpoint: ${{ steps.extract.outputs.redis_endpoint }}
       redis_port: ${{ steps.extract.outputs.redis_port }}
+      frontend_bucket: ${{ steps.extract.outputs.frontend_bucket }}
+      cf_dist_id: ${{ steps.extract.outputs.cf_dist_id }}
+      domain_name: ${{ steps.extract.outputs.domain_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -167,7 +170,9 @@ jobs:
 
       - name: CDK bootstrap (first time only)
         working-directory: infra
-        run: npx cdk bootstrap --region ${{ env.AWS_REGION }} 2>/dev/null || true
+        run: |
+          npx cdk bootstrap --region ${{ env.AWS_REGION }} 2>/dev/null || true
+          npx cdk bootstrap aws://${{ secrets.AWS_ACCESS_KEY_ID && '' }}$(aws sts get-caller-identity --query Account --output text)/us-east-1 2>/dev/null || true
 
       - name: CDK deploy
         working-directory: infra
@@ -175,6 +180,9 @@ jobs:
           npx cdk deploy \
             -c stackName=${{ env.STACK_NAME }} \
             -c authMode=local \
+            -c enableCdn=true \
+            -c domainName=${{ secrets.TEST_DOMAIN_NAME }} \
+            -c hostedZoneId=${{ secrets.TEST_HOSTED_ZONE_ID }} \
             --parameters KeyPairName=${{ secrets.EC2_KEY_PAIR_NAME }} \
             --region ${{ env.AWS_REGION }} \
             --require-approval never \
@@ -212,6 +220,9 @@ jobs:
           echo "workspace_bucket=$(jq -r ".[\"$S\"].WorkspaceBucketName" $F)" >> "$GITHUB_OUTPUT"
           echo "redis_endpoint=$(jq -r ".[\"$S\"].RedisEndpoint" $F)" >> "$GITHUB_OUTPUT"
           echo "redis_port=$(jq -r ".[\"$S\"].RedisPort" $F)" >> "$GITHUB_OUTPUT"
+          echo "frontend_bucket=$(jq -r ".[\"$S\"].FrontendBucketName // empty" $F)" >> "$GITHUB_OUTPUT"
+          echo "cf_dist_id=$(jq -r ".[\"$S\"].CloudFrontDistributionId // empty" $F)" >> "$GITHUB_OUTPUT"
+          echo "domain_name=$(jq -r ".[\"$S\"].DomainName // empty" $F)" >> "$GITHUB_OUTPUT"
 
   # ═══════════════════════════════════════════════════════════════════
   # Job 2b: Read existing stack outputs（skip_infra 时使用）
@@ -230,6 +241,9 @@ jobs:
       workspace_bucket: ${{ steps.extract.outputs.workspace_bucket }}
       redis_endpoint: ${{ steps.extract.outputs.redis_endpoint }}
       redis_port: ${{ steps.extract.outputs.redis_port }}
+      frontend_bucket: ${{ steps.extract.outputs.frontend_bucket }}
+      cf_dist_id: ${{ steps.extract.outputs.cf_dist_id }}
+      domain_name: ${{ steps.extract.outputs.domain_name }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -263,6 +277,9 @@ jobs:
           echo "workspace_bucket=$(get_val WorkspaceBucketName)" >> "$GITHUB_OUTPUT"
           echo "redis_endpoint=$(get_val RedisEndpoint)" >> "$GITHUB_OUTPUT"
           echo "redis_port=$(get_val RedisPort)" >> "$GITHUB_OUTPUT"
+          echo "frontend_bucket=$(get_val FrontendBucketName)" >> "$GITHUB_OUTPUT"
+          echo "cf_dist_id=$(get_val CloudFrontDistributionId)" >> "$GITHUB_OUTPUT"
+          echo "domain_name=$(get_val DomainName)" >> "$GITHUB_OUTPUT"
 
   # ═══════════════════════════════════════════════════════════════════
   # Job 3: Deploy Application
@@ -284,6 +301,9 @@ jobs:
       WORKSPACE_BUCKET: ${{ needs.infrastructure.outputs.workspace_bucket || needs.read-outputs.outputs.workspace_bucket }}
       REDIS_ENDPOINT: ${{ needs.infrastructure.outputs.redis_endpoint || needs.read-outputs.outputs.redis_endpoint }}
       REDIS_PORT: ${{ needs.infrastructure.outputs.redis_port || needs.read-outputs.outputs.redis_port }}
+      FRONTEND_BUCKET: ${{ needs.infrastructure.outputs.frontend_bucket || needs.read-outputs.outputs.frontend_bucket }}
+      CF_DIST_ID: ${{ needs.infrastructure.outputs.cf_dist_id || needs.read-outputs.outputs.cf_dist_id }}
+      DOMAIN_NAME: ${{ needs.infrastructure.outputs.domain_name || needs.read-outputs.outputs.domain_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -392,7 +412,11 @@ jobs:
           DB_USER=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
           DB_PASS=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
           DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/super_agent?schema=public&sslmode=no-verify"
-          APP_URL="https://${PUBLIC_IP}"
+          if [ -n "$DOMAIN_NAME" ]; then
+            APP_URL="https://${DOMAIN_NAME}"
+          else
+            APP_URL="https://${PUBLIC_IP}"
+          fi
 
           # Generate base env file
           python3 infra/scripts/ci/gen-base-env.py \
@@ -441,7 +465,6 @@ jobs:
               ubuntu@localhost "mkdir -p /opt/super-agent/frontend/dist"
             rsync -avz --delete -e "$RSYNC_SSH" frontend/dist/ ubuntu@localhost:/opt/super-agent/frontend/dist/
           else
-            # Upload via S3, then copy on EC2
             aws s3 sync frontend/dist/ "s3://${WORKSPACE_BUCKET}/ci-tmp/frontend-dist/" --delete --region ${{ env.AWS_REGION }}
             aws ssm send-command \
               --instance-ids "$INSTANCE_ID" --region ${{ env.AWS_REGION }} \
@@ -451,6 +474,16 @@ jobs:
                 \"aws s3 sync s3://${WORKSPACE_BUCKET}/ci-tmp/frontend-dist/ /opt/super-agent/frontend/dist/ --delete --region ${{ env.AWS_REGION }}\"
               ]" --output text --no-cli-pager
             sleep 10
+          fi
+
+      - name: Deploy frontend to S3 + CloudFront
+        if: ${{ (github.event_name == 'push' || !inputs.skip_frontend) && env.FRONTEND_BUCKET != '' }}
+        run: |
+          echo "Syncing frontend to S3: $FRONTEND_BUCKET"
+          aws s3 sync frontend/dist/ "s3://${FRONTEND_BUCKET}/" --delete --region ${{ env.AWS_REGION }}
+          if [ -n "$CF_DIST_ID" ]; then
+            echo "Invalidating CloudFront: $CF_DIST_ID"
+            aws cloudfront create-invalidation --distribution-id "$CF_DIST_ID" --paths "/*" --region ${{ env.AWS_REGION }} 2>/dev/null || true
           fi
 
       # ── Backend deploy ──
@@ -502,6 +535,7 @@ jobs:
     env:
       PUBLIC_IP: ${{ needs.infrastructure.outputs.public_ip || needs.read-outputs.outputs.public_ip }}
       INSTANCE_ID: ${{ needs.infrastructure.outputs.instance_id || needs.read-outputs.outputs.instance_id }}
+      DOMAIN_NAME: ${{ needs.infrastructure.outputs.domain_name || needs.read-outputs.outputs.domain_name }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -531,23 +565,21 @@ jobs:
 
       - name: Health check (external)
         run: |
-          echo "Testing external access to https://${PUBLIC_IP}/api/health"
+          if [ -n "$DOMAIN_NAME" ]; then
+            APP_URL="https://${DOMAIN_NAME}"
+          else
+            APP_URL="https://${PUBLIC_IP}"
+          fi
+          echo "Testing external access to ${APP_URL}/api/health"
           HTTP_CODE="000"
           for i in $(seq 1 15); do
-            HTTP_CODE=$(curl -sk -o /tmp/health-resp -w "%{http_code}" "https://${PUBLIC_IP}/api/health" 2>/dev/null || echo "000")
+            HTTP_CODE=$(curl -sk -o /tmp/health-resp -w "%{http_code}" "${APP_URL}/api/health" 2>/dev/null || echo "000")
             if [ "$HTTP_CODE" = "200" ]; then
               echo "✅ Health check passed (HTTPS)"
               cat /tmp/health-resp && echo ""
               break
             fi
-            # Also try HTTP as fallback
-            HTTP_CODE_80=$(curl -s -o /dev/null -w "%{http_code}" "http://${PUBLIC_IP}/api/health" 2>/dev/null || echo "000")
-            if [ "$HTTP_CODE_80" = "200" ]; then
-              echo "✅ Health check passed (HTTP port 80)"
-              HTTP_CODE="200"
-              break
-            fi
-            echo "  Attempt $i/15 — HTTPS=$HTTP_CODE HTTP=$HTTP_CODE_80, retrying in 10s..."
+            echo "  Attempt $i/15 — HTTP $HTTP_CODE, retrying in 10s..."
             sleep 10
           done
           if [ "$HTTP_CODE" != "200" ]; then
@@ -556,7 +588,12 @@ jobs:
 
       - name: Frontend reachability
         run: |
-          HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}/" 2>/dev/null || echo "000")
+          if [ -n "$DOMAIN_NAME" ]; then
+            APP_URL="https://${DOMAIN_NAME}"
+          else
+            APP_URL="https://${PUBLIC_IP}"
+          fi
+          HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "${APP_URL}/" 2>/dev/null || echo "000")
           if [ "$HTTP_CODE" = "200" ]; then
             echo "✅ Frontend reachable"
           else
@@ -566,16 +603,18 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          if [ -n "$DOMAIN_NAME" ]; then
+            APP_URL="https://${DOMAIN_NAME}"
+          else
+            APP_URL="https://${PUBLIC_IP}"
+          fi
           echo ""
           echo "============================================="
           echo "  🧪 Test Environment Deployed"
           echo "============================================="
+          echo "  URL:     ${APP_URL}"
+          echo "  Health:  ${APP_URL}/api/health"
           echo "  EC2 IP:  ${PUBLIC_IP}"
-          echo "  URL:     https://${PUBLIC_IP}"
-          echo "  Health:  https://${PUBLIC_IP}/api/health"
           echo "  Stack:   ${{ env.STACK_NAME }}"
           echo "  Region:  ${{ env.AWS_REGION }}"
-          echo ""
-          echo "  如果 Nginx 还在初始化，等几分钟后手动访问上面的 URL"
-          echo "  自签名证书，浏览器会提示不安全，点击继续即可"
           echo "============================================="
