@@ -283,6 +283,7 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     let frontendBucket: s3.Bucket | undefined;
     let distribution: cloudfront.Distribution | undefined;
+    let hostedZone: route53.IHostedZone | undefined;
 
     if (enableCdn) {
       // S3 bucket for frontend static files
@@ -295,7 +296,7 @@ export class SuperAgentStack extends cdk.Stack {
       frontendBucket.grantReadWrite(role); // for deploy script S3 sync
 
       // ACM certificate (must be us-east-1 for CloudFront)
-      const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
+      hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
         hostedZoneId: hostedZoneId!,
         zoneName: domainName!.split('.').slice(1).join('.'), // extract parent domain
       });
@@ -379,7 +380,7 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     // CloudFront → EC2 API behaviors (must be after EIP creation)
     // =========================================================================
-    if (distribution) {
+    if (distribution && hostedZone && domainName) {
       // Create a DNS record for EC2 so CloudFront can use it as origin (CF rejects IP addresses)
       const ec2DnsName = `api-origin.${domainName}`;
       new route53.ARecord(this, 'Ec2OriginDns', {
