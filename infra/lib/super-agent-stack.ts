@@ -380,7 +380,16 @@ export class SuperAgentStack extends cdk.Stack {
     // CloudFront → EC2 API behaviors (must be after EIP creation)
     // =========================================================================
     if (distribution) {
-      const ec2Origin = new origins.HttpOrigin(eip.attrPublicIp, {
+      // Create a DNS record for EC2 so CloudFront can use it as origin (CF rejects IP addresses)
+      const ec2DnsName = `api-origin.${domainName}`;
+      new route53.ARecord(this, 'Ec2OriginDns', {
+        zone: hostedZone,
+        recordName: ec2DnsName,
+        target: route53.RecordTarget.fromIpAddresses(eip.attrPublicIp),
+        ttl: cdk.Duration.seconds(60),
+      });
+
+      const ec2Origin = new origins.HttpOrigin(ec2DnsName, {
         protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
         httpPort: 80,
       });
