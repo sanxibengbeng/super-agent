@@ -332,13 +332,7 @@ export class SuperAgentStack extends cdk.Stack {
         ],
       });
 
-      // Add API/WS behavior → EC2 origin
-      const ec2Origin = new origins.HttpOrigin(`ec2-origin.${domainName}`, {
-        // This will be overridden by post-deploy to use the actual EIP
-        // For now, use a placeholder — the deploy script patches it
-        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-        httpPort: 80,
-      });
+      // Add API/WS behavior → EC2 origin (added after EC2/EIP section below)
 
       // Route53 ALIAS → CloudFront
       new route53.ARecord(this, 'DnsAlias', {
@@ -381,6 +375,52 @@ export class SuperAgentStack extends cdk.Stack {
       allocationId: eip.attrAllocationId,
       instanceId: instance.instanceId,
     });
+
+    // =========================================================================
+    // CloudFront → EC2 API behaviors (must be after EIP creation)
+    // =========================================================================
+    if (distribution) {
+      const ec2Origin = new origins.HttpOrigin(eip.attrPublicIp, {
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+        httpPort: 80,
+      });
+
+      const apiCachePolicy = new cloudfront.CachePolicy(this, 'ApiCachePolicy', {
+        cachePolicyName: `${id}-api-no-cache`,
+        defaultTtl: cdk.Duration.seconds(0),
+        minTtl: cdk.Duration.seconds(0),
+        maxTtl: cdk.Duration.seconds(0),
+        headerBehavior: cloudfront.CacheHeaderBehavior.allowList(
+          'Authorization', 'Content-Type', 'Accept', 'Origin', 'Referer',
+        ),
+        queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
+        cookieBehavior: cloudfront.CacheCookieBehavior.all(),
+      });
+
+      // /api/* → EC2
+      distribution.addBehavior('/api/*', ec2Origin, {
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: apiCachePolicy,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      });
+
+      // /v1/* → EC2 (OpenAI-compatible LLM proxy)
+      distribution.addBehavior('/v1/*', ec2Origin, {
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: apiCachePolicy,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      });
+
+      // /ws/* → EC2 (WebSocket)
+      distribution.addBehavior('/ws/*', ec2Origin, {
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      });
+    }
 
     // =========================================================================
     // Outputs — always
