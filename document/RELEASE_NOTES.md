@@ -1,14 +1,66 @@
 # Super Agent Release Notes
 
-**版本：v1.2.0**
-**发布日期：2026-04-12**
-**开发周期：2026-01-08 ~ 2026-04-12**
+**版本：v1.3.0**
+**发布日期：2026-04-17**
+**开发周期：2026-01-08 ~ 2026-04-17**
 
 ---
 
 Super Agent 是一个企业级多智能体平台，帮助企业将业务知识沉淀为标准化 SOP，再从 SOP 中孵化出能自主执行任务的虚拟员工（AI Agent）。本次发布为项目首个完整版本，涵盖从平台初始化到 AgentCore 云端部署的全部核心能力。
 
 ---
+
+## 🆕 v1.3.0 更新内容（2026-04-17）
+
+### 🌐 国际化 (i18n)
+
+- 前端全面国际化改造，覆盖 Settings、Members、Groups、API Keys、Token Usage、Appearance 等页面 `2026-04-17`
+- Canvas 节点组件国际化：StartNode、EndNode、ConditionNode、DocumentNode、HumanApprovalNode、ActionNode `2026-04-17`
+- PublishToShowcase 弹窗中文硬编码替换为 i18n 翻译键 `2026-04-17`
+- ErrorBoundary、MessageList、ContextPanel 等通用组件国际化 `2026-04-17`
+- 新增 2700+ 条中英文翻译条目 `2026-04-17`
+- Workflow 删除确认弹窗国际化 `2026-04-17`
+
+### 🤖 Agent 管理
+
+- Agent 名称唯一性约束从组织级收窄至 Business Scope 级，允许不同 Scope 下创建同名 Agent `2026-04-16`
+- 新增 Prisma migration：`agents` 表添加 `(organization_id, business_scope_id, name)` 联合唯一索引 `2026-04-16`
+
+### 💬 Chat 对话系统
+
+- 新增 Workspace 预热机制：创建 Session 时可通过 `provision_workspace` 参数提前初始化工作区，减少首条消息延迟 `2026-04-17`
+- `buildScopeForWorkspace` 逻辑从 `prepareScopeSession` 中提取为独立方法，供预热和正常流程复用 `2026-04-17`
+- 工作区文件读取增加 AgentCore Command API 和 S3 双重回退，解决 AgentCore 模式下文件 404 问题 `2026-04-17`
+
+### 🧠 Scope Generator 增强
+
+- Scope 生成器支持多语言输出：新增 `language` 参数，支持 `en`（英文）和 `cn`（中文）两种语言生成 `2026-04-17`
+- 生成后自动校验 JSON 结构，校验失败时自动要求 Agent 修复，最多重试 2 次 `2026-04-17`
+- 生成器运行时从硬编码 `ClaudeAgentRuntime` 切换为 `agentRuntime` 工厂，支持 AgentCore 模式 `2026-04-17`
+
+### 💼 项目管理 — AI 治理
+
+- 新增 `ProjectGovernanceService`：AI 驱动的 Issue 需求分析与治理服务 `2026-04-16`
+- Issue 自动富化：创建 Issue 后异步触发 AI 分析，自动生成验收标准、标签建议、工作量估算和拆分建议 `2026-04-16`
+- 跨 Issue 关系检测：自动识别冲突（conflicts_with）、依赖（depends_on）、重复（duplicates）等关系 `2026-04-16`
+- Issue 就绪度评分：基于完整性、冲突、依赖、可执行性四维度计算 0-100 分 `2026-04-16`
+- Sprint Triage 报告：AI 生成冲刺规划建议，包含推荐执行顺序、合并建议、缺失信息和风险标记 `2026-04-16`
+- 新增 `project_issue_relations` 表：存储 AI 发现的 Issue 间关系 `2026-04-16`
+- 新增 `project_triage_reports` 表：存储 AI 生成的 Triage 报告 `2026-04-16`
+- `project_issues` 表新增字段：`readiness_score`、`readiness_details`、`acceptance_criteria`、`ai_analysis_status`、`last_analyzed_at` `2026-04-16`
+- 新增 REST API：Issue 富化、关系查询、关系审核、Triage 报告生成、重新分析 `2026-04-16`
+
+### ☁️ AgentCore — Git Diff 追踪
+
+- Agent 执行前自动创建 Git baseline 快照 `2026-04-17`
+- Agent 执行后自动提取 `git diff`，生成结构化 `__diff__.json` 上传至 S3 `2026-04-17`
+- 后端自动从 S3 拉取 diff 数据并存储至 Issue 记录（`diff_stat`、`diff_patch`、`diff_created_at`） `2026-04-17`
+- 新增 REST API：`GET /:id/issues/:issueId/diff` 获取 Issue 关联的代码变更 `2026-04-17`
+- `project_issues` 表新增 diff 字段：`diff_stat`（JSON）、`diff_patch`（TEXT）、`diff_created_at` `2026-04-16`
+
+---
+
+## 📋 v1.2.0 及之前完整记录
 
 ## 🏗️ 平台基础架构
 
