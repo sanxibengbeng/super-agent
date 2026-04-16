@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import { X, Star, Loader2 } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
+import { useTranslation } from '@/i18n/useTranslation'
 
 interface ShowcaseDomainOption {
   id: string
@@ -25,6 +26,7 @@ interface PublishToShowcaseModalProps {
 }
 
 export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPublished, onStarOnly }: PublishToShowcaseModalProps) {
+  const { t } = useTranslation()
   const [domains, setDomains] = useState<ShowcaseDomainOption[]>([])
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState(false)
@@ -56,7 +58,7 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
         if (allDomains.length > 0) setSelectedDomainId(allDomains[0].id)
       } catch (err) {
         console.error('Failed to load showcase domains:', err)
-        setError('无法加载案例分类')
+        setError(t('showcase.loadError'))
       } finally {
         setLoading(false)
       }
@@ -79,7 +81,7 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
       onPublished()
     } catch (err) {
       console.error('Failed to publish to showcase:', err)
-      setError('发布失败，请重试')
+      setError(t('showcase.publishError'))
     } finally {
       setPublishing(false)
     }
@@ -91,7 +93,7 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2">
             <Star className="w-5 h-5 text-yellow-400" fill="currentColor" />
-            <h3 className="text-lg font-semibold text-white">发布到明星案例</h3>
+            <h3 className="text-lg font-semibold text-white">{t('showcase.publishTitle')}</h3>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
             <X className="w-5 h-5" />
@@ -106,9 +108,9 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
           <div className="space-y-4">
             {/* Domain selector */}
             <div>
-              <label className="block text-sm text-gray-400 mb-1.5">案例分类</label>
+              <label className="block text-sm text-gray-400 mb-1.5">{t('showcase.category')}</label>
               {domains.length === 0 ? (
-                <p className="text-xs text-yellow-400">暂无可用分类，请先在后台配置行业和领域。</p>
+                <p className="text-xs text-yellow-400">{t('showcase.noCategories')}</p>
               ) : (
                 <select
                   value={selectedDomainId}
@@ -126,23 +128,23 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
 
             {/* Title */}
             <div>
-              <label className="block text-sm text-gray-400 mb-1.5">案例名称</label>
+              <label className="block text-sm text-gray-400 mb-1.5">{t('showcase.caseName')}</label>
               <input
                 type="text"
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                placeholder="例如：RDS Sysbench 性能测试"
+                placeholder={t('showcase.caseNamePlaceholder')}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
               />
             </div>
 
             {/* Description */}
             <div>
-              <label className="block text-sm text-gray-400 mb-1.5">简要描述</label>
+              <label className="block text-sm text-gray-400 mb-1.5">{t('showcase.briefDescription')}</label>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="简要描述这个案例展示了什么能力..."
+                placeholder={t('showcase.briefDescPlaceholder')}
                 rows={2}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none"
               />
@@ -150,15 +152,15 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
 
             {/* Initial Prompt */}
             <div>
-              <label className="block text-sm text-gray-400 mb-1.5">引导提示词 <span className="text-gray-600">(可选)</span></label>
+              <label className="block text-sm text-gray-400 mb-1.5">{t('showcase.guidingPrompt')} <span className="text-gray-600">({t('showcase.guidingPromptOptional')})</span></label>
               <textarea
                 value={initialPrompt}
                 onChange={e => setInitialPrompt(e.target.value)}
-                placeholder="其他用户点击 Run 时自动发送的第一条消息..."
+                placeholder={t('showcase.guidingPromptPlaceholder')}
                 rows={3}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none"
               />
-              <p className="text-xs text-gray-600 mt-1">留空则使用描述作为引导语</p>
+              <p className="text-xs text-gray-600 mt-1">{t('showcase.guidingPromptHint')}</p>
             </div>
 
             {error && <p className="text-sm text-red-400">{error}</p>}
@@ -177,14 +179,14 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
                 className="px-3 py-2 text-sm text-gray-400 hover:text-yellow-400 transition-colors flex items-center gap-1.5"
               >
                 <Star className="w-3.5 h-3.5" />
-                仅收藏
+                {t('showcase.starOnly')}
               </button>
               <div className="flex gap-3">
                 <button
                   onClick={onClose}
                   className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handlePublish}
@@ -192,7 +194,7 @@ export function PublishToShowcaseModal({ sessionId, sessionTitle, onClose, onPub
                   className="px-4 py-2 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded-lg text-sm font-medium hover:bg-yellow-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
                   {publishing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  发布到明星案例
+                  {t('showcase.publish')}
                 </button>
               </div>
             </div>

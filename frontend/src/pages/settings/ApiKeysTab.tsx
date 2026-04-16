@@ -7,20 +7,21 @@ import {
   Plus, Trash2, Copy, Check, Key, Loader2, AlertCircle, X, Shield, Clock, Code,
 } from 'lucide-react';
 import { useApiKeys } from '@/services/useApiKeys';
+import { useTranslation } from '@/i18n';
 import type { ApiKey } from '@/services/useApiKeys';
 
 interface Props {
   isAdmin: boolean;
 }
 
-const AVAILABLE_SCOPES = [
-  { id: 'workflow:execute', label: 'Execute Workflows' },
-  { id: 'workflow:read', label: 'Read Workflows' },
-  { id: 'workflow:write', label: 'Write Workflows' },
-  { id: 'model:invoke', label: 'Invoke LLM Models' },
+const SCOPE_KEYS: { id: string; labelKey: string }[] = [
+  { id: 'workflow:execute', labelKey: 'apiKeys.scopeWorkflowExecute' },
+  { id: 'workflow:read', labelKey: 'apiKeys.scopeWorkflowRead' },
+  { id: 'workflow:write', labelKey: 'apiKeys.scopeWorkflowWrite' },
+  { id: 'model:invoke', labelKey: 'apiKeys.scopeModelInvoke' },
 ];
 
-// Scope descriptions for the code example panel
+// Scope descriptions for the code example panel (not localized — code examples stay in English)
 const SCOPE_EXAMPLES: Record<string, { title: string; description: string; code: string }> = {
   'model:invoke': {
     title: 'LLM Proxy (OpenAI-compatible)',
@@ -82,6 +83,7 @@ print(message.content[0].text)`,
 
 export function ApiKeysTab({ isAdmin }: Props) {
   const { apiKeys, isLoading, error, createApiKey, revokeApiKey, deleteApiKey, clearError } = useApiKeys();
+  const { t } = useTranslation();
   const [showForm, setShowForm] = useState(false);
   const [newKeySecret, setNewKeySecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -132,19 +134,19 @@ export function ApiKeysTab({ isAdmin }: Props) {
   };
 
   const handleRevoke = async (k: ApiKey) => {
-    if (confirm(`Revoke "${k.name}"? This will immediately disable the key.`)) await revokeApiKey(k.id);
+    if (confirm(t('apiKeys.confirmRevoke').replace('{name}', k.name))) await revokeApiKey(k.id);
   };
 
   const handleDelete = async (k: ApiKey) => {
-    if (confirm(`Permanently delete "${k.name}"?`)) await deleteApiKey(k.id);
+    if (confirm(t('apiKeys.confirmDelete').replace('{name}', k.name))) await deleteApiKey(k.id);
   };
 
   const formatLastUsed = (d: string | null) => {
-    if (!d) return 'Never used';
+    if (!d) return t('apiKeys.neverUsed');
     const diff = Date.now() - new Date(d).getTime();
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return `${Math.round(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.round(diff / 3600000)}h ago`;
+    if (diff < 60000) return t('apiKeys.justNow');
+    if (diff < 3600000) return t('apiKeys.mAgo').replace('{n}', String(Math.round(diff / 60000)));
+    if (diff < 86400000) return t('apiKeys.hAgo').replace('{n}', String(Math.round(diff / 3600000)));
     return new Date(d).toLocaleDateString();
   };
 
@@ -167,23 +169,22 @@ export function ApiKeysTab({ isAdmin }: Props) {
       {newKeySecret && (
         <div className="space-y-4">
           <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
-            <p className="text-sm font-medium text-green-400 mb-1">API Key Created</p>
-            <p className="text-xs text-gray-400 mb-3">Copy it now — it won't be shown again.</p>
+            <p className="text-sm font-medium text-green-400 mb-1">{t('apiKeys.created')}</p>
+            <p className="text-xs text-gray-400 mb-3">{t('apiKeys.copyHint')}</p>
             <div className="flex items-center gap-2">
               <code className="flex-1 p-2 bg-gray-900 rounded text-xs text-gray-300 break-all font-mono">{newKeySecret}</code>
-              <button onClick={() => handleCopy(newKeySecret)} className="p-2 hover:bg-gray-700 rounded" title="Copy key">
+              <button onClick={() => handleCopy(newKeySecret)} className="p-2 hover:bg-gray-700 rounded">
                 {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-gray-400" />}
               </button>
             </div>
             <button onClick={() => setNewKeySecret(null)} className="mt-3 text-xs text-green-400 hover:text-green-300">
-              I've saved the key
+              {t('apiKeys.keySaved')}
             </button>
           </div>
 
           {/* Code examples based on scopes */}
           {Object.entries(SCOPE_EXAMPLES)
             .filter(([scopeId]) => {
-              // Show model:invoke:* examples when model:invoke scope is present
               const baseScope = scopeId.split(':').slice(0, 2).join(':');
               return newKeyScopes.includes(baseScope) || scopes.includes(baseScope);
             })
@@ -199,7 +200,7 @@ export function ApiKeysTab({ isAdmin }: Props) {
                     className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded"
                   >
                     {copiedExample === scopeId ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-                    {copiedExample === scopeId ? 'Copied' : 'Copy'}
+                    {copiedExample === scopeId ? t('apiKeys.copied') : t('apiKeys.copy')}
                   </button>
                 </div>
                 <p className="text-xs text-gray-400 mb-3">{example.description}</p>
@@ -217,31 +218,31 @@ export function ApiKeysTab({ isAdmin }: Props) {
       {/* Create form */}
       {isAdmin && showForm && (
         <div className="p-4 bg-gray-800/50 border border-gray-700 rounded-xl space-y-4">
-          <h3 className="text-sm font-medium text-white">New API Key</h3>
+          <h3 className="text-sm font-medium text-white">{t('apiKeys.newApiKey')}</h3>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Name</label>
+            <label className="block text-xs text-gray-400 mb-1">{t('apiKeys.keyName')}</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Production Key"
+              placeholder={t('apiKeys.keyNamePlaceholder')}
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white focus:border-blue-500 outline-none"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-2">Scopes</label>
+            <label className="block text-xs text-gray-400 mb-2">{t('apiKeys.scopes')}</label>
             <div className="space-y-2">
-              {AVAILABLE_SCOPES.map((s) => (
+              {SCOPE_KEYS.map((s) => (
                 <label key={s.id} className="flex items-center gap-3 p-2 bg-gray-900 rounded cursor-pointer hover:bg-gray-800">
                   <input type="checkbox" checked={scopes.includes(s.id)} onChange={() => toggleScope(s.id)} />
-                  <span className="text-sm text-white">{s.label}</span>
+                  <span className="text-sm text-white">{t(s.labelKey)}</span>
                 </label>
               ))}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Rate limit / min</label>
+              <label className="block text-xs text-gray-400 mb-1">{t('apiKeys.rateLimit')}</label>
               <input
                 type="number"
                 value={rateLimit}
@@ -251,28 +252,28 @@ export function ApiKeysTab({ isAdmin }: Props) {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Expires</label>
+              <label className="block text-xs text-gray-400 mb-1">{t('apiKeys.expires')}</label>
               <select
                 value={expiresIn}
                 onChange={(e) => setExpiresIn(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white focus:border-blue-500 outline-none"
               >
-                <option value="never">Never</option>
-                <option value="30">30 days</option>
-                <option value="90">90 days</option>
-                <option value="365">1 year</option>
+                <option value="never">{t('apiKeys.expiresNever')}</option>
+                <option value="30">{t('apiKeys.expires30')}</option>
+                <option value="90">{t('apiKeys.expires90')}</option>
+                <option value="365">{t('apiKeys.expires1y')}</option>
               </select>
             </div>
           </div>
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white">{t('common.cancel')}</button>
             <button
               onClick={handleCreate}
               disabled={isCreating || !name.trim()}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm"
             >
               {isCreating && <Loader2 className="w-4 h-4 animate-spin" />}
-              Create
+              {t('common.create')}
             </button>
           </div>
         </div>
@@ -284,7 +285,7 @@ export function ApiKeysTab({ isAdmin }: Props) {
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm"
         >
           <Plus className="w-4 h-4" />
-          Create API Key
+          {t('apiKeys.createApiKey')}
         </button>
       )}
 
@@ -293,7 +294,7 @@ export function ApiKeysTab({ isAdmin }: Props) {
         <details className="group">
           <summary className="flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-white select-none">
             <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z" /></svg>
-            Available Models
+            {t('apiKeys.availableModels')}
           </summary>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             {[
@@ -330,12 +331,12 @@ export function ApiKeysTab({ isAdmin }: Props) {
       ) : apiKeys.length === 0 && !newKeySecret ? (
         <div className="text-center py-12 text-gray-500">
           <Key className="w-10 h-10 mx-auto mb-3 text-gray-700" />
-          <p className="text-sm">No API keys yet.</p>
+          <p className="text-sm">{t('apiKeys.noKeys')}</p>
         </div>
       ) : (
         <div className="space-y-3">
           {apiKeys.map((k) => {
-            const isActive = k.isActive !== false; // treat undefined as active
+            const isActive = k.isActive !== false;
             const isExpired = k.expiresAt ? new Date(k.expiresAt) < new Date() : false;
 
             return (
@@ -351,12 +352,12 @@ export function ApiKeysTab({ isAdmin }: Props) {
                   <span className="text-sm font-medium text-white">{k.name}</span>
                   <div className="flex items-center gap-1">
                     {isActive && !isExpired && isAdmin && (
-                      <button onClick={() => handleRevoke(k)} className="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 rounded" title="Revoke">
+                      <button onClick={() => handleRevoke(k)} className="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 rounded">
                         <Shield className="w-4 h-4" />
                       </button>
                     )}
                     {isAdmin && (
-                      <button onClick={() => handleDelete(k)} className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded" title="Delete">
+                      <button onClick={() => handleDelete(k)} className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     )}
@@ -365,11 +366,11 @@ export function ApiKeysTab({ isAdmin }: Props) {
                 <div className="flex items-center gap-2 mb-3">
                   <code className="text-xs text-gray-400 bg-gray-900 px-2 py-1 rounded font-mono">{k.keyPrefix}...</code>
                   {!isActive ? (
-                    <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400">Revoked</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400">{t('apiKeys.statusRevoked')}</span>
                   ) : isExpired ? (
-                    <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">Expired</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">{t('apiKeys.statusExpired')}</span>
                   ) : (
-                    <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">Active</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">{t('apiKeys.statusActive')}</span>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-1 mb-3">
@@ -382,7 +383,7 @@ export function ApiKeysTab({ isAdmin }: Props) {
                   <span>{k.rateLimitPerMinute}/min</span>
                   {k.expiresAt && (
                     <span className={isExpired ? 'text-red-400' : ''}>
-                      Expires {new Date(k.expiresAt).toLocaleDateString()}
+                      {t('apiKeys.expires')} {new Date(k.expiresAt).toLocaleDateString()}
                     </span>
                   )}
                 </div>

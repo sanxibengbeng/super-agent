@@ -149,7 +149,7 @@ export function Sidebar({ onAvatarClick, isAdminMenuOpen }: SidebarProps) {
             hover:ring-2 hover:ring-blue-400 hover:ring-offset-2 hover:ring-offset-gray-900
             ${isAdminMenuOpen ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''}
           `}
-          title="Admin Menu"
+          title={t('sidebar.adminMenu')}
         >
           <img 
             src="https://api.dicebear.com/9.x/avataaars/svg?seed=Admin" 

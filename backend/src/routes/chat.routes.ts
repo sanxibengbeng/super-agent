@@ -445,6 +445,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             agent_id: { type: 'string', format: 'uuid', nullable: true },
             sop_context: { type: 'string', nullable: true },
             context: { type: 'object', default: {} },
+            provision_workspace: { type: 'boolean', default: false },
           },
         },
         response: {
@@ -467,6 +468,24 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       const data = validateSchema(createChatSessionSchema, request.body);
 
       const session = await chatService.createSession(data, request.user!.orgId, request.user!.id);
+
+      // Eagerly provision workspace if requested (allows frontend to pre-warm
+      // the workspace when the user selects a business scope, before sending
+      // the first message).
+      if (data.provision_workspace && session.business_scope_id) {
+        try {
+          console.log(`[chat] Eagerly provisioning workspace for session ${session.id}, scope=${session.business_scope_id}`);
+          await chatService.provisionSessionWorkspace(
+            session.id, request.user!.orgId,
+          );
+          console.log(`[chat] Workspace provisioned successfully for session ${session.id}`);
+        } catch (err) {
+          // Non-fatal: workspace will be provisioned on first message as fallback
+          console.warn(`[chat] Eager workspace provisioning failed for session ${session.id}:`, err instanceof Error ? err.message : err);
+        }
+      } else if (data.provision_workspace) {
+        console.log(`[chat] provision_workspace requested but session has no business_scope_id (scope=${session.business_scope_id})`);
+      }
 
       return reply.status(201).send(session);
     }
@@ -1023,13 +1042,6 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'File not found' });
       }
 
-      let fileStat;
-      try {
-        fileStat = await fsStat(resolvedPath);
-      } catch {
-        return reply.status(404).send({ error: 'File not found' });
-      }
-
       const ext = request.query.path.split('.').pop()?.toLowerCase() || '';
       const mimeMap: Record<string, string> = {
         png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
@@ -1040,6 +1052,46 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         json: 'application/json',
       };
       const contentType = mimeMap[ext] || 'application/octet-stream';
+
+      // Try local filesystem first
+      let fileStat;
+      try {
+        fileStat = await fsStat(resolvedPath);
+      } catch {
+        // Local file not found — in agentcore mode, fall back to Command API then S3
+        const { config: appConfig } = await import('../config/index.js');
+        if (appConfig.agentRuntime === 'agentcore') {
+          // Try reading from the agentcore container via Command API
+          try {
+            const cmdContent = await agentCoreCommandService.readFile(session.id, request.query.path);
+            if (cmdContent !== null) {
+              const buf = Buffer.from(cmdContent, 'utf-8');
+              return reply
+                .type(contentType)
+                .header('Content-Length', buf.length)
+                .send(buf);
+            }
+          } catch {
+            // Command API failed, try S3 fallback
+          }
+
+          // Try S3 fallback
+          const s3Content = await workspaceManager.readWorkspaceFileFromS3(
+            request.user!.orgId,
+            session.business_scope_id,
+            session.id,
+            request.query.path,
+          );
+          if (s3Content !== null) {
+            const buf = Buffer.from(s3Content, 'utf-8');
+            return reply
+              .type(contentType)
+              .header('Content-Length', buf.length)
+              .send(buf);
+          }
+        }
+        return reply.status(404).send({ error: 'File not found' });
+      }
 
       const stream = createReadStream(resolvedPath);
       return reply

@@ -352,6 +352,158 @@ export class ChatService {
   }
 
   /**
+   * Provision a workspace for an existing session ahead of the first message.
+   * This allows the frontend to eagerly create a session + workspace when the
+   * user selects a business scope, so the workspace is ready by the time the
+   * user sends their first message.
+   *
+   * This is a no-op if the session already has a provisioned workspace.
+   */
+  async provisionSessionWorkspace(
+    sessionId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const session = await this.getSessionById(sessionId, organizationId);
+    const scopeId = session.business_scope_id;
+    if (!scopeId) {
+      console.log(`[provisionSessionWorkspace] Session ${sessionId} has no business_scope_id, skipping`);
+      return;
+    }
+
+    const selectedAgentId = session.agent_id ?? null;
+    console.log(`[provisionSessionWorkspace] Building scope workspace data for scope=${scopeId}, agent=${selectedAgentId}`);
+
+    // Build the ScopeForWorkspace data (same logic as prepareScopeSession)
+    const scopeForWorkspace = await this.buildScopeForWorkspace(
+      scopeId, organizationId, selectedAgentId,
+    );
+
+    console.log(`[provisionSessionWorkspace] Provisioning workspace for session=${sessionId}, scope=${scopeId}, skills=${scopeForWorkspace.skills.length}, agents=${scopeForWorkspace.agents.length}`);
+
+    // Provision workspace (idempotent — ensureWorkspaceUpToDate handles existing ones)
+    const result = await this.workspaceManager.ensureSessionWorkspace(
+      organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+    );
+
+    console.log(`[provisionSessionWorkspace] Workspace provisioned at ${result.workspacePath}, plugins=${result.pluginPaths.length}`);
+  }
+
+  /**
+   * Build the ScopeForWorkspace data structure needed by workspace-manager.
+   * Extracted from prepareScopeSession so it can be reused by provisionSessionWorkspace.
+   */
+  private async buildScopeForWorkspace(
+    scopeId: string,
+    organizationId: string,
+    selectedAgentId: string | null,
+  ): Promise<ScopeForWorkspace> {
+    const scope = await businessScopeRepository.findById(scopeId, organizationId) as BusinessScopeEntity | null;
+    if (!scope) throw AppError.notFound(`Business scope with ID ${scopeId} not found`);
+
+    const agentsWithSkills = await this.businessScopeService.getScopeAgentsWithSkills(scopeId, organizationId);
+
+    // Build skills list
+    const skillMap = new Map<string, SkillForWorkspace>();
+    const agentsToCollectSkillsFrom = selectedAgentId
+      ? agentsWithSkills.filter(a => a.id === selectedAgentId)
+      : agentsWithSkills;
+
+    for (const agent of agentsToCollectSkillsFrom) {
+      for (const skill of agent.skills) {
+        if (!skillMap.has(skill.id)) {
+          skillMap.set(skill.id, {
+            id: skill.id,
+            name: skill.name,
+            hashId: skill.hash_id,
+            s3Bucket: skill.s3_bucket,
+            s3Prefix: skill.s3_prefix,
+            localPath: skill.metadata?.localPath as string | undefined,
+            description: skill.description ?? (skill.metadata?.description as string | undefined),
+            body: skill.metadata?.body as string | undefined,
+          });
+        }
+      }
+    }
+
+    // Scope-level skills
+    const { skillService: scopeSkillService } = await import('./skill.service.js');
+    const scopeLevelSkills = await scopeSkillService.getScopeLevelSkills(organizationId, scopeId);
+    for (const skill of scopeLevelSkills) {
+      if (!skillMap.has(skill.id)) {
+        const meta = skill.metadata as Record<string, unknown> | null;
+        skillMap.set(skill.id, {
+          id: skill.id,
+          name: skill.name,
+          hashId: skill.hash_id,
+          s3Bucket: skill.s3_bucket,
+          s3Prefix: skill.s3_prefix,
+          localPath: meta?.localPath as string | undefined,
+          description: meta?.description as string | undefined,
+          body: meta?.body as string | undefined,
+        });
+      }
+    }
+    const skills = Array.from(skillMap.values());
+
+    const scopeMcpServers = await this.loadScopeMcpServers(scopeId);
+    const scopePlugins = await this.loadScopePlugins(scopeId);
+
+    const { documentGroupRepository: docGroupRepo } = await import('../repositories/document-group.repository.js');
+    const rawDocGroups = await docGroupRepo.getGroupsForScope(scopeId);
+    const docGroups = rawDocGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      storagePath: g.storage_path,
+      fileCount: g.files?.length ?? 0,
+    }));
+
+    return {
+      id: scope.id,
+      name: scope.name,
+      description: scope.description,
+      systemPrompt: scope.system_prompt ?? null,
+      configVersion: scope.config_version,
+      agents: agentsWithSkills.map(a => {
+        const mc = a.model_config as Record<string, unknown> | null;
+        const generatedFromConfig = Array.isArray(mc?.generatedSkills)
+          ? (mc!.generatedSkills as Array<{ name: string; description: string; body: string }>)
+          : [];
+
+        const toolsArray = Array.isArray(a.tools) ? a.tools as Array<{ id?: string; name: string; skillMd?: string }> : [];
+        const generatedFromTools = toolsArray
+          .filter(t => t.name && t.skillMd)
+          .map(t => ({
+            name: t.name,
+            description: t.skillMd!.split('\n').find(line => line.trim() && !line.startsWith('#'))?.trim() || t.name,
+            body: t.skillMd!,
+          }));
+
+        const seenNames = new Set(generatedFromConfig.map(s => s.name));
+        const allGenerated = [
+          ...generatedFromConfig,
+          ...generatedFromTools.filter(s => !seenNames.has(s.name)),
+        ];
+
+        const includeGeneratedSkills = !selectedAgentId || a.id === selectedAgentId;
+
+        return {
+          id: a.id,
+          name: a.name,
+          displayName: a.display_name,
+          role: a.role,
+          systemPrompt: a.system_prompt,
+          skillNames: a.skills.map(s => s.name),
+          generatedSkills: includeGeneratedSkills && allGenerated.length > 0 ? allGenerated : undefined,
+        };
+      }),
+      skills,
+      mcpServers: scopeMcpServers,
+      plugins: scopePlugins,
+      documentGroups: docGroups,
+    };
+  }
+
+  /**
    * Stream a chat response using SSE.
    * Supports two flows:
    *   1. Business-scope-based (new): uses per-session workspace with CLAUDE.md, subagents, skills
@@ -676,127 +828,17 @@ export class ChatService {
     options: ChatStreamOptions,
   ): Promise<{ sessionId: string; workspacePath: string; agentConfig: AgentConfig; skills: SkillForWorkspace[]; claudeSessionId?: string; subAgentNames: string[]; subAgentNameToId: Map<string, string>; subAgentInfoMap: Map<string, { displayName: string; avatar: string | null }>; pluginPaths: string[]; mcpServers: Record<string, import('./claude-agent.service.js').MCPServerSDKConfig> }> {
     const scopeId = options.businessScopeId!;
+    const selectedAgentId = options.agentId ?? null;
 
-    // Load scope
+    // Build scope data for workspace manager (reuses shared helper)
+    const scopeForWorkspace = await this.buildScopeForWorkspace(
+      scopeId, organizationId, selectedAgentId,
+    );
+
+    // Load agents with skills (needed for agentConfig and subAgent info below)
+    const agentsWithSkills = await this.businessScopeService.getScopeAgentsWithSkills(scopeId, organizationId);
     const scope = await businessScopeRepository.findById(scopeId, organizationId) as BusinessScopeEntity | null;
     if (!scope) throw AppError.notFound(`Business scope with ID ${scopeId} not found`);
-
-    // Load agents with skills for this scope
-    const agentsWithSkills = await this.businessScopeService.getScopeAgentsWithSkills(scopeId, organizationId);
-
-    // Build skills list based on selection:
-    // - If a specific agent is selected, only include that agent's skills
-    // - If only scope is selected (no agent), include all skills across all agents
-    const skillMap = new Map<string, SkillForWorkspace>();
-    const selectedAgentId = options.agentId ?? null;
-    const agentsToCollectSkillsFrom = selectedAgentId
-      ? agentsWithSkills.filter(a => a.id === selectedAgentId)
-      : agentsWithSkills;
-
-    for (const agent of agentsToCollectSkillsFrom) {
-      for (const skill of agent.skills) {
-        if (!skillMap.has(skill.id)) {
-          skillMap.set(skill.id, {
-            id: skill.id,
-            name: skill.name,
-            hashId: skill.hash_id,
-            s3Bucket: skill.s3_bucket,
-            s3Prefix: skill.s3_prefix,
-            localPath: skill.metadata?.localPath as string | undefined,
-            description: skill.description ?? (skill.metadata?.description as string | undefined),
-            body: skill.metadata?.body as string | undefined,
-          });
-        }
-      }
-    }
-
-    // Also load scope-level skills (API integrations, shared tools)
-    const { skillService: scopeSkillService } = await import('./skill.service.js');
-    const scopeLevelSkills = await scopeSkillService.getScopeLevelSkills(organizationId, scopeId);
-    for (const skill of scopeLevelSkills) {
-      if (!skillMap.has(skill.id)) {
-        const meta = skill.metadata as Record<string, unknown> | null;
-        skillMap.set(skill.id, {
-          id: skill.id,
-          name: skill.name,
-          hashId: skill.hash_id,
-          s3Bucket: skill.s3_bucket,
-          s3Prefix: skill.s3_prefix,
-          localPath: meta?.localPath as string | undefined,
-          description: meta?.description as string | undefined,
-          body: meta?.body as string | undefined,
-        });
-      }
-    }
-    const skills = Array.from(skillMap.values());
-
-    // Load scope-level MCP servers (community plugins attached to this scope)
-    const scopeMcpServers = await this.loadScopeMcpServers(scopeId);
-
-    // Load scope-level plugins (Claude Code plugins to clone into workspace)
-    const scopePlugins = await this.loadScopePlugins(scopeId);
-
-    // Load document groups assigned to this scope
-    const { documentGroupRepository: docGroupRepo } = await import('../repositories/document-group.repository.js');
-    const rawDocGroups = await docGroupRepo.getGroupsForScope(scopeId);
-    const docGroups = rawDocGroups.map(g => ({
-      id: g.id,
-      name: g.name,
-      storagePath: g.storage_path,
-      fileCount: g.files?.length ?? 0,
-    }));
-
-    // Build scope data for workspace manager
-    const scopeForWorkspace: ScopeForWorkspace = {
-      id: scope.id,
-      name: scope.name,
-      description: scope.description,
-      systemPrompt: scope.system_prompt ?? null,
-      configVersion: scope.config_version,
-      agents: agentsWithSkills.map(a => {
-        // Extract generated skills from model_config (created by scope-generator)
-        const mc = a.model_config as Record<string, unknown> | null;
-        const generatedFromConfig = Array.isArray(mc?.generatedSkills)
-          ? (mc!.generatedSkills as Array<{ name: string; description: string; body: string }>)
-          : [];
-
-        // Extract skills from agent.tools column (legacy storage: { id, name, skillMd })
-        const toolsArray = Array.isArray(a.tools) ? a.tools as Array<{ id?: string; name: string; skillMd?: string }> : [];
-        const generatedFromTools = toolsArray
-          .filter(t => t.name && t.skillMd)
-          .map(t => ({
-            name: t.name,
-            description: t.skillMd!.split('\n').find(line => line.trim() && !line.startsWith('#'))?.trim() || t.name,
-            body: t.skillMd!,
-          }));
-
-        // Merge both sources, dedup by name (model_config takes precedence)
-        const seenNames = new Set(generatedFromConfig.map(s => s.name));
-        const allGenerated = [
-          ...generatedFromConfig,
-          ...generatedFromTools.filter(s => !seenNames.has(s.name)),
-        ];
-
-        // When a specific agent is selected, only include generated skills
-        // for that agent (other agents still appear as subagents for delegation
-        // but their skills are not copied to the workspace)
-        const includeGeneratedSkills = !selectedAgentId || a.id === selectedAgentId;
-
-        return {
-          id: a.id,
-          name: a.name,
-          displayName: a.display_name,
-          role: a.role,
-          systemPrompt: a.system_prompt,
-          skillNames: a.skills.map(s => s.name),
-          generatedSkills: includeGeneratedSkills && allGenerated.length > 0 ? allGenerated : undefined,
-        };
-      }),
-      skills,
-      mcpServers: scopeMcpServers,
-      plugins: scopePlugins,
-      documentGroups: docGroups,
-    };
 
     // Get or create session
     let sessionId = options.sessionId;
@@ -839,7 +881,7 @@ export class ChatService {
       displayName: selectedAgent?.display_name ?? scope.name,
       systemPrompt: selectedAgent?.system_prompt ?? null,
       organizationId,
-      skillIds: skills.map(s => s.id),
+      skillIds: scopeForWorkspace.skills.map(s => s.id),
       mcpServerIds: [],
     };
 
@@ -853,7 +895,7 @@ export class ChatService {
       }
       return [a.name, { displayName: a.display_name || a.name, avatar: avatarUrl }];
     }));
-    return { sessionId, workspacePath, agentConfig, skills, claudeSessionId: session.claude_session_id ?? undefined, subAgentNames: agentsWithSkills.map(a => a.name), subAgentNameToId: new Map(agentsWithSkills.map(a => [a.name, a.id])), subAgentInfoMap, pluginPaths, mcpServers: await this.readSessionMcpServers(workspacePath) };
+    return { sessionId, workspacePath, agentConfig, skills: scopeForWorkspace.skills, claudeSessionId: session.claude_session_id ?? undefined, subAgentNames: agentsWithSkills.map(a => a.name), subAgentNameToId: new Map(agentsWithSkills.map(a => [a.name, a.id])), subAgentInfoMap, pluginPaths, mcpServers: await this.readSessionMcpServers(workspacePath) };
   }
 
   /**

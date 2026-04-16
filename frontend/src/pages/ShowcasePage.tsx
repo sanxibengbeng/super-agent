@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from '@/i18n'
 import {
   Star, Loader2, Play, Eye, Settings, Plus, Pencil, Trash2, X,
   ChevronRight,
@@ -53,6 +54,7 @@ interface ShowcaseIndustry {
 
 export function ShowcasePage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [industries, setIndustries] = useState<ShowcaseIndustry[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -102,10 +104,10 @@ export function ShowcasePage() {
         <div className="px-8 pt-6 pb-4 border-b border-gray-800">
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-white tracking-wide">企业Agent大赏</h1>
+              <h1 className="text-xl font-bold text-white tracking-wide">{t('showcase.title')}</h1>
               <span className="flex items-center gap-1 text-xs bg-purple-500/20 text-purple-400 px-2.5 py-1 rounded-full font-medium">
                 <Star className="w-3 h-3" fill="currentColor" />
-                精选案例
+                {t('showcase.featured')}
               </span>
             </div>
             <button
@@ -113,7 +115,7 @@ export function ShowcasePage() {
               className={`p-2 rounded-lg transition-colors ${
                 showAdmin ? 'bg-blue-600/20 text-blue-400' : 'text-gray-500 hover:text-white hover:bg-gray-800'
               }`}
-              title="管理分类"
+              title={t('showcase.manageCategories')}
             >
               <Settings className="w-5 h-5" />
             </button>
@@ -144,13 +146,13 @@ export function ShowcasePage() {
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
-              <span className="ml-2 text-sm text-gray-500">加载中...</span>
+              <span className="ml-2 text-sm text-gray-500">{t('showcase.loading')}</span>
             </div>
           ) : industries.length === 0 ? (
             <div className="text-center py-20">
               <Star className="w-10 h-10 text-gray-700 mx-auto mb-3" />
-              <p className="text-sm text-gray-500">暂无展示案例</p>
-              <p className="text-xs text-gray-600 mt-1">点击右上角齿轮图标配置行业和领域。</p>
+              <p className="text-sm text-gray-500">{t('showcase.empty')}</p>
+              <p className="text-xs text-gray-600 mt-1">{t('showcase.emptyHint')}</p>
             </div>
           ) : activeIndustry ? (
             <div className="space-y-10">
@@ -158,7 +160,7 @@ export function ShowcasePage() {
                 <DomainSection key={domain.id} domain={domain} onRun={handleRun} onView={handleView} />
               ))}
               {activeIndustry.domains.length === 0 && (
-                <p className="text-sm text-gray-600 text-center py-10">该行业暂无配置领域，请在右侧管理面板添加。</p>
+                <p className="text-sm text-gray-600 text-center py-10">{t('showcase.noDomains')}</p>
               )}
             </div>
           ) : null}
@@ -191,13 +193,14 @@ function AdminPanel({ industries, activeIndustryId, onClose, onDataChanged }: {
   onDataChanged: () => void
 }) {
   const [selectedIndustryId, setSelectedIndustryId] = useState<string | null>(activeIndustryId)
+  const { t } = useTranslation()
   const selectedIndustry = industries.find(i => i.id === selectedIndustryId)
 
   return (
     <div className="w-96 border-l border-gray-800 bg-gray-900 flex flex-col overflow-hidden flex-shrink-0">
       {/* Panel header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-        <h3 className="text-sm font-semibold text-white">分类管理</h3>
+        <h3 className="text-sm font-semibold text-white">{t('showcase.categoryManagement')}</h3>
         <button onClick={onClose} className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
           <X className="w-4 h-4" />
         </button>
@@ -207,7 +210,7 @@ function AdminPanel({ industries, activeIndustryId, onClose, onDataChanged }: {
         {/* Industries section */}
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">行业分类</span>
+            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{t('showcase.industries')}</span>
             <AddIndustryButton onCreated={onDataChanged} />
           </div>
           <div className="space-y-1">
@@ -222,7 +225,7 @@ function AdminPanel({ industries, activeIndustryId, onClose, onDataChanged }: {
               />
             ))}
             {industries.length === 0 && (
-              <p className="text-xs text-gray-600 py-2">暂无行业，点击 + 添加</p>
+              <p className="text-xs text-gray-600 py-2">{t('showcase.noIndustries')}</p>
             )}
           </div>
         </div>
@@ -232,7 +235,7 @@ function AdminPanel({ industries, activeIndustryId, onClose, onDataChanged }: {
           <div className="p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                {selectedIndustry.name} — 业务领域
+                {selectedIndustry.name} — {t('showcase.domains')}
               </span>
               <AddDomainButton industryId={selectedIndustry.id} onCreated={onDataChanged} />
             </div>
@@ -246,7 +249,7 @@ function AdminPanel({ industries, activeIndustryId, onClose, onDataChanged }: {
                 />
               ))}
               {selectedIndustry.domains.length === 0 && (
-                <p className="text-xs text-gray-600 py-2">暂无领域，点击 + 添加</p>
+                <p className="text-xs text-gray-600 py-2">{t('showcase.noDomains2')}</p>
               )}
             </div>
           </div>
@@ -261,6 +264,7 @@ function AdminPanel({ industries, activeIndustryId, onClose, onDataChanged }: {
 // ============================================================================
 
 function AddIndustryButton({ onCreated }: { onCreated: () => void }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
@@ -284,7 +288,7 @@ function AddIndustryButton({ onCreated }: { onCreated: () => void }) {
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-white transition-colors" title="添加行业">
+      <button onClick={() => setOpen(true)} className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-white transition-colors" title={t('showcase.addIndustry')}>
         <Plus className="w-3.5 h-3.5" />
       </button>
     )
@@ -294,19 +298,19 @@ function AddIndustryButton({ onCreated }: { onCreated: () => void }) {
     <div className="mt-2 p-3 bg-gray-800 rounded-lg border border-gray-700 space-y-2">
       <input
         type="text" value={name} onChange={e => { setName(e.target.value); if (!slug) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-')) }}
-        placeholder="行业名称（如：快消品）"
+        placeholder={t('showcase.industryNamePlaceholder')}
         className="w-full px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         autoFocus
       />
       <input
         type="text" value={slug} onChange={e => setSlug(e.target.value)}
-        placeholder="slug（如：fmcg）"
+        placeholder={t('showcase.slugPlaceholder')}
         className="w-full px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
       />
       <div className="flex justify-end gap-2">
-        <button onClick={() => { setOpen(false); setName(''); setSlug('') }} className="px-2 py-1 text-xs text-gray-400 hover:text-white">取消</button>
+        <button onClick={() => { setOpen(false); setName(''); setSlug('') }} className="px-2 py-1 text-xs text-gray-400 hover:text-white">{t('common.cancel')}</button>
         <button onClick={handleSave} disabled={saving || !name.trim() || !slug.trim()} className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50">
-          {saving ? '...' : '添加'}
+          {saving ? '...' : t('showcase.add')}
         </button>
       </div>
     </div>
@@ -323,6 +327,7 @@ function IndustryRow({ industry, isSelected, onSelect, onUpdated, onDeleted }: {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(industry.name)
   const [deleting, setDeleting] = useState(false)
+  const { t } = useTranslation()
 
   const handleSave = async () => {
     if (!name.trim()) return
@@ -336,7 +341,7 @@ function IndustryRow({ industry, isSelected, onSelect, onUpdated, onDeleted }: {
   }
 
   const handleDelete = async () => {
-    if (!confirm(`确定删除行业「${industry.name}」及其所有领域和案例？`)) return
+    if (!confirm(t('showcase.deleteIndustryConfirm').replace('{name}', industry.name))) return
     setDeleting(true)
     try {
       await restClient.delete(`/api/showcase/industries/${industry.id}`)
@@ -370,10 +375,10 @@ function IndustryRow({ industry, isSelected, onSelect, onUpdated, onDeleted }: {
       )}
       <span className="text-xs text-gray-600">{industry.domains.length}</span>
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button onClick={e => { e.stopPropagation(); setEditing(true); setName(industry.name) }} className="p-0.5 rounded text-gray-500 hover:text-white" title="编辑">
+        <button onClick={e => { e.stopPropagation(); setEditing(true); setName(industry.name) }} className="p-0.5 rounded text-gray-500 hover:text-white" title={t('showcase.edit')}>
           <Pencil className="w-3 h-3" />
         </button>
-        <button onClick={e => { e.stopPropagation(); handleDelete() }} disabled={deleting} className="p-0.5 rounded text-gray-500 hover:text-red-400" title="删除">
+        <button onClick={e => { e.stopPropagation(); handleDelete() }} disabled={deleting} className="p-0.5 rounded text-gray-500 hover:text-red-400" title={t('common.delete')}>
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
@@ -386,6 +391,7 @@ function IndustryRow({ industry, isSelected, onSelect, onUpdated, onDeleted }: {
 // ============================================================================
 
 function AddDomainButton({ industryId, onCreated }: { industryId: string; onCreated: () => void }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [nameEn, setNameEn] = useState('')
@@ -438,7 +444,7 @@ function AddDomainButton({ industryId, onCreated }: { industryId: string; onCrea
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-white transition-colors" title="添加领域">
+      <button onClick={() => setOpen(true)} className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-white transition-colors" title={t('showcase.addDomain')}>
         <Plus className="w-3.5 h-3.5" />
       </button>
     )
@@ -449,12 +455,12 @@ function AddDomainButton({ industryId, onCreated }: { industryId: string; onCrea
       <div className="flex gap-2">
         <input
           type="text" value={icon} onChange={e => setIcon(e.target.value)}
-          placeholder="图标"
+          placeholder={t('showcase.iconPlaceholder')}
           className="w-12 px-2 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-center text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <input
           type="text" value={name} onChange={e => { setName(e.target.value); triggerSuggest(e.target.value) }}
-          placeholder="领域名称（如：质量保障）"
+          placeholder={t('showcase.domainNamePlaceholder')}
           className="flex-1 px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
           autoFocus
         />
@@ -462,15 +468,15 @@ function AddDomainButton({ industryId, onCreated }: { industryId: string; onCrea
       <div className="relative">
         <input
           type="text" value={nameEn} onChange={e => setNameEn(e.target.value)}
-          placeholder={suggesting ? 'AI 生成中...' : '英文名（可选，如：Quality）'}
+          placeholder={suggesting ? t('showcase.aiSuggesting') : t('showcase.enNameOptionalPlaceholder')}
           className="w-full px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         {suggesting && <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-blue-400 animate-spin" />}
       </div>
       <div className="flex justify-end gap-2">
-        <button onClick={() => { setOpen(false); setName(''); setNameEn(''); setIcon('') }} className="px-2 py-1 text-xs text-gray-400 hover:text-white">取消</button>
+        <button onClick={() => { setOpen(false); setName(''); setNameEn(''); setIcon('') }} className="px-2 py-1 text-xs text-gray-400 hover:text-white">{t('common.cancel')}</button>
         <button onClick={handleSave} disabled={saving || !name.trim()} className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50">
-          {saving ? '...' : '添加'}
+          {saving ? '...' : t('showcase.add')}
         </button>
       </div>
     </div>
@@ -487,6 +493,7 @@ function DomainRow({ domain, onUpdated, onDeleted }: {
   const [nameEn, setNameEn] = useState(domain.name_en || '')
   const [icon, setIcon] = useState(domain.icon || '')
   const [deleting, setDeleting] = useState(false)
+  const { t } = useTranslation()
 
   const handleSave = async () => {
     if (!name.trim()) return
@@ -504,7 +511,7 @@ function DomainRow({ domain, onUpdated, onDeleted }: {
   }
 
   const handleDelete = async () => {
-    if (!confirm(`确定删除领域「${domain.name}」及其所有案例？`)) return
+    if (!confirm(t('showcase.deleteDomainConfirm').replace('{name}', domain.name))) return
     setDeleting(true)
     try {
       await restClient.delete(`/api/showcase/domains/${domain.id}`)
@@ -522,24 +529,24 @@ function DomainRow({ domain, onUpdated, onDeleted }: {
         <div className="flex gap-2">
           <input
             type="text" value={icon} onChange={e => setIcon(e.target.value)}
-            placeholder="图标"
+            placeholder={t('showcase.iconPlaceholder')}
             className="w-12 px-2 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-center text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
           />
           <input
             type="text" value={name} onChange={e => setName(e.target.value)}
-            placeholder="领域名称"
+            placeholder={t('showcase.domainNamePlaceholder')}
             className="flex-1 px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
             autoFocus
           />
         </div>
         <input
           type="text" value={nameEn} onChange={e => setNameEn(e.target.value)}
-          placeholder="英文名（可选）"
+          placeholder={t('showcase.enNamePlaceholder')}
           className="w-full px-2.5 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <div className="flex justify-end gap-2">
-          <button onClick={() => { setEditing(false); setName(domain.name); setNameEn(domain.name_en || ''); setIcon(domain.icon || '') }} className="px-2 py-1 text-xs text-gray-400 hover:text-white">取消</button>
-          <button onClick={handleSave} disabled={!name.trim()} className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50">保存</button>
+          <button onClick={() => { setEditing(false); setName(domain.name); setNameEn(domain.name_en || ''); setIcon(domain.icon || '') }} className="px-2 py-1 text-xs text-gray-400 hover:text-white">{t('common.cancel')}</button>
+          <button onClick={handleSave} disabled={!name.trim()} className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50">{t('showcase.save')}</button>
         </div>
       </div>
     )
@@ -552,12 +559,12 @@ function DomainRow({ domain, onUpdated, onDeleted }: {
         <span className="text-sm text-gray-200 truncate block">{domain.name}</span>
         {domain.name_en && <span className="text-xs text-gray-600">{domain.name_en}</span>}
       </div>
-      <span className="text-xs text-gray-600">{domain.cases.length} 案例</span>
+      <span className="text-xs text-gray-600">{domain.cases.length} {t('showcase.cases')}</span>
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button onClick={() => { setEditing(true); setName(domain.name); setNameEn(domain.name_en || ''); setIcon(domain.icon || '') }} className="p-0.5 rounded text-gray-500 hover:text-white" title="编辑">
+        <button onClick={() => { setEditing(true); setName(domain.name); setNameEn(domain.name_en || ''); setIcon(domain.icon || '') }} className="p-0.5 rounded text-gray-500 hover:text-white" title={t('showcase.edit')}>
           <Pencil className="w-3 h-3" />
         </button>
-        <button onClick={handleDelete} disabled={deleting} className="p-0.5 rounded text-gray-500 hover:text-red-400" title="删除">
+        <button onClick={handleDelete} disabled={deleting} className="p-0.5 rounded text-gray-500 hover:text-red-400" title={t('common.delete')}>
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
@@ -591,6 +598,7 @@ function DomainSection({ domain, onRun, onView }: { domain: ShowcaseDomain; onRu
 }
 
 function CaseCard({ caseItem, onRun, onView }: { caseItem: ShowcaseCase; onRun: () => void; onView: () => void }) {
+  const { t } = useTranslation()
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col justify-between hover:border-gray-700 transition-colors group">
       <div>
@@ -606,7 +614,7 @@ function CaseCard({ caseItem, onRun, onView }: { caseItem: ShowcaseCase; onRun: 
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-gray-400 border border-gray-700 hover:bg-gray-800 hover:text-white transition-colors"
           >
             <Eye className="w-3 h-3" />
-            查看
+            {t('showcase.view')}
           </button>
         )}
         <button
@@ -614,7 +622,7 @@ function CaseCard({ caseItem, onRun, onView }: { caseItem: ShowcaseCase; onRun: 
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-purple-400 border border-purple-500/30 hover:bg-purple-500/10 transition-colors"
         >
           <Play className="w-3 h-3" />
-          Run
+          {t('marketplace.run')}
         </button>
       </div>
     </div>

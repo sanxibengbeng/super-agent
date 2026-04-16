@@ -212,6 +212,14 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
           console.warn('Failed to restore session on mount:', err)
         }
       })()
+    } else if (selectedBusinessScopeId && shouldUseRestApi()) {
+      // Eagerly create session + provision workspace on mount when we have a
+      // stored scope but no backend session yet.
+      RestChatService.ensureSession(activeSop, selectedBusinessScopeId).then(newSessionId => {
+        setBackendSessionId(newSessionId)
+      }).catch(err => {
+        console.warn('Failed to eagerly create session on mount:', err)
+      })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // Run only on mount
@@ -349,8 +357,20 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     setBackendSessionId(null)
     if (shouldUseRestApi()) {
       RestChatService.resetSession()
+
+      // Eagerly create session + provision workspace when a scope is selected,
+      // so the workspace is ready by the time the user sends their first message.
+      if (newScopeId) {
+        console.log('[ChatContext] Eagerly creating session for scope:', newScopeId)
+        RestChatService.ensureSession(activeSop, newScopeId).then(newSessionId => {
+          console.log('[ChatContext] Eager session created:', newSessionId)
+          setBackendSessionId(newSessionId)
+        }).catch(err => {
+          console.warn('Failed to eagerly create session:', err)
+        })
+      }
     }
-  }, [])
+  }, [activeSop])
 
   const clearHistory = useCallback(async () => {
     setError(null)

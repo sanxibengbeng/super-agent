@@ -11,92 +11,7 @@ import {
 } from 'lucide-react'
 import { connectorService } from '@/services/connectorService'
 import { useScopeConnectors } from '@/hooks/useConnectors'
-
-// ---------------------------------------------------------------------------
-// Inline i18n
-// ---------------------------------------------------------------------------
-
-const strings: Record<string, Record<string, string>> = {
-  en: {
-    title: 'Data Connectors',
-    connected: 'CONNECTED',
-    catalog: 'CONNECTOR CATALOG',
-    empty: 'No data connectors',
-    emptyHint: 'Add connectors from the catalog below',
-    connect: 'Connect',
-    done: 'Connected',
-    search: 'Search connectors...',
-    items: 'items',
-    uses: 'uses',
-    footer: 'Data connectors are securely routed via AgentCore Gateway. Zero credential exposure in agent processes.',
-    healthy: 'Healthy',
-    error: 'Error',
-    disabled: 'Disabled',
-    pending: 'Pending',
-    name: 'Connector Name',
-    instanceUrl: 'Instance URL (optional)',
-    next: 'Next',
-    prev: 'Back',
-    cancel: 'Cancel',
-    secNote: 'Credentials are transmitted via AWS managed secure gateway',
-    secDetail: 'Agent processes never touch your passwords or tokens',
-    apiKey: 'API Key',
-    authorize: 'Authorize',
-    host: 'Host',
-    username: 'Username',
-    password: 'Password',
-    iamRole: 'IAM Role ARN',
-    saJson: 'Service Account JSON',
-    createTest: 'Create & Test',
-    creating: 'Creating...',
-    success: 'Connection successful',
-    finish: 'Done',
-  },
-  cn: {
-    title: '数据连接器',
-    connected: '已连接',
-    catalog: '连接器目录',
-    empty: '暂无数据连接器',
-    emptyHint: '从下方目录添加连接器',
-    connect: '连接',
-    done: '已连接',
-    search: '搜索连接器...',
-    items: '个',
-    uses: '次',
-    footer: '数据连接器通过 AgentCore Gateway 安全路由，Agent 进程中零凭证暴露。',
-    healthy: '正常',
-    error: '错误',
-    disabled: '已禁用',
-    pending: '待连接',
-    name: '连接器名称',
-    instanceUrl: '实例 URL（可选）',
-    next: '下一步',
-    prev: '上一步',
-    cancel: '取消',
-    secNote: '凭证通过 AWS 托管安全网关传输',
-    secDetail: 'Agent 进程中不会接触到你的密码或 Token',
-    apiKey: 'API Key',
-    authorize: '授权连接',
-    host: 'Host',
-    username: '用户名',
-    password: '密码',
-    iamRole: 'IAM Role ARN',
-    saJson: 'Service Account JSON',
-    createTest: '创建并测试',
-    creating: '创建中...',
-    success: '连接成功',
-    finish: '完成',
-  },
-}
-
-function getLang(): string {
-  return (typeof window !== 'undefined' && localStorage.getItem('super-agent-language')) || 'en'
-}
-
-function str(key: string): string {
-  const lang = getLang()
-  return strings[lang]?.[key] ?? strings.en[key] ?? key
-}
+import { useTranslation } from '@/i18n/useTranslation'
 
 // ---------------------------------------------------------------------------
 // Connector template catalog
@@ -202,16 +117,16 @@ interface ConnectorPanelProps {
   scopeId: string | null
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, t }: { status: string; t: (key: string) => string }) {
   switch (status) {
     case 'connected':
-      return <span className="flex items-center gap-1 text-[10px] text-green-400"><CheckCircle2 className="w-3 h-3" />{str('healthy')}</span>
+      return <span className="flex items-center gap-1 text-[10px] text-green-400"><CheckCircle2 className="w-3 h-3" />{t('connector.status.connected')}</span>
     case 'error':
-      return <span className="flex items-center gap-1 text-[10px] text-red-400"><XCircle className="w-3 h-3" />{str('error')}</span>
+      return <span className="flex items-center gap-1 text-[10px] text-red-400"><XCircle className="w-3 h-3" />{t('connector.status.error')}</span>
     case 'disabled':
-      return <span className="flex items-center gap-1 text-[10px] text-gray-500"><XCircle className="w-3 h-3" />{str('disabled')}</span>
+      return <span className="flex items-center gap-1 text-[10px] text-gray-500"><XCircle className="w-3 h-3" />{t('connector.status.disabled')}</span>
     default:
-      return <span className="flex items-center gap-1 text-[10px] text-yellow-400"><RefreshCw className="w-3 h-3" />{str('pending')}</span>
+      return <span className="flex items-center gap-1 text-[10px] text-yellow-400"><RefreshCw className="w-3 h-3" />{t('connector.status.pending')}</span>
   }
 }
 
@@ -229,6 +144,7 @@ function CategoryIcon({ category }: { category: string }) {
 // ---------------------------------------------------------------------------
 
 export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) {
+  const { t, language } = useTranslation()
   const { bindings, loading, error: loadError, reload } = useScopeConnectors(scopeId)
   const [searchQuery, setSearchQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -430,7 +346,7 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
           <div className="flex items-center gap-2">
             <Plug className="w-5 h-5 text-cyan-400" />
-            <span className="text-sm font-semibold text-white">{str('title')}</span>
+            <span className="text-sm font-semibold text-white">{t('connector.title')}</span>
             <span className="text-xs text-gray-500">({bindings.length})</span>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
@@ -454,22 +370,22 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
             <div className="p-4">
               <div className="flex items-center justify-between mb-4">
                 <span className="text-sm font-medium text-white">
-                  {str('connect')} {selectedTemplate.name}
+                  {t('connector.connect')} {selectedTemplate.name}
                   <span className="text-xs text-gray-500 ml-2">Step {wizardStep}/3</span>
                 </span>
-                <button onClick={() => setShowWizard(false)} className="text-xs text-gray-400 hover:text-white">{str('cancel')}</button>
+                <button onClick={() => setShowWizard(false)} className="text-xs text-gray-400 hover:text-white">{t('connector.wizard.cancel')}</button>
               </div>
 
               {wizardStep === 1 && (
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">{str('name')}</label>
+                    <label className="text-xs text-gray-400 block mb-1">{t('connector.wizard.name')}</label>
                     <input value={wizardName} onChange={e => setWizardName(e.target.value)}
                       className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-cyan-500" />
                   </div>
                   {(selectedTemplate.configFields ?? []).map(field => (
                     <div key={field.key}>
-                      <label className="text-xs text-gray-400 block mb-1">{getLang() === 'cn' ? field.label_cn : field.label_en}</label>
+                      <label className="text-xs text-gray-400 block mb-1">{language === 'cn' ? field.label_cn : field.label_en}</label>
                       <input placeholder={field.placeholder} value={wizardConfig[field.key] ?? ''}
                         onChange={e => setWizardConfig(prev => ({ ...prev, [field.key]: e.target.value }))}
                         className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500" />
@@ -477,7 +393,7 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                   ))}
                   <button onClick={() => setWizardStep(2)} disabled={!wizardName.trim()}
                     className="w-full py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50">
-                    {str('next')} →
+                    {t('connector.wizard.next')}
                   </button>
                 </div>
               )}
@@ -487,9 +403,9 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                   <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
                     <div className="flex items-center gap-2 mb-2">
                       <Shield className="w-4 h-4 text-cyan-400" />
-                      <span className="text-xs text-gray-300">{str('secNote')}</span>
+                      <span className="text-xs text-gray-300">{t('connector.wizard.securityNote')}</span>
                     </div>
-                    <p className="text-[10px] text-gray-500">{str('secDetail')}</p>
+                    <p className="text-[10px] text-gray-500">{t('connector.wizard.securityDetail')}</p>
                   </div>
 
                   {/* OAuth connectors */}
@@ -497,7 +413,7 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                     oauthCredentialId ? (
                       <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
                         <CheckCircle2 className="w-5 h-5 text-green-400" />
-                        <span className="text-sm text-green-400">{str('success')}</span>
+                        <span className="text-sm text-green-400">{t('connector.wizard.success')}</span>
                       </div>
                     ) : oauthConfigured === null ? (
                       <div className="flex items-center justify-center py-4"><Loader2 className="w-5 h-5 text-gray-500 animate-spin" /></div>
@@ -505,7 +421,7 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                       <button onClick={handleOAuthAuthorize} disabled={oauthAuthorizing}
                         className="w-full py-3 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
                         {oauthAuthorizing ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                        {oauthAuthorizing ? 'Authorizing...' : `🔗 ${str('authorize')} ${selectedTemplate.name}`}
+                        {oauthAuthorizing ? 'Authorizing...' : `🔗 ${t('connector.wizard.authorize')} ${selectedTemplate.name}`}
                       </button>
                     ) : (
                       /* OAuth not configured — show setup form */
@@ -546,7 +462,7 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                   {/* Non-OAuth: render credential fields dynamically */}
                   {selectedTemplate.credentialFields.map(field => (
                     <div key={field.key}>
-                      <label className="text-xs text-gray-400 block mb-1">{getLang() === 'cn' ? field.label_cn : field.label_en}</label>
+                      <label className="text-xs text-gray-400 block mb-1">{language === 'cn' ? field.label_cn : field.label_en}</label>
                       {field.type === 'textarea' ? (
                         <textarea rows={4} placeholder={field.placeholder} value={wizardCredData[field.key] ?? ''}
                           onChange={e => setWizardCredData(prev => ({ ...prev, [field.key]: e.target.value }))}
@@ -561,13 +477,13 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
 
                   <div className="flex gap-2">
                     <button onClick={() => setWizardStep(1)} className="flex-1 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors">
-                      ← {str('prev')}
+                      ← {t('connector.wizard.prev')}
                     </button>
                     <button onClick={handleWizardSave}
                       disabled={wizardSaving || (selectedTemplate.auth_type === 'oauth2' ? !oauthCredentialId : selectedTemplate.credentialFields.filter(f => f.required).some(f => !wizardCredData[f.key]?.trim()))}
                       className="flex-1 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
                       {wizardSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                      {wizardSaving ? str('creating') : str('createTest')}
+                      {wizardSaving ? t('connector.wizard.creating') : t('connector.wizard.createAndTest')}
                     </button>
                   </div>
                 </div>
@@ -577,13 +493,13 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                 <div className="space-y-3">
                   <div className={`p-4 rounded-lg border ${wizardTestResult.success ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
                     {wizardTestResult.success
-                      ? <div className="flex items-center gap-2 text-green-400"><CheckCircle2 className="w-5 h-5" /><span className="text-sm">{str('success')}</span></div>
-                      : <div className="flex items-center gap-2 text-red-400"><XCircle className="w-5 h-5" /><span className="text-sm">{wizardTestResult.message ?? str('error')}</span></div>
+                      ? <div className="flex items-center gap-2 text-green-400"><CheckCircle2 className="w-5 h-5" /><span className="text-sm">{t('connector.wizard.success')}</span></div>
+                      : <div className="flex items-center gap-2 text-red-400"><XCircle className="w-5 h-5" /><span className="text-sm">{wizardTestResult.message ?? t('connector.status.error')}</span></div>
                     }
                   </div>
                   <button onClick={() => { setShowWizard(false); setSelectedTemplate(null) }}
                     className="w-full py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors">
-                    {str('finish')} ✓
+                    {t('connector.wizard.done')} ✓
                   </button>
                 </div>
               )}
@@ -594,15 +510,15 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
           {!showWizard && (
             <>
               <div className="px-4 py-3">
-                <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{str('connected')}</span>
+                <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{t('connector.connected')}</span>
 
                 {loading ? (
                   <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 text-gray-500 animate-spin" /></div>
                 ) : bindings.length === 0 ? (
                   <div className="text-center py-6">
                     <Plug className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">{str('empty')}</p>
-                    <p className="text-xs text-gray-600 mt-1">{str('emptyHint')}</p>
+                    <p className="text-sm text-gray-500">{t('connector.noConnectors')}</p>
+                    <p className="text-xs text-gray-600 mt-1">{t('connector.noConnectorsHint')}</p>
                   </div>
                 ) : (
                   <div className="space-y-2 mt-3">
@@ -617,9 +533,9 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                             </span>
                           </div>
                           <div className="flex items-center gap-3 mt-0.5">
-                            <StatusBadge status={b.connector.status} />
+                            <StatusBadge status={b.connector.status} t={t} />
                             {b.connector.usage_count > 0 && (
-                              <span className="text-[10px] text-gray-600">{b.connector.usage_count} {str('uses')}</span>
+                              <span className="text-[10px] text-gray-600">{b.connector.usage_count} {t('connector.uses')}</span>
                             )}
                           </div>
                         </div>
@@ -642,13 +558,13 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
               {/* ── Catalog ── */}
               <div className="px-4 py-3 border-t border-gray-800">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{str('catalog')}</span>
-                  <span className="text-[10px] text-gray-600">{filteredTemplates.length} {str('items')}</span>
+                  <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{t('connector.catalog')}</span>
+                  <span className="text-[10px] text-gray-600">{filteredTemplates.length} {t('connector.items')}</span>
                 </div>
 
                 <div className="relative mb-3">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
-                  <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={str('search')}
+                  <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={t('connector.search')}
                     className="w-full pl-8 pr-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500/50 transition-colors" />
                 </div>
 
@@ -663,14 +579,14 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
                             {tmpl.auth_type === 'oauth2' ? 'OAuth' : tmpl.auth_type === 'api_key' ? 'API Key' : tmpl.auth_type === 'iam_role' ? 'IAM' : tmpl.auth_type}
                           </span>
                         </div>
-                        <p className="text-xs text-gray-500 mt-0.5">{getLang() === 'cn' ? tmpl.description_cn : tmpl.description_en}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{language === 'cn' ? tmpl.description_cn : tmpl.description_en}</p>
                       </div>
                       {installedIds.has(tmpl.id) ? (
-                        <span className="text-xs text-green-400 px-2 py-1 bg-green-500/10 rounded flex-shrink-0">{str('done')}</span>
+                        <span className="text-xs text-green-400 px-2 py-1 bg-green-500/10 rounded flex-shrink-0">{t('connector.alreadyConnected')}</span>
                       ) : (
                         <button onClick={() => startWizard(tmpl)}
                           className="flex items-center gap-1 px-2 py-1 text-xs text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 rounded transition-colors flex-shrink-0">
-                          <Plus className="w-3 h-3" /> {str('connect')}
+                          <Plus className="w-3 h-3" /> {t('connector.connect')}
                         </button>
                       )}
                     </div>
@@ -683,7 +599,7 @@ export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) 
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-gray-800">
-          <p className="text-xs text-gray-600">{str('footer')}</p>
+          <p className="text-xs text-gray-600">{t('connector.footer')}</p>
         </div>
       </div>
     </div>

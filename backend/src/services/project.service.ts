@@ -168,7 +168,7 @@ export class ProjectService {
     });
     const sortOrder = (maxOrder?.sort_order ?? 0) + 1;
 
-    return prisma.project_issues.create({
+    const issue = await prisma.project_issues.create({
       data: {
         project_id: projectId,
         organization_id: orgId,
@@ -184,6 +184,15 @@ export class ProjectService {
         created_by: userId,
       },
     });
+
+    // Async: trigger AI enrichment (does not block issue creation)
+    import('./project-governance.service.js').then(({ governanceService }) => {
+      governanceService.enrichIssue(orgId, projectId, issue.id, userId).catch(err => {
+        console.error(`[ProjectService] Auto-enrichment failed for issue ${issue.id}:`, err instanceof Error ? err.message : err);
+      });
+    }).catch(() => {});
+
+    return issue;
   }
 
   async listIssues(projectId: string, filters?: { status?: string; priority?: string }) {
@@ -223,7 +232,10 @@ export class ProjectService {
     const issue = await prisma.project_issues.findFirst({ where: { id: issueId, project_id: projectId } });
     if (!issue) throw AppError.notFound('Issue not found');
 
-    return prisma.project_issues.update({
+    // Mark analysis as stale if description changed significantly
+    const descriptionChanged = input.description !== undefined && input.description !== issue.description;
+
+    const updated = await prisma.project_issues.update({
       where: { id: issueId },
       data: {
         ...(input.title !== undefined && { title: input.title.trim() }),
@@ -231,8 +243,11 @@ export class ProjectService {
         ...(input.priority !== undefined && VALID_PRIORITIES.includes(input.priority!) && { priority: input.priority }),
         ...(input.labels !== undefined && { labels: input.labels as string[] }),
         ...(input.estimated_effort !== undefined && { estimated_effort: input.estimated_effort ?? null }),
+        ...(descriptionChanged && { ai_analysis_status: 'stale' }),
       },
     });
+
+    return updated;
   }
 
   async changeIssueStatus(projectId: string, issueId: string, newStatus: string) {
@@ -443,6 +458,13 @@ export class ProjectService {
         await this.syncWorkspaceFromS3(orgId, projectId, userId);
       } catch (err) {
         console.warn(`[ProjectService] Post-execution workspace sync failed:`, err instanceof Error ? err.message : err);
+      }
+
+      // Fetch and store diff from S3 (uploaded by AgentCore's Stop hook)
+      try {
+        await this.fetchAndStoreDiff(orgId, projectId, issueId);
+      } catch (err) {
+        console.warn(`[ProjectService] Diff fetch failed:`, err instanceof Error ? err.message : err);
       }
 
       const statusLabel = newStatus === 'in_review' ? 'In Review' : newStatus === 'done' ? 'Done' : 'Todo';
@@ -701,6 +723,84 @@ ${project.repo_url ? `Repository: ${project.repo_url}` : ''}`;
 
     console.log(`[ProjectService] Synced ${downloaded} files from S3 to ${localPath}`);
     return { synced: downloaded, path: localPath };
+  }
+
+  /**
+   * Fetch __diff__.json from S3 (uploaded by AgentCore after execution)
+   * and store the diff data on the issue record.
+   */
+  private async fetchAndStoreDiff(orgId: string, projectId: string, issueId: string): Promise<void> {
+    const project = await prisma.projects.findFirst({ where: { id: projectId } });
+    if (!project?.workspace_session_id || !project.business_scope_id) return;
+
+    const { config: appConfig } = await import('../config/index.js');
+    const { S3Client, GetObjectCommand, DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+
+    const s3Client = new S3Client({ region: appConfig.agentcore.region || 'us-east-1' });
+    const s3Bucket = appConfig.agentcore.workspaceS3Bucket;
+    const s3Prefix = `${orgId}/${project.business_scope_id}/${project.workspace_session_id}/`;
+    const diffKey = `${s3Prefix}__diff__.json`;
+
+    try {
+      const response = await s3Client.send(new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: diffKey,
+      }));
+
+      if (!response.Body) return;
+
+      const bodyStr = await response.Body.transformToString('utf-8');
+      const diffData = JSON.parse(bodyStr) as {
+        diff_stat: Record<string, unknown>;
+        diff_patch: string;
+        created_at: string;
+      };
+
+      // Store on the issue
+      await prisma.project_issues.update({
+        where: { id: issueId },
+        data: {
+          diff_stat: diffData.diff_stat as Prisma.InputJsonValue,
+          diff_patch: diffData.diff_patch,
+          diff_created_at: new Date(diffData.created_at),
+        },
+      });
+
+      console.log(`[ProjectService] Stored diff for issue ${issueId}: ${(diffData.diff_stat as Record<string, unknown>).files_changed} files changed`);
+
+      // Clean up the diff file from S3
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: s3Bucket,
+        Key: diffKey,
+      })).catch(() => {});
+
+    } catch (err) {
+      // NoSuchKey is expected if agent didn't produce any changes
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (!errMsg.includes('NoSuchKey') && !errMsg.includes('AccessDenied')) {
+        console.warn(`[ProjectService] Failed to fetch diff from S3:`, errMsg);
+      }
+    }
+  }
+
+  /**
+   * Get the diff data for an issue (for frontend display).
+   */
+  async getIssueDiff(projectId: string, issueId: string): Promise<{
+    diff_stat: Record<string, unknown> | null;
+    diff_patch: string | null;
+    diff_created_at: Date | null;
+  }> {
+    const issue = await prisma.project_issues.findFirst({
+      where: { id: issueId, project_id: projectId },
+      select: { diff_stat: true, diff_patch: true, diff_created_at: true },
+    });
+    if (!issue) throw AppError.notFound('Issue not found');
+    return {
+      diff_stat: issue.diff_stat as Record<string, unknown> | null,
+      diff_patch: issue.diff_patch,
+      diff_created_at: issue.diff_created_at,
+    };
   }
 }
 

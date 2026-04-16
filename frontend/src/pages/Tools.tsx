@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
 import { GroupAccessPopover } from '@/components/GroupAccessPopover'
+import { useTranslation } from '@/i18n'
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -467,11 +468,11 @@ const STATIC_TOOLS: ToolItem[] = [
 /* ================================================================== */
 /*  Category config                                                    */
 /* ================================================================== */
-const CATEGORIES: { id: ToolCategory; label: string; icon: typeof Package; count: (tools: ToolItem[]) => number }[] = [
-  { id: 'all', label: 'All Tools', icon: Wrench, count: t => t.length },
-  { id: 'skills', label: 'Skills', icon: Sparkles, count: t => t.filter(x => x.category === 'skills').length },
-  { id: 'mcp', label: 'MCP Servers', icon: Server, count: t => t.filter(x => x.category === 'mcp').length },
-  { id: 'plugins', label: 'Plugins', icon: Puzzle, count: t => t.filter(x => x.category === 'plugins').length },
+const CATEGORIES: { id: ToolCategory; labelKey: string; icon: typeof Package; count: (tools: ToolItem[]) => number }[] = [
+  { id: 'all', labelKey: 'tools.allTools', icon: Wrench, count: items => items.length },
+  { id: 'skills', labelKey: 'tools.skills', icon: Sparkles, count: items => items.filter(x => x.category === 'skills').length },
+  { id: 'mcp', labelKey: 'tools.mcpServers', icon: Server, count: items => items.filter(x => x.category === 'mcp').length },
+  { id: 'plugins', labelKey: 'tools.plugins', icon: Puzzle, count: items => items.filter(x => x.category === 'plugins').length },
 ]
 
 /* ================================================================== */
@@ -616,6 +617,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
   onImported: () => void
 }) {
   const [tab, setTab] = useState<ImportTab>('github')
+  const { t } = useTranslation()
 
   // GitHub state
   const [url, setUrl] = useState('')
@@ -751,7 +753,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
           <div className="flex items-center gap-2">
             <Download className="w-5 h-5 text-gray-400" />
-            <h3 className="text-sm font-semibold text-white">Import Skill</h3>
+            <h3 className="text-sm font-semibold text-white">{t('tools.importSkill')}</h3>
           </div>
           <button onClick={handleClose} className="text-gray-500 hover:text-gray-300 transition-colors">
             <X className="w-4 h-4" />
@@ -990,6 +992,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
 /*  Main Page                                                          */
 /* ================================================================== */
 export function Tools() {
+  const { t } = useTranslation()
   const [category, setCategory] = useState<ToolCategory>('all')
   const [source, setSource] = useState<ToolSource>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -1192,7 +1195,7 @@ export function Tools() {
                 >
                   {stripColor && <span className={`w-0.5 h-3.5 rounded-full ${stripColor}`} />}
                   <CatIcon className="w-3.5 h-3.5" />
-                  {cat.label}
+                  {t(cat.labelKey)}
                   <span className={`text-[10px] ${isActive ? 'text-gray-400' : 'text-gray-600'}`}>
                     {cat.count(allTools)}
                   </span>
@@ -1204,9 +1207,9 @@ export function Tools() {
           {/* Source filter */}
           <div className="flex items-center gap-1 bg-gray-900 rounded-lg p-0.5 border border-gray-800">
             {([
-              { id: 'all' as ToolSource, label: 'All' },
-              { id: 'internal' as ToolSource, label: 'Internal' },
-              { id: 'marketplace' as ToolSource, label: 'Marketplace' },
+              { id: 'all' as ToolSource, labelKey: 'tools.all' },
+              { id: 'internal' as ToolSource, labelKey: 'tools.internal' },
+              { id: 'marketplace' as ToolSource, labelKey: 'tools.marketplace' },
             ]).map(s => (
               <button
                 key={s.id}
@@ -1215,7 +1218,7 @@ export function Tools() {
                   source === s.id ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'
                 }`}
               >
-                {s.label}
+                {t(s.labelKey)}
               </button>
             ))}
           </div>
@@ -1235,7 +1238,7 @@ export function Tools() {
                   searchMarketplace(searchQuery)
                 }
               }}
-              placeholder={isMarketplaceSkillSearch ? 'Search skills.sh marketplace...' : 'Search tools...'}
+              placeholder={isMarketplaceSkillSearch ? t('tools.searchMarketplace') : t('tools.searchTools')}
               className="w-full pl-9 pr-4 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-600 transition-colors"
             />
           </div>
@@ -1246,7 +1249,7 @@ export function Tools() {
             className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-white hover:border-gray-600 transition-colors flex-shrink-0"
           >
             <Download className="w-3.5 h-3.5" />
-            Import
+            {t('tools.import')}
           </button>
         </div>
 
@@ -1258,7 +1261,7 @@ export function Tools() {
           <div className="flex items-center justify-center py-4 mb-4">
             <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
             <span className="ml-2 text-sm text-gray-500">
-              {isSearchingMarketplace ? 'Searching skills.sh...' : 'Loading marketplace skills...'}
+              {isSearchingMarketplace ? t('tools.searchingMarketplace') : t('tools.loadingMarketplace')}
             </span>
           </div>
         ) : null}

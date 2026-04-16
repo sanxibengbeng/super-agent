@@ -386,6 +386,28 @@ function AppPreviewTab({ path, sessionId }: { path: string; sessionId: string })
     ? `${baseUrl}/api/chat/sessions/${sessionId}/preview/?token=${encodeURIComponent(token || '')}&_r=${refreshCount}`
     : `${baseUrl}/api/chat/sessions/${sessionId}/workspace/file/raw?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token || '')}&_r=${refreshCount}`
 
+  const handleDownload = useCallback(() => {
+    const fileName = path.split('/').pop() ?? 'file.html'
+    const downloadUrl = `${baseUrl}/api/chat/sessions/${sessionId}/workspace/file/raw?path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+    fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Download failed')
+        return res.blob()
+      })
+      .then(blob => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = fileName
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(err => console.error('Download failed:', err))
+  }, [path, sessionId, baseUrl, token])
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
       {/* Toolbar */}
@@ -398,20 +420,20 @@ function AppPreviewTab({ path, sessionId }: { path: string; sessionId: string })
         <span className="text-gray-600 truncate max-w-[200px]">{path}</span>
         <div className="flex-1" />
         <button
+          onClick={handleDownload}
+          className="flex items-center gap-1 px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+          title="Download file"
+        >
+          <Download className="w-3 h-3" />
+          Download
+        </button>
+        <button
           onClick={() => setRefreshCount(c => c + 1)}
           className="flex items-center gap-1 px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
           title="Refresh preview"
         >
           <RefreshCw className="w-3 h-3" />
           Refresh
-        </button>
-        <button
-          onClick={() => { /* TODO: implement publish flow */ }}
-          className="flex items-center gap-1 px-2 py-1 rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors"
-          title="Publish this app"
-        >
-          <Rocket className="w-3 h-3" />
-          Publish
         </button>
       </div>
 
@@ -497,6 +519,7 @@ interface UnifiedChatSelectorProps {
 }
 
 function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, onSelectIndependentAgent }: UnifiedChatSelectorProps) {
+  const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const [scopes, setScopes] = useState<BusinessScope[]>([])
   const [independentAgents, setIndependentAgents] = useState<Agent[]>([])
@@ -543,7 +566,7 @@ function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, 
   const selectedIndependentAgent = independentAgents.find(a => a.id === selectedAgentId)
 
   // Determine display label
-  let displayLabel = 'Select scope or agent'
+  let displayLabel = t('chat.selectScopeOrAgent')
   let displayIcon: React.ReactNode = <Layers className="w-4 h-4 text-gray-400" />
   if (selectedScope) {
     displayLabel = `${selectedScope.icon || ''} ${selectedScope.name}`.trim()
@@ -591,7 +614,7 @@ function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, 
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search scopes or agents..."
+              placeholder={t('chat.searchScopesAgents')}
               className="w-full px-3 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500"
               autoFocus
             />
@@ -602,7 +625,7 @@ function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, 
             {filteredScopes.length > 0 && (
               <>
                 <div className="px-3 py-1.5 text-xs text-gray-500 font-medium uppercase tracking-wider">
-                  Business Scopes
+                  {t('chat.businessScopes')}
                 </div>
                 {filteredScopes.map(scope => (
                   <button
@@ -637,7 +660,7 @@ function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, 
             {filteredAgents.length > 0 && (
               <>
                 <div className="px-3 py-1.5 text-xs text-gray-500 font-medium uppercase tracking-wider border-t border-gray-700">
-                  Independent Agents
+                  {t('chat.independentAgents')}
                 </div>
                 {filteredAgents.map(agent => {
                   const avatarUrl = getAvatarDisplayUrl(agent.avatar)
@@ -677,7 +700,7 @@ function UnifiedChatSelector({ selectedScopeId, selectedAgentId, onSelectScope, 
             )}
 
             {filteredScopes.length === 0 && filteredAgents.length === 0 && (
-              <div className="px-3 py-4 text-sm text-gray-500 text-center">No results found</div>
+              <div className="px-3 py-4 text-sm text-gray-500 text-center">{t('chat.noResultsFound')}</div>
             )}
           </div>
         </div>
@@ -1282,7 +1305,7 @@ function MessageInput({ onSend, onStop, onUpload, sessionId, disabled = false, i
           disabled={isSending}
           className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Upload files to workspace"
+          title={t('chat.uploadToWorkspace')}
         >
           <Paperclip className="w-5 h-5" />
         </button>
@@ -1303,7 +1326,7 @@ function MessageInput({ onSend, onStop, onUpload, sessionId, disabled = false, i
           <button
             onClick={onStop}
             className="p-2 bg-red-600 border border-red-600 rounded-lg hover:bg-red-500 hover:border-red-500 transition-colors"
-            title="Stop generation"
+            title={t('chat.stopGeneration')}
           >
             <Square className="w-5 h-5 text-white fill-white" />
           </button>
@@ -1554,10 +1577,10 @@ function ChatInterfaceContent() {
             <button
               onClick={() => setShowCreateRoom(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600/20 border border-purple-500/30 rounded-lg hover:bg-purple-600/30 transition-colors text-sm text-purple-300"
-              title="Create a group chat room with multiple agents"
+              title={t('chat.groupChatHint')}
             >
               <Users className="w-4 h-4" />
-              <span>Group Chat</span>
+              <span>{t('chat.groupChat')}</span>
             </button>
           </div>
           <div className="flex items-center gap-1">
@@ -1565,19 +1588,19 @@ function ChatInterfaceContent() {
               <button
                 onClick={() => setShowSaveMemory(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg transition-colors"
-                title="Save session to scope memory"
+                title={t('chat.saveToMemoryHint')}
               >
                 <Brain className="w-3.5 h-3.5" />
-                <span>Save to Memory</span>
+                <span>{t('chat.saveToMemory')}</span>
               </button>
             )}
             <button
               onClick={clearConversation}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-              title="Clear conversation"
+              title={t('chat.clearConversation')}
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Clear</span>
+              <span>{t('chat.clear')}</span>
             </button>
           </div>
         </div>
@@ -1645,10 +1668,10 @@ function ChatInterfaceContent() {
               <div className="text-center">
                 <Layers className="w-16 h-16 text-gray-600 mx-auto mb-4" />
                 <h2 className="text-xl font-semibold text-white mb-2">
-                  Start a Conversation
+                  {t('chat.startConversation')}
                 </h2>
                 <p className="text-gray-400 max-w-md">
-                  Choose a business scope or an independent agent from the dropdown above to start chatting.
+                  {t('chat.startConversationHint')}
                 </p>
               </div>
             </div>

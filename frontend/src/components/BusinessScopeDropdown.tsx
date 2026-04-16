@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronDown, Briefcase } from 'lucide-react'
+import { useTranslation } from '@/i18n'
 
 export interface ScopeItem {
   id: string
@@ -29,6 +30,7 @@ export function BusinessScopeDropdown({
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const { t } = useTranslation()
 
   const selectedScope = scopes.find(s => s.id === activeScopeId)
 
@@ -89,7 +91,7 @@ export function BusinessScopeDropdown({
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search scopes..."
+                placeholder={t('scopeDropdown.searchPlaceholder')}
                 className="w-full px-3 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500"
                 autoFocus
               />
@@ -129,7 +131,7 @@ export function BusinessScopeDropdown({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-4 text-sm text-gray-500 text-center">No scopes found</div>
+              <div className="px-3 py-4 text-sm text-gray-500 text-center">{t('scopeDropdown.noResults')}</div>
             )}
           </div>
         </div>

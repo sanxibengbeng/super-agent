@@ -304,8 +304,9 @@ export function AIScopeGenerator() {
   const { success: showSuccess, error: showError } = useToast();
 
   // Accept pre-filled description and optional SOP file from navigation state
-  const navState = location.state as { description?: string; hasSopFile?: boolean } | null;
+  const navState = location.state as { description?: string; hasSopFile?: boolean; language?: 'en' | 'cn' } | null;
   const prefilled = navState?.description || '';
+  const language = navState?.language || 'en';
   // Consume the SOP file from the ephemeral store (only available once after navigation)
   const [sopFile] = useState<File | null>(() => navState?.hasSopFile ? consumeSopFile() : null);
 
@@ -395,8 +396,8 @@ export function AIScopeGenerator() {
     try {
       // Use document upload endpoint when a SOP file is provided
       const fullText = sopFile
-        ? await generateScopeWithDocument(sopFile, description.trim(), sseHandler, controller.signal)
-        : await generateScope(description.trim(), sseHandler, controller.signal);
+        ? await generateScopeWithDocument(sopFile, description.trim(), sseHandler, controller.signal, language)
+        : await generateScope(description.trim(), sseHandler, controller.signal, language);
 
       // Parse the result
       const config = parseScopeConfig(fullText);
@@ -419,7 +420,7 @@ export function AIScopeGenerator() {
       ]);
       setStep('error');
     }
-  }, [description, sopFile]);
+  }, [description, sopFile, language]);
 
   // -------------------------------------------------------------------------
   // Auto-trigger generation when arriving with pre-filled description

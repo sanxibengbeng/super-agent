@@ -5,16 +5,17 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp, Send, RefreshCw } from 'lucide-react'
-import { RestProjectService, type Project, type ProjectIssue, type IssueComment } from '@/services/api/restProjectService'
+import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp, Send, RefreshCw, FileCode } from 'lucide-react'
+import { RestProjectService, type Project, type ProjectIssue, type IssueComment, type IssueRelation, type TriageReport } from '@/services/api/restProjectService'
+import { useTranslation } from '@/i18n'
 import { WorkspaceExplorer } from '@/components'
 
 const LANES = [
-  { id: 'backlog', label: 'Backlog', color: 'border-gray-600' },
-  { id: 'todo', label: 'Todo', color: 'border-blue-600' },
-  { id: 'in_progress', label: 'In Progress', color: 'border-yellow-600' },
-  { id: 'in_review', label: 'In Review', color: 'border-purple-600' },
-  { id: 'done', label: 'Done', color: 'border-green-600' },
+  { id: 'backlog', labelKey: 'project.backlog', color: 'border-gray-600' },
+  { id: 'todo', labelKey: 'project.todo', color: 'border-blue-600' },
+  { id: 'in_progress', labelKey: 'project.inProgress', color: 'border-yellow-600' },
+  { id: 'in_review', labelKey: 'project.inReview', color: 'border-purple-600' },
+  { id: 'done', labelKey: 'project.done', color: 'border-green-600' },
 ]
 
 const PRIORITY_BADGES: Record<string, { label: string; cls: string }> = {
@@ -24,11 +25,19 @@ const PRIORITY_BADGES: Record<string, { label: string; cls: string }> = {
   low: { label: '🟢', cls: 'text-green-400' },
 }
 
+const RELATION_TYPE_CONFIG: Record<string, { icon: string; label: string }> = {
+  conflicts_with: { icon: '⚠️', label: 'Conflicts with' },
+  depends_on: { icon: '🔗', label: 'Depends on' },
+  duplicates: { icon: '📋', label: 'Duplicates' },
+  related_to: { icon: '🔄', label: 'Related to' },
+}
+
 type ViewMode = 'board' | 'list'
 
 export function ProjectBoard() {
   const { id: projectId } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [project, setProject] = useState<Project | null>(null)
   const [issues, setIssues] = useState<ProjectIssue[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -46,6 +55,16 @@ export function ProjectBoard() {
   const [editStatus, setEditStatus] = useState('backlog')
   const [isSavingIssue, setIsSavingIssue] = useState(false)
 
+  // AI Refine diff
+  const [isRefining, setIsRefining] = useState(false)
+  const [refinedDesc, setRefinedDesc] = useState<string | null>(null) // non-null = show diff
+
+  // Code diff viewer
+  const [showDiffPanel, setShowDiffPanel] = useState(false)
+  const [diffPatch, setDiffPatch] = useState<string | null>(null)
+  const [diffStat, setDiffStat] = useState<import('@/services/api/restProjectService').DiffStat | null>(null)
+  const [loadingDiff, setLoadingDiff] = useState(false)
+
   // Issue detail comments
   const [issueComments, setIssueComments] = useState<IssueComment[]>([])
   const [loadingComments, setLoadingComments] = useState(false)
@@ -62,6 +81,13 @@ export function ProjectBoard() {
   const [autoProcess, setAutoProcess] = useState(false)
   const autoProcessRef = useRef(false)
   const autoProcessTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // AI Governance
+  const [projectRelations, setProjectRelations] = useState<IssueRelation[]>([])
+  const [issueRelations, setIssueRelations] = useState<IssueRelation[]>([])
+  const [showTriageReport, setShowTriageReport] = useState(false)
+  const [triageReport, setTriageReport] = useState<TriageReport | null>(null)
+  const [isGeneratingTriage, setIsGeneratingTriage] = useState(false)
 
   // Workspace panel
   const [wsPanelWidth, setWsPanelWidth] = useState(288)
@@ -98,6 +124,12 @@ export function ProjectBoard() {
         setAutoProcess(ap)
         autoProcessRef.current = ap
       } catch { /* no settings yet */ }
+
+      // Load project-level relations for card badges
+      try {
+        const rels = await RestProjectService.getProjectRelations(projectId)
+        setProjectRelations(rels)
+      } catch { /* relations not critical */ }
     } catch (err) {
       console.error('Failed to load project:', err)
     } finally {
@@ -243,6 +275,11 @@ export function ProjectBoard() {
     setEditStatus(issue.status)
     setIssueComments([])
     setNewComment('')
+    setRefinedDesc(null)
+    setIsRefining(false)
+    setShowDiffPanel(false)
+    setDiffPatch(null)
+    setDiffStat(null)
     // Load comments
     if (projectId) {
       setLoadingComments(true)
@@ -299,16 +336,80 @@ export function ProjectBoard() {
   }
 
   const _handleDeleteIssue = async (issueId: string) => {
-    if (!projectId || !confirm('Delete this issue?')) return
+    if (!projectId || !confirm(t('project.deleteIssueConfirm'))) return
     await RestProjectService.deleteIssue(projectId, issueId)
     loadData()
+  }
+
+  // --- AI Governance handlers ---
+
+  const handleGenerateTriage = async () => {
+    if (!projectId) return
+    setIsGeneratingTriage(true)
+    try {
+      const report = await RestProjectService.generateTriage(projectId)
+      setTriageReport(report)
+      setShowTriageReport(true)
+    } catch (err) {
+      console.error('Triage generation failed:', err)
+      alert(`Triage failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setIsGeneratingTriage(false)
+    }
+  }
+
+  const handleReviewRelation = async (relationId: string, action: 'confirmed' | 'dismissed') => {
+    if (!projectId) return
+    try {
+      await RestProjectService.reviewRelation(projectId, relationId, action)
+      // Refresh relations for the selected issue
+      if (selectedIssue) {
+        const rels = await RestProjectService.getIssueRelations(projectId, selectedIssue.id)
+        setIssueRelations(rels)
+      }
+      // Refresh project-level relations
+      const projRels = await RestProjectService.getProjectRelations(projectId)
+      setProjectRelations(projRels)
+      // Refresh issues to get updated readiness scores
+      loadData()
+    } catch (err) {
+      console.error('Review relation failed:', err)
+    }
+  }
+
+  const handleReanalyze = async () => {
+    if (!projectId || !selectedIssue) return
+    try {
+      await RestProjectService.reanalyzeIssue(projectId, selectedIssue.id)
+      // Update local state to show analyzing status
+      setIssues(prev => prev.map(i => i.id === selectedIssue.id ? { ...i, ai_analysis_status: 'analyzing' } : i))
+      setSelectedIssue(prev => prev ? { ...prev, ai_analysis_status: 'analyzing' } : prev)
+    } catch (err) {
+      console.error('Re-analyze failed:', err)
+    }
+  }
+
+  // Load issue relations when opening issue detail
+  const handleOpenIssueWithRelations = (issue: ProjectIssue) => {
+    handleOpenIssue(issue)
+    // Load relations for this issue
+    if (projectId) {
+      RestProjectService.getIssueRelations(projectId, issue.id)
+        .then(setIssueRelations)
+        .catch(() => setIssueRelations([]))
+    }
+  }
+
+  // Helper: get relations for a specific issue from project-level cache
+  const getIssueRelationsFromCache = (issueId: string) => {
+    return projectRelations.filter(r => r.source_issue_id === issueId || r.target_issue_id === issueId)
   }
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" /></div>
   }
   if (!project) {
-    return <div className="flex items-center justify-center h-full text-gray-400">Project not found</div>
+    return <div className="flex items-center justify-center h-full text-gray-400">{t('project.notFound')}</div>
   }
 
   return (
@@ -339,9 +440,18 @@ export function ProjectBoard() {
             </button>
           </div>
           <button onClick={() => setShowCreateIssue(true)} className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors">
-            <Plus size={14} /> New Issue
+            <Plus size={14} /> {t('project.newIssue')}
           </button>
-          <button onClick={() => setShowSettings(true)} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors" title="Project Settings">
+          <button
+            onClick={handleGenerateTriage}
+            disabled={isGeneratingTriage}
+            className="flex items-center gap-1 px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition-colors disabled:opacity-50"
+            title="AI analyzes all backlog issues and suggests priorities"
+          >
+            {isGeneratingTriage ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            AI Triage
+          </button>
+          <button onClick={() => setShowSettings(true)} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors" title={t('project.settings')}>
             <Settings size={18} />
           </button>
           <button
@@ -356,14 +466,14 @@ export function ProjectBoard() {
               }
             }}
             className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            title="Sync workspace from S3"
+            title={t('project.syncWorkspace')}
           >
             <RefreshCw size={18} />
           </button>
           <button
             onClick={() => setShowConsole(!showConsole)}
             className={`p-1.5 rounded-lg transition-colors ${showConsole ? 'text-green-400 bg-green-600/20' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-            title="Agent Console"
+            title={t('project.agentConsole')}
           >
             <Terminal size={18} />
           </button>
@@ -384,12 +494,12 @@ export function ProjectBoard() {
                 onDrop={() => dragIssueId && handleDrop(dragIssueId, lane.id)}
               >
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-xs font-medium text-gray-300">{lane.label}</span>
+                  <span className="text-xs font-medium text-gray-300">{t(lane.labelKey)}</span>
                   <span className="text-xs text-gray-500">{laneIssues.length}</span>
                 </div>
                 <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
                   {laneIssues.map(issue => (
-                    <IssueCard key={issue.id} issue={issue} onDragStart={() => setDragIssueId(issue.id)} onClick={() => handleOpenIssue(issue)} />
+                    <IssueCard key={issue.id} issue={issue} relations={getIssueRelationsFromCache(issue.id)} onDragStart={() => setDragIssueId(issue.id)} onClick={() => handleOpenIssueWithRelations(issue)} />
                   ))}
                 </div>
               </div>
@@ -411,12 +521,12 @@ export function ProjectBoard() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-gray-500 border-b border-gray-800">
-                <th className="pb-2">#</th><th className="pb-2">Title</th><th className="pb-2">Status</th><th className="pb-2">Priority</th><th className="pb-2">Creator</th><th className="pb-2">Created</th>
+                <th className="pb-2">#</th><th className="pb-2">{t('project.colTitle')}</th><th className="pb-2">{t('project.colStatus')}</th><th className="pb-2">{t('project.colPriority')}</th><th className="pb-2">{t('project.colCreator')}</th><th className="pb-2">{t('project.colCreated')}</th>
               </tr>
             </thead>
             <tbody>
               {issues.map(issue => (
-                <tr key={issue.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors cursor-pointer" onClick={() => handleOpenIssue(issue)}>
+                <tr key={issue.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors cursor-pointer" onClick={() => handleOpenIssueWithRelations(issue)}>
                   <td className="py-2 pl-3 text-gray-500">{issue.issue_number}</td>
                   <td className="py-2 text-white">{issue.title}</td>
                   <td className="py-2"><span className={`px-2 py-0.5 rounded text-xs ${issue.status === 'done' ? 'bg-green-600/20 text-green-400' : issue.status === 'in_progress' ? 'bg-yellow-600/20 text-yellow-400' : issue.status === 'in_review' ? 'bg-purple-600/20 text-purple-400' : 'bg-gray-600/20 text-gray-400'}`}>{issue.status.replace('_', ' ')}</span></td>
@@ -531,7 +641,7 @@ export function ProjectBoard() {
               <input value={newIssueTitle} onChange={e => setNewIssueTitle(e.target.value)} placeholder="Issue title..." className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500" autoFocus onKeyDown={e => e.key === 'Enter' && handleCreateIssue()} />
               <div className="grid grid-cols-2 gap-2">
                 <select value={newIssueLane} onChange={e => setNewIssueLane(e.target.value)} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none">
-                  {LANES.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+                  {LANES.map(l => <option key={l.id} value={l.id}>{t(l.labelKey)}</option>)}
                 </select>
                 <select value={newIssuePriority} onChange={e => setNewIssuePriority(e.target.value)} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none">
                   <option value="critical">🔴 Critical</option>
@@ -601,7 +711,7 @@ export function ProjectBoard() {
                 }`}>{editStatus.replace('_', ' ')}</span>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={handleDeleteSelectedIssue} className="p-1.5 text-gray-500 hover:text-red-400 rounded transition-colors" title="Delete issue">
+                <button onClick={handleDeleteSelectedIssue} className="p-1.5 text-gray-500 hover:text-red-400 rounded transition-colors" title={t('project.deleteIssue')}>
                   <X size={14} />
                 </button>
                 <button onClick={() => setSelectedIssue(null)} className="p-1.5 text-gray-500 hover:text-white rounded transition-colors">
@@ -614,7 +724,7 @@ export function ProjectBoard() {
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Title */}
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Title</label>
+                <label className="block text-xs text-gray-400 mb-1">{t('project.title')}</label>
                 <input
                   value={editTitle}
                   onChange={e => setEditTitle(e.target.value)}
@@ -625,47 +735,93 @@ export function ProjectBoard() {
               {/* Description */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs text-gray-400">Description</label>
-                  <button
-                    onClick={async () => {
-                      if (!projectId || !selectedIssue) return
-                      setEditDesc('✨ Beautifying...')
-                      try {
-                        const improved = await RestProjectService.beautifyDescription(projectId, selectedIssue.id)
-                        setEditDesc(improved)
-                      } catch { setEditDesc(editDesc === '✨ Beautifying...' ? (selectedIssue.description ?? '') : editDesc) }
-                    }}
-                    className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded transition-colors"
-                    title="Use AI to improve this description"
-                  >
-                    <Sparkles size={10} /> AI Beautify
-                  </button>
+                  <label className="text-xs text-gray-400">{t('project.description')}</label>
+                  {refinedDesc === null ? (
+                    <button
+                      onClick={async () => {
+                        if (!projectId || !selectedIssue) return
+                        setIsRefining(true)
+                        try {
+                          const improved = await RestProjectService.beautifyDescription(projectId, selectedIssue.id)
+                          setRefinedDesc(improved)
+                        } catch (err) {
+                          console.error('Refine failed:', err)
+                        } finally {
+                          setIsRefining(false)
+                        }
+                      }}
+                      disabled={isRefining}
+                      className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded transition-colors disabled:opacity-50"
+                      title={t('project.aiBeautifyHint')}
+                    >
+                      {isRefining ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                      {isRefining ? 'Refining...' : t('project.aiBeautify')}
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => { setEditDesc(refinedDesc); setRefinedDesc(null) }}
+                        className="px-2 py-0.5 text-[10px] text-green-400 hover:text-green-300 hover:bg-green-500/10 rounded transition-colors"
+                      >
+                        ✓ Accept
+                      </button>
+                      <button
+                        onClick={() => setRefinedDesc(null)}
+                        className="px-2 py-0.5 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors"
+                      >
+                        ✕ Discard
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <textarea
-                  value={editDesc}
-                  onChange={e => setEditDesc(e.target.value)}
-                  rows={6}
-                  placeholder="Describe the task in detail..."
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 resize-none"
-                />
+
+                {refinedDesc !== null ? (
+                  /* Diff view: before / after */
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-2.5">
+                      <div className="flex items-center gap-1 mb-1.5">
+                        <span className="text-[10px] font-medium text-red-400">Before</span>
+                      </div>
+                      <p className="text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">
+                        {editDesc || '(empty)'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-2.5">
+                      <div className="flex items-center gap-1 mb-1.5">
+                        <span className="text-[10px] font-medium text-green-400">After (AI Refined)</span>
+                      </div>
+                      <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
+                        {refinedDesc}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <textarea
+                    value={editDesc}
+                    onChange={e => setEditDesc(e.target.value)}
+                    rows={6}
+                    placeholder={t('project.descPlaceholder')}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 resize-none"
+                  />
+                )}
               </div>
 
               {/* Status + Priority */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Status</label>
+                  <label className="block text-xs text-gray-400 mb-1">{t('project.status')}</label>
                   <select value={editStatus} onChange={e => setEditStatus(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none focus:border-blue-500">
-                    {LANES.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
-                    <option value="cancelled">Cancelled</option>
+                    {LANES.map(l => <option key={l.id} value={l.id}>{t(l.labelKey)}</option>)}
+                    <option value="cancelled">{t('project.cancelled')}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Priority</label>
+                  <label className="block text-xs text-gray-400 mb-1">{t('project.priority')}</label>
                   <select value={editPriority} onChange={e => setEditPriority(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none focus:border-blue-500">
-                    <option value="critical">🔴 Critical</option>
-                    <option value="high">🟠 High</option>
-                    <option value="medium">🟡 Medium</option>
-                    <option value="low">🟢 Low</option>
+                    <option value="critical">{t('project.criticalPriority')}</option>
+                    <option value="high">{t('project.highPriority')}</option>
+                    <option value="medium">{t('project.mediumPriority')}</option>
+                    <option value="low">{t('project.lowPriority')}</option>
                   </select>
                 </div>
               </div>
@@ -673,14 +829,225 @@ export function ProjectBoard() {
               {/* Branch info (if agent has worked on it) */}
               {selectedIssue.branch_name && (
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
-                  <div className="text-xs text-gray-400 mb-1">Branch</div>
+                  <div className="text-xs text-gray-400 mb-1">{t('project.branch')}</div>
                   <code className="text-xs text-blue-400">{selectedIssue.branch_name}</code>
+                </div>
+              )}
+
+              {/* Code Changes / Diff */}
+              {(selectedIssue.diff_stat || selectedIssue.status === 'in_review' || selectedIssue.status === 'done') && (
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <FileCode size={12} className="text-blue-400" />
+                      <span className="text-xs font-medium text-gray-300">Changes</span>
+                      {selectedIssue.diff_stat && (
+                        <span className="text-[10px] text-gray-500">
+                          {selectedIssue.diff_stat.files_changed} file{selectedIssue.diff_stat.files_changed !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {selectedIssue.diff_stat && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-green-400">+{selectedIssue.diff_stat.insertions}</span>
+                        <span className="text-[10px] text-red-400">-{selectedIssue.diff_stat.deletions}</span>
+                        <button
+                          onClick={async () => {
+                            if (showDiffPanel) {
+                              setShowDiffPanel(false)
+                              return
+                            }
+                            if (!projectId || !selectedIssue) return
+                            if (diffPatch !== null) {
+                              setShowDiffPanel(true)
+                              return
+                            }
+                            setLoadingDiff(true)
+                            try {
+                              const result = await RestProjectService.getIssueDiff(projectId, selectedIssue.id)
+                              setDiffPatch(result.diff_patch)
+                              setDiffStat(result.diff_stat)
+                              setShowDiffPanel(true)
+                            } catch (err) {
+                              console.error('Failed to load diff:', err)
+                            } finally {
+                              setLoadingDiff(false)
+                            }
+                          }}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                        >
+                          {loadingDiff ? <Loader2 size={10} className="animate-spin" /> : showDiffPanel ? 'Hide diff' : 'View diff'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* File list */}
+                  {selectedIssue.diff_stat?.files && (
+                    <div className="space-y-0.5 mb-2">
+                      {selectedIssue.diff_stat.files.map((f, i) => (
+                        <div key={i} className="flex items-center justify-between text-[10px]">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className={`flex-shrink-0 w-1 h-1 rounded-full ${
+                              f.status === 'added' ? 'bg-green-400' :
+                              f.status === 'deleted' ? 'bg-red-400' :
+                              'bg-yellow-400'
+                            }`} />
+                            <span className="text-gray-300 truncate font-mono">{f.path}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                            {f.insertions > 0 && <span className="text-green-400">+{f.insertions}</span>}
+                            {f.deletions > 0 && <span className="text-red-400">-{f.deletions}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {!selectedIssue.diff_stat && (
+                    <p className="text-[10px] text-gray-600">No diff data available yet. Diff is captured when the agent completes execution.</p>
+                  )}
+
+                  {/* Full diff view */}
+                  {showDiffPanel && diffPatch && (
+                    <div className="mt-2 border-t border-gray-700 pt-2">
+                      <pre className="text-[10px] font-mono leading-relaxed overflow-x-auto max-h-80 overflow-y-auto">
+                        {diffPatch.split('\n').map((line, i) => {
+                          const cls = line.startsWith('+++') || line.startsWith('---') ? 'text-gray-500 font-bold'
+                            : line.startsWith('@@') ? 'text-cyan-400'
+                            : line.startsWith('+') ? 'text-green-400 bg-green-500/5'
+                            : line.startsWith('-') ? 'text-red-400 bg-red-500/5'
+                            : line.startsWith('diff ') ? 'text-gray-400 font-bold border-t border-gray-800 pt-1 mt-1'
+                            : 'text-gray-500'
+                          return <div key={i} className={cls}>{line || ' '}</div>
+                        })}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AI Acceptance Criteria */}
+              {selectedIssue.acceptance_criteria && (selectedIssue.acceptance_criteria as Array<{ criterion: string; verified?: boolean }>).length > 0 && (
+                <div className="bg-purple-500/5 border border-purple-500/10 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles size={12} className="text-purple-400" />
+                      <span className="text-xs font-medium text-purple-300">Acceptance Criteria</span>
+                    </div>
+                    <span className="text-[10px] text-gray-500">AI Generated</span>
+                  </div>
+                  <div className="space-y-1">
+                    {(selectedIssue.acceptance_criteria as Array<{ criterion: string; verified?: boolean }>).map((ac, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs text-gray-300">
+                        <span className="mt-0.5 text-purple-400">•</span>
+                        <span>{ac.criterion}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Issue Relations */}
+              {issueRelations.length > 0 && (
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="text-xs font-medium text-gray-300">Relations</span>
+                    <span className="text-[10px] text-gray-500">({issueRelations.length})</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {issueRelations.map(rel => {
+                      const isSource = rel.source_issue_id === selectedIssue.id
+                      const otherIssue = isSource ? rel.target_issue : rel.source_issue
+                      const typeConfig = RELATION_TYPE_CONFIG[rel.relation_type] ?? { icon: '🔄', label: rel.relation_type }
+                      return (
+                        <div key={rel.id} className={`flex items-center justify-between p-2 rounded-lg border ${
+                          rel.status === 'dismissed' ? 'opacity-40 border-gray-800' :
+                          rel.relation_type === 'conflicts_with' ? 'border-red-500/20 bg-red-500/5' :
+                          rel.relation_type === 'depends_on' ? 'border-blue-500/20 bg-blue-500/5' :
+                          'border-gray-700 bg-gray-800/30'
+                        }`}>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-xs">{typeConfig.icon}</span>
+                            <span className="text-[10px] text-gray-500">{typeConfig.label}</span>
+                            <span className="text-xs text-white truncate">#{otherIssue.issue_number} {otherIssue.title}</span>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <span className="text-[10px] text-gray-500">{Math.round(rel.confidence * 100)}%</span>
+                            {rel.status === 'pending' && (
+                              <>
+                                <button onClick={() => handleReviewRelation(rel.id, 'confirmed')} className="p-0.5 text-green-500/60 hover:text-green-400 rounded transition-colors" title="Confirm">✓</button>
+                                <button onClick={() => handleReviewRelation(rel.id, 'dismissed')} className="p-0.5 text-red-500/60 hover:text-red-400 rounded transition-colors" title="Dismiss">✕</button>
+                              </>
+                            )}
+                            {rel.status === 'confirmed' && <span className="text-[10px] text-green-500">Confirmed</span>}
+                            {rel.status === 'dismissed' && <span className="text-[10px] text-gray-600">Dismissed</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {issueRelations.some(r => r.reasoning) && (
+                    <details className="mt-2">
+                      <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">View AI reasoning</summary>
+                      <div className="mt-1 space-y-1">
+                        {issueRelations.filter(r => r.reasoning).map(r => {
+                          const other = r.source_issue_id === selectedIssue.id ? r.target_issue : r.source_issue
+                          return (
+                            <p key={r.id} className="text-[10px] text-gray-500 pl-2 border-l border-gray-700">
+                              <span className="text-gray-400">#{other.issue_number}:</span> {r.reasoning}
+                            </p>
+                          )
+                        })}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+
+              {/* Readiness Score Breakdown */}
+              {['backlog', 'todo'].includes(editStatus) && selectedIssue.readiness_details && (
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-gray-300">Readiness Score</span>
+                    <div className="flex items-center gap-2">
+                      {selectedIssue.ai_analysis_status === 'stale' && (
+                        <button onClick={handleReanalyze} className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 transition-colors">
+                          <RefreshCw size={10} /> Re-analyze
+                        </button>
+                      )}
+                      <span className={`text-sm font-bold ${
+                        (selectedIssue.readiness_score ?? 0) >= 80 ? 'text-green-400' :
+                        (selectedIssue.readiness_score ?? 0) >= 50 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>{selectedIssue.readiness_score ?? 0}/100</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {Object.entries(selectedIssue.readiness_details as Record<string, { score: number; max: number; reason: string }>).map(([key, detail]) => (
+                      <div key={key}>
+                        <div className="flex items-center justify-between text-[10px] mb-0.5">
+                          <span className="text-gray-400 capitalize">{key}</span>
+                          <span className="text-gray-500">{detail.score}/{detail.max}</span>
+                        </div>
+                        <div className="w-full h-1 bg-gray-700 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              detail.score / detail.max >= 0.8 ? 'bg-green-500' :
+                              detail.score / detail.max >= 0.5 ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${(detail.score / detail.max) * 100}%` }}
+                          />
+                        </div>
+                        <p className="text-[9px] text-gray-600 mt-0.5">{detail.reason}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {/* Creator */}
               <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
-                <div className="text-xs text-gray-400 mb-1">Created by</div>
+                <div className="text-xs text-gray-400 mb-1">{t('project.createdBy')}</div>
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium bg-gray-600 text-gray-300 overflow-hidden flex-shrink-0">
                     {selectedIssue.created_by_profile?.avatar_url ? (
@@ -700,12 +1067,12 @@ export function ProjectBoard() {
 
               {/* Project Agent */}
               <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
-                <div className="text-xs text-gray-400 mb-1">Project Agent</div>
+                <div className="text-xs text-gray-400 mb-1">{t('project.projectAgent')}</div>
                 <div className="flex items-center gap-2 text-sm">
                   {project?.agent_id ? (
-                    <><Bot size={14} className="text-purple-400" /> <span className="text-gray-300">Custom Agent</span></>
+                    <><Bot size={14} className="text-purple-400" /> <span className="text-gray-300">{t('project.customAgent')}</span></>
                   ) : (
-                    <><Bot size={14} className="text-gray-500" /> <span className="text-gray-500">Default Claude Code Agent</span></>
+                    <><Bot size={14} className="text-gray-500" /> <span className="text-gray-500">{t('project.defaultAgent')}</span></>
                   )}
                 </div>
               </div>
@@ -715,7 +1082,7 @@ export function ProjectBoard() {
                 <div className="flex items-center gap-1.5 mb-2">
                   <MessageSquare size={12} className="text-gray-400" />
                   <label className="text-xs text-gray-400">
-                    Comments {issueComments.length > 0 && `(${issueComments.length})`}
+                    {t('project.comments')} {issueComments.length > 0 && `(${issueComments.length})`}
                   </label>
                 </div>
 
@@ -724,7 +1091,7 @@ export function ProjectBoard() {
                     <Loader2 size={14} className="text-gray-500 animate-spin" />
                   </div>
                 ) : issueComments.length === 0 ? (
-                  <p className="text-xs text-gray-600 py-2">No comments yet.</p>
+                  <p className="text-xs text-gray-600 py-2">{t('project.noComments')}</p>
                 ) : (
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {issueComments.map(c => (
@@ -759,7 +1126,7 @@ export function ProjectBoard() {
                     value={newComment}
                     onChange={e => setNewComment(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlePostComment() } }}
-                    placeholder="Add a comment..."
+                    placeholder={t('project.addComment')}
                     className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-600 outline-none focus:border-blue-500"
                   />
                   <button
@@ -776,11 +1143,98 @@ export function ProjectBoard() {
             {/* Footer */}
             <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-800">
               <button onClick={() => setSelectedIssue(null)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={handleSaveIssue} disabled={isSavingIssue || !editTitle.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-xs rounded-lg transition-colors">
-                {isSavingIssue ? 'Saving...' : 'Save Changes'}
+                {isSavingIssue ? t('project.saving') : t('project.saveChanges')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Triage Report Slide-over */}
+      {showTriageReport && triageReport && (
+        <div className="fixed inset-0 bg-black/60 flex justify-end z-50" onClick={() => setShowTriageReport(false)}>
+          <div className="w-[520px] h-full bg-gray-900 border-l border-gray-700 flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <div className="flex items-center gap-2">
+                <Sparkles size={16} className="text-purple-400" />
+                <span className="text-sm font-semibold text-white">AI Triage Report</span>
+              </div>
+              <button onClick={() => setShowTriageReport(false)} className="p-1.5 text-gray-500 hover:text-white rounded transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Summary */}
+              <div className="bg-purple-500/5 border border-purple-500/10 rounded-lg p-3">
+                <p className="text-xs text-gray-300 leading-relaxed">{triageReport.summary}</p>
+                <p className="text-[10px] text-gray-500 mt-2">Sprint capacity: {triageReport.sprint_estimate}</p>
+              </div>
+
+              {/* Recommended Order */}
+              {triageReport.recommended_order?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">📋 Recommended Execution Order</h4>
+                  <div className="space-y-1">
+                    {triageReport.recommended_order.map((item, i) => (
+                      <div key={i} className="flex items-start gap-2 p-2 bg-gray-800/50 rounded-lg">
+                        <span className="text-[10px] text-gray-500 font-mono w-4 flex-shrink-0 mt-0.5">{i + 1}.</span>
+                        <div>
+                          <span className="text-xs text-white">#{item.issue_number}</span>
+                          <p className="text-[10px] text-gray-500 mt-0.5">{item.reason}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Merge Suggestions */}
+              {triageReport.merge_suggestions?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">🔀 Merge Suggestions</h4>
+                  {triageReport.merge_suggestions.map((m, i) => (
+                    <div key={i} className="p-2 bg-orange-500/5 border border-orange-500/10 rounded-lg mb-1.5">
+                      <div className="flex items-center gap-1 mb-1">
+                        {m.issue_numbers.map(n => (
+                          <span key={n} className="px-1.5 py-0.5 bg-gray-700 text-[10px] text-white rounded">#{n}</span>
+                        ))}
+                        <span className="text-[10px] text-gray-500">→</span>
+                        <span className="text-[10px] text-orange-300">{m.suggested_title}</span>
+                      </div>
+                      <p className="text-[10px] text-gray-500">{m.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Missing Info */}
+              {triageReport.missing_info?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">❓ Information Needed</h4>
+                  {triageReport.missing_info.map((m, i) => (
+                    <div key={i} className="flex items-start gap-2 p-2 bg-yellow-500/5 border border-yellow-500/10 rounded-lg mb-1.5">
+                      <span className="text-xs text-white flex-shrink-0">#{m.issue_number}</span>
+                      <p className="text-[10px] text-yellow-300">{m.what_is_missing}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Risk Flags */}
+              {triageReport.risk_flags?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">🚩 Risk Flags</h4>
+                  {triageReport.risk_flags.map((r, i) => (
+                    <div key={i} className="flex items-start gap-2 p-2 bg-red-500/5 border border-red-500/10 rounded-lg mb-1.5">
+                      <span className="text-xs text-white flex-shrink-0">#{r.issue_number}</span>
+                      <p className="text-[10px] text-red-300">{r.risk}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -817,6 +1271,7 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
   const [selectedAgentId, setSelectedAgentId] = useState(project.agent_id ?? '')
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const { t } = useTranslation()
 
   useEffect(() => {
     // Load scopes
@@ -855,14 +1310,14 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-[420px] shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-white">Project Settings</h3>
+          <h3 className="text-sm font-semibold text-white">{t('project.settings')}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={16} /></button>
         </div>
 
         <div className="space-y-4">
           {/* Business Scope — required for agent execution */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Business Scope</label>
+            <label className="block text-xs text-gray-400 mb-1">{t('project.businessScope')}</label>
             <select
               value={selectedScopeId}
               onChange={e => { setSelectedScopeId(e.target.value); setDirty(true) }}
@@ -870,25 +1325,25 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
                 noScope ? 'border-yellow-500/50' : 'border-gray-700'
               }`}
             >
-              <option value="">— None (agent execution disabled) —</option>
+              <option value="">{t('project.noScopeOption')}</option>
               {scopes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             {noScope && (
               <p className="text-[10px] text-yellow-400 mt-1">
-                A business scope is required for agent execution. Without it, tasks cannot be automatically processed.
+                {t('project.noScopeWarning')}
               </p>
             )}
           </div>
 
           {/* Agent */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Agent</label>
+            <label className="block text-xs text-gray-400 mb-1">{t('project.agent')}</label>
             <select
               value={selectedAgentId}
               onChange={e => { setSelectedAgentId(e.target.value); setDirty(true) }}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none focus:border-blue-500"
             >
-              <option value="">Default (scope's primary agent)</option>
+              <option value="">{t('project.defaultScopeAgent')}</option>
               {agents.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
             </select>
           </div>
@@ -900,7 +1355,7 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
               disabled={saving}
               className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
             >
-              {saving ? 'Saving...' : 'Save Scope & Agent'}
+              {saving ? t('project.saving') : t('project.saveScopeAgent')}
             </button>
           )}
 
@@ -908,9 +1363,9 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
             {/* Auto-process toggle */}
             <label className="flex items-center justify-between px-3 py-3 bg-gray-800 border border-gray-700 rounded-lg cursor-pointer hover:border-gray-600 transition-colors">
               <div>
-                <div className="text-sm text-white">Auto-process Todo items</div>
+                <div className="text-sm text-white">{t('project.autoProcess')}</div>
                 <div className="text-xs text-gray-400 mt-0.5">
-                  Automatically picks up Todo items and assigns them to the agent.
+                  {t('project.autoProcessDesc')}
                 </div>
               </div>
               <div className="ml-4 flex-shrink-0">
@@ -939,17 +1394,47 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
 // Issue Card
 // ============================================================================
 
-function IssueCard({ issue, onDragStart, onClick }: { issue: ProjectIssue; onDragStart: () => void; onClick: () => void }) {
+function ReadinessRing({ score, size = 28 }: { score: number; size?: number }) {
+  const radius = (size - 4) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (score / 100) * circumference
+  const color = score >= 80 ? '#4ade80' : score >= 50 ? '#facc15' : '#f87171'
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }} title={`Readiness: ${score}%`}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#374151" strokeWidth={2} />
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth={2}
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          className="transition-all duration-500"
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold" style={{ color }}>
+        {score}
+      </span>
+    </div>
+  )
+}
+
+function IssueCard({ issue, relations, onDragStart, onClick }: { issue: ProjectIssue; relations?: IssueRelation[]; onDragStart: () => void; onClick: () => void }) {
   const priority = PRIORITY_BADGES[issue.priority]
   const isWorking = issue.status === 'in_progress' && issue.workspace_session_id
+  const isAnalyzing = issue.ai_analysis_status === 'analyzing'
   const profile = issue.created_by_profile
   const creatorInitial = profile?.full_name?.charAt(0) ?? profile?.username?.charAt(0) ?? '?'
+
+  const pendingConflicts = relations?.filter(r => r.relation_type === 'conflicts_with' && r.status === 'pending') ?? []
+  const pendingDeps = relations?.filter(r => r.relation_type === 'depends_on' && r.status === 'pending') ?? []
+  const duplicates = relations?.filter(r => r.relation_type === 'duplicates' && r.status === 'pending') ?? []
+  const readiness = issue.readiness_score ?? null
+  const showReadiness = ['backlog', 'todo'].includes(issue.status) && readiness !== null
+
   return (
     <div
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
       className={`bg-gray-800 border rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-gray-600 transition-colors group ${
+        pendingConflicts.length > 0 ? 'border-red-500/40' :
         isWorking ? 'border-yellow-500/50' : 'border-gray-700'
       }`}
     >
@@ -963,24 +1448,47 @@ function IssueCard({ issue, onDragStart, onClick }: { issue: ProjectIssue; onDra
                 <Bot size={10} className="animate-pulse" /> Working...
               </span>
             )}
+            {isAnalyzing && (
+              <span className="flex items-center gap-0.5 text-[10px] text-purple-400">
+                <Sparkles size={10} className="animate-pulse" /> Analyzing...
+              </span>
+            )}
           </div>
           <p className="text-xs text-white font-medium leading-snug">{issue.title}</p>
         </div>
-        <GripVertical size={12} className="text-gray-600 flex-shrink-0 mt-0.5" />
+        {showReadiness ? (
+          <ReadinessRing score={readiness} size={28} />
+        ) : (
+          <GripVertical size={12} className="text-gray-600 flex-shrink-0 mt-0.5" />
+        )}
       </div>
       <div className="flex items-center justify-between mt-2">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           {issue.labels.map((label: string, i: number) => (
             <span key={i} className="px-1.5 py-0.5 bg-gray-700 text-[10px] text-gray-400 rounded">{label}</span>
           ))}
         </div>
         <div className="flex items-center gap-1.5">
+          {pendingConflicts.length > 0 && (
+            <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-red-500/10 border border-red-500/20 rounded text-[10px] text-red-400" title={`${pendingConflicts.length} conflict(s)`}>
+              ⚠️ {pendingConflicts.length}
+            </span>
+          )}
+          {pendingDeps.length > 0 && (
+            <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400" title={`${pendingDeps.length} dependency(ies)`}>
+              🔗 {pendingDeps.length}
+            </span>
+          )}
+          {duplicates.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 rounded text-[10px] text-orange-400" title="Possible duplicate">
+              📋
+            </span>
+          )}
           {issue._count?.comments ? (
             <span className="flex items-center gap-0.5 text-[10px] text-gray-500">
               <MessageSquare size={10} /> {issue._count.comments}
             </span>
           ) : null}
-          {/* Creator avatar */}
           <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-medium bg-gray-600 text-gray-300 overflow-hidden flex-shrink-0" title={profile?.full_name ?? 'Creator'}>
             {profile?.avatar_url ? (
               <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />

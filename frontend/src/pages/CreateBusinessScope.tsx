@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Laptop, Cog, DollarSign, Scale, MoreHorizontal, Wand2, FileUp, CloudUpload, Sparkles } from 'lucide-react'
+import { ArrowLeft, Users, Laptop, Cog, DollarSign, Scale, MoreHorizontal, Wand2, FileUp, CloudUpload, Sparkles, Globe, X } from 'lucide-react'
 import { setSopFile } from '@/services/sopFileStore'
+import { useTranslation } from '@/i18n/useTranslation'
+import type { Language } from '@/types'
 
 const DEPARTMENTS = [
   { id: 'HR', name: 'Human Resources', icon: Users },
@@ -20,12 +22,50 @@ const STRATEGIES = [
 
 export function CreateBusinessScope() {
   const navigate = useNavigate()
+  const { currentLanguage } = useTranslation()
 
   const [selectedDept, setSelectedDept] = useState<string | null>(null)
   const [customDeptName, setCustomDeptName] = useState('')
   const [selectedStrategy, setSelectedStrategy] = useState<number | null>(null)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [naturalLanguageInput, setNaturalLanguageInput] = useState('')
+
+  // Language selection dialog state
+  const [showLangDialog, setShowLangDialog] = useState(false)
+  const [selectedLang, setSelectedLang] = useState<Language>(currentLanguage)
+  const [pendingNavState, setPendingNavState] = useState<{ description: string; hasSopFile?: boolean; deptName?: string; hasDocument?: boolean } | null>(null)
+
+  /** Open the language dialog before navigating to the AI generator */
+  const promptLanguageAndNavigate = useCallback((description: string, hasSopFile?: boolean) => {
+    setSelectedLang(currentLanguage)
+    setPendingNavState({ description, hasSopFile })
+    setShowLangDialog(true)
+  }, [currentLanguage])
+
+  /** Confirm language and navigate — rebuild description in the chosen language */
+  const confirmLanguageAndNavigate = useCallback(() => {
+    if (!pendingNavState) return
+    setShowLangDialog(false)
+
+    // Rebuild the description in the selected language if it was auto-generated
+    // (Strategy 3 uses user's own text, so we keep it as-is)
+    let finalDescription = pendingNavState.description
+    if (pendingNavState.deptName) {
+      if (pendingNavState.hasDocument) {
+        finalDescription = selectedLang === 'cn'
+          ? `基于上传的 SOP 文档，为"${pendingNavState.deptName}"部门创建业务范围。从文档中提取关键流程、角色和职责，并据此生成专业的 AI 智能体。`
+          : `Create a business scope for a "${pendingNavState.deptName}" department based on the uploaded SOP document. Extract the key processes, roles, and responsibilities from this document and generate specialized AI agents accordingly.`
+      } else {
+        finalDescription = selectedLang === 'cn'
+          ? `为"${pendingNavState.deptName}"部门创建一个全面的业务范围。生成具有行业最佳实践 SOP、职责和技能的专业 AI 智能体。`
+          : `Create a comprehensive business scope for a "${pendingNavState.deptName}" department. Generate specialized AI agents with industry best-practice SOPs, responsibilities, and skills for this organizational unit.`
+      }
+    }
+
+    navigate('/create-business-scope/ai', {
+      state: { description: finalDescription, hasSopFile: pendingNavState.hasSopFile, language: selectedLang },
+    })
+  }, [pendingNavState, selectedLang, navigate])
 
   const handleDeptSelect = useCallback((deptId: string) => {
     setSelectedDept(deptId)
@@ -59,7 +99,7 @@ export function CreateBusinessScope() {
     let description = ''
 
     if (selectedStrategy === 1) {
-      // Reference SOP — generate from department name
+      // Reference SOP — generate from department name (placeholder, rebuilt in confirmLanguageAndNavigate)
       description = `Create a comprehensive business scope for a "${deptName}" department. Generate specialized AI agents with industry best-practice SOPs, responsibilities, and skills for this organizational unit.`
     } else if (selectedStrategy === 2) {
       // Import SOP document — upload file to backend, let the agent parse it
@@ -67,7 +107,9 @@ export function CreateBusinessScope() {
       description = `Create a business scope for a "${deptName}" department based on the uploaded SOP document. Extract the key processes, roles, and responsibilities from this document and generate specialized AI agents accordingly.`
       // Store the file in the ephemeral store (File objects don't survive navigation state serialization)
       setSopFile(uploadedFile)
-      navigate('/create-business-scope/ai', { state: { description, hasSopFile: true } })
+      setSelectedLang(currentLanguage)
+      setPendingNavState({ description, hasSopFile: true, deptName, hasDocument: true })
+      setShowLangDialog(true)
       return
     } else if (selectedStrategy === 3) {
       // Natural language — already handled by inline button
@@ -75,7 +117,9 @@ export function CreateBusinessScope() {
     }
 
     // Navigate to AI Scope Generator with the constructed description
-    navigate('/create-business-scope/ai', { state: { description } })
+    setSelectedLang(currentLanguage)
+    setPendingNavState({ description, deptName })
+    setShowLangDialog(true)
   }, [selectedDept, selectedStrategy, customDeptName, uploadedFile, navigate])
 
   const handleCancel = useCallback(() => navigate('/'), [navigate])
@@ -170,7 +214,7 @@ export function CreateBusinessScope() {
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   if (naturalLanguageInput.trim()) {
-                                    navigate('/create-business-scope/ai', { state: { description: naturalLanguageInput.trim() } })
+                                    promptLanguageAndNavigate(naturalLanguageInput.trim())
                                   }
                                 }}
                                 disabled={!naturalLanguageInput.trim()}
@@ -212,6 +256,62 @@ export function CreateBusinessScope() {
           </div>
         </div>
       </main>
+
+      {/* Language Selection Dialog */}
+      {showLangDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+              <div className="flex items-center gap-2">
+                <Globe className="w-5 h-5 text-purple-400" />
+                <h3 className="text-lg font-semibold text-white">Agent Language</h3>
+              </div>
+              <button onClick={() => setShowLangDialog(false)} className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-gray-400">
+                Choose the language for the generated agents. This determines the language of agent names, system prompts, and skill descriptions.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setSelectedLang('en')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                    selectedLang === 'en'
+                      ? 'border-purple-500 bg-purple-500/10 shadow-lg shadow-purple-500/10'
+                      : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
+                  }`}
+                >
+                  <span className="text-2xl">🇺🇸</span>
+                  <span className={`text-sm font-medium ${selectedLang === 'en' ? 'text-purple-300' : 'text-gray-300'}`}>English</span>
+                </button>
+                <button
+                  onClick={() => setSelectedLang('cn')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                    selectedLang === 'cn'
+                      ? 'border-purple-500 bg-purple-500/10 shadow-lg shadow-purple-500/10'
+                      : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
+                  }`}
+                >
+                  <span className="text-2xl">🇨🇳</span>
+                  <span className={`text-sm font-medium ${selectedLang === 'cn' ? 'text-purple-300' : 'text-gray-300'}`}>中文</span>
+                </button>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-700">
+              <button onClick={() => setShowLangDialog(false)} className="px-5 py-2 text-sm text-gray-300 hover:text-white border border-gray-600 rounded-xl transition-colors">
+                Cancel
+              </button>
+              <button onClick={confirmLanguageAndNavigate}
+                className="px-6 py-2 text-sm font-semibold rounded-xl bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:shadow-lg hover:shadow-purple-500/30 transition-all flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                Generate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

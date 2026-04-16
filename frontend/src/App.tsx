@@ -13,8 +13,10 @@ import { Projects } from '@/pages/Projects'
 import { ProjectBoard } from '@/pages/ProjectBoard'
 import { AuthProvider } from '@/services/AuthContext'
 import { ThemeProvider } from '@/services/ThemeContext'
+import { useTranslation } from '@/i18n'
 
 function AppContent() {
+  const { t } = useTranslation()
   return (
     <Routes>
       {/* Full-page routes without AppShell */}
@@ -41,7 +43,7 @@ function AppContent() {
             {/* Config routes - placeholder for admin menu navigation */}
             <Route path="/config/mcp" element={<MCPConfigurator />} />
             <Route path="/config/skills" element={<SkillMarketplaceBrowser />} />
-            <Route path="/config/rest-api" element={<div className="p-6 text-white">REST API Configuration</div>} />
+            <Route path="/config/rest-api" element={<div className="p-6 text-white">{t('config.restApi')}</div>} />
             <Route path="/config/knowledge" element={<KnowledgeManager />} />
             <Route path="/config/framework" element={<InfrastructureConfigurator />} />
             <Route path="/apps" element={<Marketplace />} />

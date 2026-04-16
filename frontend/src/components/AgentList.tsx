@@ -128,7 +128,7 @@ export function AgentList({ agents, selectedAgentId, selectedScopeId, onSelectAg
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search agents..."
+            placeholder={t('agentList.searchPlaceholder')}
             className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
           />
         </div>
@@ -144,7 +144,7 @@ export function AgentList({ agents, selectedAgentId, selectedScopeId, onSelectAg
         const isIndependent = scopeId === '__independent__'
         const isDigitalTwin = scope?.scopeType === 'digital_twin'
         const scopeInfo = isIndependent
-          ? { name: 'Independent Agents', icon: <Briefcase className="w-4 h-4 text-white" />, color: 'bg-gray-600' }
+          ? { name: t('agentList.independent'), icon: <Briefcase className="w-4 h-4 text-white" />, color: 'bg-gray-600' }
           : getScopeInfo(scopeId)
 
         // Digital twin scopes render as an agent-style card (no sub-agents)
@@ -189,7 +189,7 @@ export function AgentList({ agents, selectedAgentId, selectedScopeId, onSelectAg
                   <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-400' : 'text-white'}`}>
                     {scope.name}
                   </p>
-                  <p className="text-xs text-gray-400 truncate">{scope.role || 'Digital Twin'}</p>
+                  <p className="text-xs text-gray-400 truncate">{scope.role || t('agentList.digitalTwin')}</p>
                 </div>
               </button>
             </div>
