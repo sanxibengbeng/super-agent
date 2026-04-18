@@ -12,11 +12,16 @@ echo ">>> Updating system packages..."
 apt-get update -y
 apt-get upgrade -y
 
+# LibreOffice (headless, for document conversion: pptx/docx/xlsx → PDF)
+echo ">>> Installing LibreOffice..."
+apt-get install -y libreoffice-core libreoffice-impress libreoffice-writer libreoffice-calc \
+  fonts-noto-cjk fonts-wqy-zenhei
+
 # Node.js 22
 echo ">>> Installing Node.js 22..."
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
-npm install -g npm@latest || true
+npm install -g npm@latest
 
 # PostgreSQL client
 echo ">>> Installing PostgreSQL client..."

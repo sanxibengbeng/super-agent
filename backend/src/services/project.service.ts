@@ -366,10 +366,11 @@ export class ProjectService {
       issue.description ? `\n### Description\n${issue.description}` : '',
       ``,
       `## Instructions`,
-      `1. Implement the feature described above by writing actual code files in the workspace.`,
-      `2. Create all necessary source files (HTML, CSS, JS/TS, config files, etc.).`,
-      `3. Make sure the code is functional and well-structured.`,
-      `4. After writing the code, briefly summarize what you created.`,
+      `1. All source code MUST be created inside the \`app/\` directory. Create it if it doesn't exist.`,
+      `2. Do NOT place source files in the workspace root — the root is reserved for system files (.claude/, documents/, memories/).`,
+      `3. Inside \`app/\`, organize files with a clear structure (e.g., \`app/src/\`, \`app/public/\`, \`app/package.json\`).`,
+      `4. Make sure the code is functional and well-structured.`,
+      `5. After writing the code, briefly summarize what you created.`,
       project.repo_url ? `\nRepository: ${project.repo_url}` : '',
       `\nBranch: \`${branchName}\``,
     ].filter(Boolean).join('\n');
@@ -378,8 +379,10 @@ export class ProjectService {
     const devSystemPrompt = [
       `You are a senior software developer. Your job is to implement coding tasks by writing real, functional code.`,
       `You are working in a project workspace. Use your tools to create files, write code, and run commands.`,
+      `IMPORTANT: All source code files MUST go inside the \`app/\` directory. Never create source files in the workspace root.`,
+      `The workspace root contains system directories (.claude/, documents/, memories/) — do not mix application code with them.`,
       `Do NOT refuse to write code. Do NOT say the workspace is misconfigured. Just implement the task.`,
-      `Focus on writing clean, working code. Create all necessary files directly in the workspace.`,
+      `Focus on writing clean, working code. Create all necessary files inside \`app/\`.`,
       project.repo_url ? `The project repository is: ${project.repo_url}` : '',
       project.default_branch ? `Default branch: ${project.default_branch}` : '',
     ].filter(Boolean).join('\n');
@@ -630,10 +633,18 @@ export class ProjectService {
     // Use the chat service to send a message through the workspace agent
     const { chatService } = await import('./chat.service.js');
 
-    const message = `Please improve the following task description. Make it clear, well-structured, and actionable for a developer. Include acceptance criteria if appropriate. Return ONLY the improved description in Markdown, no preamble or explanation.
+    const hasDescription = !!issue.description?.trim();
+
+    const message = hasDescription
+      ? `Improve the following task description. Make it clear, well-structured, and actionable for a developer. Include acceptance criteria if appropriate. Return ONLY the improved description in Markdown, no preamble or explanation.
 
 Title: ${issue.title}
-${issue.description ? `Current description:\n${issue.description}` : 'No description provided yet. Generate a good description based on the title.'}
+Current description:
+${issue.description}
+${project.repo_url ? `Repository: ${project.repo_url}` : ''}`
+      : `Generate a clear, well-structured task description for a developer based on the following title. Include a brief overview, key requirements, and acceptance criteria. Return ONLY the description in Markdown, no preamble or explanation.
+
+Title: ${issue.title}
 ${project.repo_url ? `Repository: ${project.repo_url}` : ''}`;
 
     if (!project.business_scope_id) {
@@ -646,10 +657,15 @@ ${project.repo_url ? `Repository: ${project.repo_url}` : ''}`;
       message,
       organizationId: orgId,
       userId,
-      systemPromptOverride: 'You are a technical project manager. Your job is to write clear, actionable task descriptions for software developers. Return only the improved description in Markdown.',
+      systemPromptOverride: 'You are a technical project manager. Your job is to write clear, actionable task descriptions for software developers. Return only the improved description in Markdown. Do NOT use any tools — just respond with text.',
     });
 
     const improved = result.text;
+
+    // Guard against empty/placeholder responses
+    if (!improved || improved === '(No response)' || improved.trim().length < 10) {
+      throw AppError.internal('AI did not return a valid description. Please try again.');
+    }
 
     // Save the improved description
     await prisma.project_issues.update({

@@ -458,6 +458,13 @@ export class WorkspaceManager {
     lines.push(`- The workspace root is: ${workspacePath}`);
     lines.push('- If a user asks to access files outside this workspace, politely decline and explain the restriction.');
 
+    lines.push('');
+    lines.push('## Application Code Directory', '');
+    lines.push('- All application source code MUST be placed inside the `app/` directory.');
+    lines.push('- The workspace root is reserved for system files (.claude/, documents/, memories/).');
+    lines.push('- When creating new projects or features, always use `app/` as the base directory.');
+    lines.push('- Example structure: `app/src/`, `app/public/`, `app/package.json`, etc.');
+
     // Inject document groups (Knowledge Base)
     const docGroups = scope.documentGroups ?? [];
     if (docGroups.length > 0) {
@@ -1279,6 +1286,34 @@ export class WorkspaceManager {
       }));
       if (response.Body && typeof (response.Body as any).transformToString === 'function') {
         return await (response.Body as any).transformToString();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read a workspace file from S3 as raw binary Buffer.
+   * Used for binary files (images, xlsx, etc.) that cannot be safely converted to UTF-8 strings.
+   */
+  async readWorkspaceFileFromS3Raw(
+    orgId: string,
+    scopeId: string,
+    sessionId: string,
+    filePath: string,
+  ): Promise<Buffer | null> {
+    const s3Bucket = config.agentcore.workspaceS3Bucket;
+    const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+    try {
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const response = await this.s3Client.send(new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: key,
+      }));
+      if (response.Body && typeof (response.Body as any).transformToByteArray === 'function') {
+        const bytes = await (response.Body as any).transformToByteArray();
+        return Buffer.from(bytes);
       }
       return null;
     } catch {

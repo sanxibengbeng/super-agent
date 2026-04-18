@@ -33,6 +33,14 @@ interface FileTab {
 const PREVIEWABLE_EXTENSIONS = new Set(['md', 'markdown', 'html', 'htm'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp'])
 const PDF_EXTENSIONS = new Set(['pdf'])
+const EXCEL_EXTENSIONS = new Set(['xlsx', 'xls', 'xlsb'])
+const OFFICE_DOC_EXTENSIONS = new Set(['doc', 'docx', 'ppt', 'pptx'])
+/** Binary file extensions that must NOT be read as UTF-8 text */
+const BINARY_EXTENSIONS = new Set([
+  ...IMAGE_EXTENSIONS, ...PDF_EXTENSIONS, ...EXCEL_EXTENSIONS,
+  'doc', 'docx', 'ppt', 'pptx', 'zip', 'gz', 'tar', 'rar', '7z',
+  'mp3', 'mp4', 'wav', 'avi', 'mov', 'woff', 'woff2', 'ttf', 'otf', 'eot',
+])
 
 function getFileExtension(path: string): string {
   const dot = path.lastIndexOf('.')
@@ -124,18 +132,24 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
   const [dirty, setDirty] = useState(false)
   const [mode, setMode] = useState<'view' | 'edit' | 'preview'>('view')
   const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [binaryBlob, setBinaryBlob] = useState<Blob | null>(null)
+  const [excelData, setExcelData] = useState<{ sheetNames: string[]; sheets: Record<string, string[][]> } | null>(null)
+  const [activeSheet, setActiveSheet] = useState<string>('')
   const ext = getFileExtension(path)
   const canPreview = PREVIEWABLE_EXTENSIONS.has(ext)
   const isImage = IMAGE_EXTENSIONS.has(ext)
   const isPdf = PDF_EXTENSIONS.has(ext)
+  const isExcel = EXCEL_EXTENSIONS.has(ext)
+  const isOfficeDoc = OFFICE_DOC_EXTENSIONS.has(ext)
+  const isBinary = BINARY_EXTENSIONS.has(ext)
   const highlightedHtml = useHighlightedCode(content, ext)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
 
-    if (isImage) {
-      // Fetch as blob for images
+    if (isBinary) {
+      // Fetch binary files (images, xlsx, etc.) as blob via the raw endpoint
       const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
       const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
       fetch(`${baseUrl}/api/chat/sessions/${sessionId}/workspace/file/raw?path=${encodeURIComponent(path)}`, {
@@ -143,14 +157,33 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
         credentials: 'include',
       })
         .then(res => {
-          if (!res.ok) throw new Error('Failed to load image')
+          if (!res.ok) throw new Error('Failed to load file')
           return res.blob()
         })
-        .then(blob => {
-          if (!cancelled) setImageUrl(URL.createObjectURL(blob))
+        .then(async (blob) => {
+          if (cancelled) return
+          if (isImage) {
+            setImageUrl(URL.createObjectURL(blob))
+          } else if (isExcel) {
+            // Parse Excel file using SheetJS
+            try {
+              const XLSX = await import('xlsx')
+              const arrayBuffer = await blob.arrayBuffer()
+              const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+              const sheets: Record<string, string[][]> = {}
+              for (const name of workbook.SheetNames) {
+                sheets[name] = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[name]!, { header: 1 })
+              }
+              setExcelData({ sheetNames: workbook.SheetNames, sheets })
+              setActiveSheet(workbook.SheetNames[0] ?? '')
+            } catch {
+              setContent('Failed to parse Excel file')
+            }
+          }
+          setBinaryBlob(blob)
         })
         .catch(() => {
-          if (!cancelled) setContent('Failed to load image')
+          if (!cancelled) setContent('Failed to load file')
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -204,11 +237,14 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
 
   const handleDownload = useCallback(() => {
     const fileName = path.split('/').pop() ?? 'file'
-    if (isImage && imageUrl) {
+    if (isBinary && binaryBlob) {
+      // Download binary files from the original blob to avoid corruption
+      const url = URL.createObjectURL(binaryBlob)
       const a = document.createElement('a')
-      a.href = imageUrl
+      a.href = url
       a.download = fileName
       a.click()
+      URL.revokeObjectURL(url)
     } else if (content !== null) {
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
       const url = URL.createObjectURL(blob)
@@ -218,7 +254,7 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
       a.click()
       URL.revokeObjectURL(url)
     }
-  }, [path, isImage, imageUrl, content])
+  }, [path, isBinary, binaryBlob, content])
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center text-gray-500">Loading...</div>
@@ -257,6 +293,102 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
         <iframe src={pdfUrl} className="flex-1 w-full border-0" title={path} />
+      </div>
+    )
+  }
+
+  // Excel files — render as table with sheet tabs
+  if (isExcel) {
+    const rows = excelData && activeSheet ? excelData.sheets[activeSheet] ?? [] : []
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-800 bg-gray-900/60 text-xs">
+          {excelData && excelData.sheetNames.length > 1 && excelData.sheetNames.map(name => (
+            <button
+              key={name}
+              onClick={() => setActiveSheet(name)}
+              className={`px-2 py-1 rounded transition-colors ${activeSheet === name ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}
+            >
+              {name}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <button
+            onClick={handleDownload}
+            disabled={!binaryBlob}
+            className="flex items-center gap-1 px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors disabled:opacity-40"
+          >
+            <Download className="w-3 h-3" /> Download
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto">
+          {excelData ? (
+            <table className="w-full text-sm border-collapse">
+              <tbody>
+                {rows.map((row, ri) => (
+                  <tr key={ri} className={ri === 0 ? 'bg-gray-800 sticky top-0' : 'hover:bg-gray-900/50'}>
+                    {(row as unknown[]).map((cell, ci) => {
+                      const Tag = ri === 0 ? 'th' : 'td'
+                      return (
+                        <Tag
+                          key={ci}
+                          className={`border border-gray-700 px-3 py-1.5 text-left whitespace-nowrap ${
+                            ri === 0 ? 'text-white font-medium' : 'text-gray-300'
+                          }`}
+                        >
+                          {cell != null ? String(cell) : ''}
+                        </Tag>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              {content ?? 'Failed to parse Excel file'}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Office documents (docx, pptx, etc.) — preview as PDF via server-side LibreOffice conversion, download original
+  if (isOfficeDoc) {
+    const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
+    const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+    const pdfPreviewUrl = `${baseUrl}/api/chat/sessions/${sessionId}/workspace/file/pdf-preview?path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-800 bg-gray-900/60 text-xs">
+          <div className="flex-1" />
+          <button
+            onClick={handleDownload}
+            disabled={!binaryBlob}
+            className="flex items-center gap-1 px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors disabled:opacity-40"
+          >
+            <Download className="w-3 h-3" /> Download
+          </button>
+        </div>
+        <iframe src={pdfPreviewUrl} className="flex-1 w-full border-0" title={path} />
+      </div>
+    )
+  }
+
+  // Other binary files — download only, no preview
+  if (isBinary) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-gray-950">
+        <FileIcon className="w-12 h-12 text-gray-600" />
+        <p className="text-gray-400 text-sm">This file type cannot be previewed.</p>
+        <button
+          onClick={handleDownload}
+          disabled={!binaryBlob}
+          className="flex items-center gap-2 px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors disabled:opacity-40"
+        >
+          <Download className="w-4 h-4" /> Download
+        </button>
       </div>
     )
   }
