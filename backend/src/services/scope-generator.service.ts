@@ -254,9 +254,14 @@ export class ScopeGeneratorService {
       // Use a stable session ID so repair turns share the same conversation context
       const sessionId = `scope-gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+      // Accumulate text blocks for fallback JSON extraction (needed for AgentCore
+      // where file sync happens after conversation ends, not between turns)
+      const allTextBlocks: string[] = [];
+      const allToolUseBlocks: Array<{ name: string; input: unknown }> = [];
+
       try {
         // ---- Initial generation ----
-        yield* agentRuntime.runConversation(
+        for await (const event of agentRuntime.runConversation(
           {
             agentId: 'scope-generator',
             sessionId,
@@ -268,59 +273,97 @@ export class ScopeGeneratorService {
           },
           agentConfig,
           [], // no skills needed for generation
-        );
+        )) {
+          // Collect text and tool_use blocks for JSON extraction
+          if ((event.type === 'assistant' || event.type === 'result') && event.content) {
+            for (const block of event.content) {
+              if (block.type === 'text' && 'text' in block) {
+                allTextBlocks.push((block as { type: 'text'; text: string }).text);
+              } else if (block.type === 'tool_use' && 'name' in block && 'input' in block) {
+                allToolUseBlocks.push({ name: (block as any).name, input: (block as any).input });
+              }
+            }
+          }
+          yield event;
+        }
 
-        // ---- Validate & repair loop ----
+        // ---- Try to extract config from multiple sources ----
         let validConfig: GeneratedScopeConfig | null = null;
 
-        for (let attempt = 0; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
-          if (!existsSync(configFilePath)) {
-            if (attempt === MAX_REPAIR_ATTEMPTS) {
-              console.error('[scope-generator] scope-config.json still not found after repair attempts');
+        // Strategy 1: Check if file exists locally (works with Claude runtime)
+        if (existsSync(configFilePath)) {
+          const fileContent = await readFile(configFilePath, 'utf-8');
+          const result = validateScopeConfigJson(fileContent);
+          if (result.ok) {
+            validConfig = result.config;
+            console.log('[scope-generator] scope-config.json validated from local file');
+          }
+        }
+
+        // Strategy 2: Extract from Write tool_use blocks (AgentCore streams these)
+        if (!validConfig) {
+          for (const toolUse of allToolUseBlocks) {
+            if (toolUse.name === 'Write' && toolUse.input && typeof toolUse.input === 'object') {
+              const input = toolUse.input as { file_path?: string; content?: string };
+              if (input.file_path?.includes('scope-config.json') && input.content) {
+                const result = validateScopeConfigJson(input.content);
+                if (result.ok) {
+                  validConfig = result.config;
+                  console.log('[scope-generator] Config extracted from Write tool_use block');
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // Strategy 3: Extract JSON from conversation text (fallback)
+        if (!validConfig) {
+          const fullText = allTextBlocks.join('');
+          const extracted = this.extractScopeConfigJson(fullText);
+          if (extracted) {
+            const result = validateScopeConfigJson(extracted);
+            if (result.ok) {
+              validConfig = result.config;
+              console.log('[scope-generator] Config extracted from conversation text');
+            }
+          }
+        }
+
+        // If still no config, try repair loop (only for local Claude runtime)
+        if (!validConfig && existsSync(configFilePath)) {
+          for (let attempt = 0; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
+            const fileContent = await readFile(configFilePath, 'utf-8');
+            const result = validateScopeConfigJson(fileContent);
+
+            if (result.ok) {
+              validConfig = result.config;
+              console.log('[scope-generator] scope-config.json validated after repair');
               break;
             }
-            console.warn(`[scope-generator] scope-config.json not found (attempt ${attempt}), asking agent to repair...`);
+
+            if (attempt === MAX_REPAIR_ATTEMPTS) {
+              console.error(`[scope-generator] scope-config.json still invalid after ${MAX_REPAIR_ATTEMPTS} repair attempts: ${result.error}`);
+              break;
+            }
+
+            console.warn(`[scope-generator] scope-config.json validation failed (attempt ${attempt}): ${result.error}. Asking agent to repair...`);
+
+            // Delete the broken file so the agent writes a fresh one
+            await rm(configFilePath, { force: true });
 
             yield* this.requestRepair(
               sessionId,
               tempWorkspace,
               agentConfig,
-              'The file "scope-config.json" was not found in the working directory. You MUST write the complete scope configuration JSON to "scope-config.json" now. Do not output anything else — just write the file.',
+              [
+                `The "scope-config.json" you wrote is invalid. Validation error:`,
+                `  ${result.error}`,
+                ``,
+                `Please fix the issue and write a corrected version to "scope-config.json". The file must contain ONLY valid JSON conforming to the required schema (with "scope" and "agents" fields). Do not include any markdown or extra text in the file.`,
+              ].join('\n'),
             );
-            continue;
           }
-
-          const fileContent = await readFile(configFilePath, 'utf-8');
-          const result = validateScopeConfigJson(fileContent);
-
-          if (result.ok) {
-            validConfig = result.config;
-            console.log('[scope-generator] scope-config.json validated successfully');
-            break;
-          }
-
-          // Validation failed
-          if (attempt === MAX_REPAIR_ATTEMPTS) {
-            console.error(`[scope-generator] scope-config.json still invalid after ${MAX_REPAIR_ATTEMPTS} repair attempts: ${result.error}`);
-            break;
-          }
-
-          console.warn(`[scope-generator] scope-config.json validation failed (attempt ${attempt}): ${result.error}. Asking agent to repair...`);
-
-          // Delete the broken file so the agent writes a fresh one
-          await rm(configFilePath, { force: true });
-
-          yield* this.requestRepair(
-            sessionId,
-            tempWorkspace,
-            agentConfig,
-            [
-              `The "scope-config.json" you wrote is invalid. Validation error:`,
-              `  ${result.error}`,
-              ``,
-              `Please fix the issue and write a corrected version to "scope-config.json". The file must contain ONLY valid JSON conforming to the required schema (with "scope" and "agents" fields). Do not include any markdown or extra text in the file.`,
-            ].join('\n'),
-          );
         }
 
         // Emit the validated config to the frontend
@@ -329,12 +372,61 @@ export class ScopeGeneratorService {
             type: 'scope_config' as ConversationEvent['type'],
             content: JSON.stringify(validConfig),
           } as unknown as ConversationEvent;
+        } else {
+          console.error('[scope-generator] Could not extract valid scope config from any source');
         }
       } finally {
         // Clean up temp workspace
         rm(tempWorkspace, { recursive: true, force: true }).catch(() => {});
       }
     }
+
+  /**
+   * Extract scope config JSON from conversation text.
+   * Tries multiple strategies: code fence extraction, brace matching.
+   */
+  private extractScopeConfigJson(text: string): string | null {
+    if (!text || text.trim().length < 10) return null;
+
+    // Strategy 1: Find JSON in code fences
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) {
+      try {
+        const parsed = JSON.parse(fenceMatch[1]!.trim());
+        if (parsed.scope && parsed.agents) return JSON.stringify(parsed);
+      } catch { /* not valid JSON */ }
+    }
+
+    // Strategy 2: Find all top-level JSON objects and pick the one with scope/agents
+    let depth = 0;
+    let start = -1;
+    const candidates: string[] = [];
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '{') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (text[i] === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          candidates.push(text.substring(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+
+    // Try candidates from largest to smallest
+    candidates.sort((a, b) => b.length - a.length);
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (parsed.scope && parsed.agents && Array.isArray(parsed.agents)) {
+          return candidate;
+        }
+      } catch { continue; }
+    }
+
+    return null;
+  }
 
   /**
    * Ask the agent to repair the scope-config.json file within the same
