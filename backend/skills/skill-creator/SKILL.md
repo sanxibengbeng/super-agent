@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.
+description: Create or update AgentSkills for the Super Agent platform. Use this skill whenever the user mentions: create skill, new skill, build skill, design skill, update skill, modify skill, edit skill, skill structure, skill template, SKILL.md, package skill, skill assets, skill scripts, skill references, or any variation of creating/editing AI agent skills. Also use when user wants to extend agent capabilities, add domain expertise, or bundle reusable workflows into a skill package.
 ---
 
 # Skill Creator

@@ -1,6 +1,6 @@
 ---
 name: app-publisher
-description: Publish or preview a finished app from the workspace to the enterprise app marketplace. Use when the user wants to deploy, publish, preview, or share a built web application (HTML/JS/CSS, React, Vue, etc.) from a folder in the workspace so other org members can access it.
+description: Publish or preview a finished app from the workspace to the enterprise app marketplace. Use this skill whenever the user mentions: publish app, deploy app, preview app, share app, release app, launch app, make app available, upload app, ship app, test app live, see my app, show my app, or any variation of deploying/publishing web applications. Also use when user has a built app (dist/, build/, or index.html) and wants others to access it, or asks about sub-path deployment configuration (base URL, HashRouter).
 ---
 
 # App Publisher

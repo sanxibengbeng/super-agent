@@ -354,24 +354,27 @@ Return ONLY valid JSON (no markdown):
     });
 
     const response = await bedrockClient.send(command);
-    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+    const rawBody = new TextDecoder().decode(response.body);
+    console.log('[ai.service] Bedrock raw response:', rawBody);
+    const responseBody = JSON.parse(rawBody);
 
     if (!responseBody.output?.message?.content?.[0]) {
+      console.error('[ai.service] Invalid response structure:', JSON.stringify(responseBody, null, 2));
       throw new Error('Invalid response structure from Bedrock');
     }
 
     let jsonStr = responseBody.output.message.content[0].text.trim();
+    console.log('[ai.service] Extracted text to parse:', jsonStr.substring(0, 500));
     if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
     else if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
     if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
+    jsonStr = jsonStr.trim();
 
-    // Sanitize control characters that LLMs sometimes emit inside JSON string values
-    jsonStr = jsonStr.trim().replace(/[\x00-\x1F\x7F]/g, (ch: string) => {
-      if (ch === '\n') return '\\n';
-      if (ch === '\r') return '\\r';
-      if (ch === '\t') return '\\t';
-      return '';
-    });
+    // Only sanitize control characters INSIDE string values, not structural newlines
+    // JSON.parse handles newlines in the structure fine, we only need to escape
+    // control chars that might appear inside string values
+    // For now, just try parsing directly - the LLM output should be valid JSON
+    console.log('[ai.service] JSON to parse (first 200 chars):', jsonStr.substring(0, 200));
 
     const parsed = JSON.parse(jsonStr);
     const agent = parsed.suggested_agent;

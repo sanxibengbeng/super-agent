@@ -1,6 +1,6 @@
 ---
 name: app-builder
-description: Guide for building web applications with persistent data storage on the Super Agent platform. Use this skill whenever the user asks to build, create, or develop a web app, dashboard, tool, or any interactive application. This skill teaches you how to use the platform's built-in Data API for backend storage.
+description: Build full-stack web applications with persistent data storage on the Super Agent platform. Use this skill whenever the user mentions: build app, create app, make app, develop app, web app, dashboard, tool, todo app, expense tracker, inventory app, BI dashboard, reporting tool, interactive application, Vite project, React app, or any variation of building web applications. Also use when user needs data storage, CRUD operations, or asks about the platform's Data API. This skill provides the client SDK and architecture patterns for apps that store/retrieve data.
 ---
 
 # App Builder

@@ -170,10 +170,20 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     }
 
     const contentType: string = response.contentType ?? '';
+    console.log(`[agentcore-runtime] Response contentType: ${contentType}`);
     if (contentType.includes('text/event-stream')) {
-      yield* this.parseSSEStream(response.response);
+      let eventCount = 0;
+      for await (const event of this.parseSSEStream(response.response)) {
+        eventCount++;
+        if (eventCount <= 3 || event.type === 'error') {
+          console.log(`[agentcore-runtime] Event ${eventCount}: type=${event.type}`);
+        }
+        yield event;
+      }
+      console.log(`[agentcore-runtime] Total events received: ${eventCount}`);
     } else {
       const body = await this.readBody(response.response);
+      console.log(`[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`);
       try {
         yield this.mapEvent(JSON.parse(body));
       } catch {
@@ -210,6 +220,9 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     sessionId?: string,
   ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
     if (!sessionId) return [];
+    // Only query DB if sessionId is a valid UUID (system tasks like scope-gen use non-UUID IDs)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(sessionId)) return [];
     try {
       const { prisma } = await import('../config/database.js');
       // Load recent messages, excluding the very latest user message
