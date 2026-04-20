@@ -15,14 +15,14 @@ const DEPARTMENTS = [
 ]
 
 const STRATEGIES = [
-  { id: 1, title: 'Generate Reference SOP using Agent', description: 'AI analyzes standard industry practices for your department to build a best-practice SOP.', icon: Wand2 },
-  { id: 2, title: 'Import SOP document', description: 'Use LLM to understand existing SOP documents and automatically transform them into workflow nodes.', icon: FileUp },
-  { id: 3, title: 'Build using Natural Language', description: 'Describe your business in plain text and let AI create the scope and agents for you. Powered by Claude streaming analysis.', icon: Sparkles },
+  { id: 1, titleKey: 'scope.strategy1Title', descKey: 'scope.strategy1Desc', icon: Wand2 },
+  { id: 2, titleKey: 'scope.strategy2Title', descKey: 'scope.strategy2Desc', icon: FileUp },
+  { id: 3, titleKey: 'scope.strategy3Title', descKey: 'scope.strategy3Desc', icon: Sparkles },
 ]
 
 export function CreateBusinessScope() {
   const navigate = useNavigate()
-  const { currentLanguage } = useTranslation()
+  const { currentLanguage, t } = useTranslation()
 
   const [selectedDept, setSelectedDept] = useState<string | null>(null)
   const [customDeptName, setCustomDeptName] = useState('')
@@ -132,8 +132,8 @@ export function CreateBusinessScope() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-xl font-semibold">Import & Generate SOP</h1>
-            <p className="text-xs text-gray-400">Configure your business scope</p>
+            <h1 className="text-xl font-semibold">{t('scope.importTitle')}</h1>
+            <p className="text-xs text-gray-400">{t('scope.importSubtitle')}</p>
           </div>
         </div>
       </header>
@@ -142,8 +142,8 @@ export function CreateBusinessScope() {
         <div className="space-y-12">
           <section className="space-y-6">
             <div>
-              <h2 className="text-xl font-bold mb-2">1. Select Organizational Unit</h2>
-              <p className="text-sm text-gray-400">Choose the department this SOP belongs to for accurate generation context.</p>
+              <h2 className="text-xl font-bold mb-2">{t('scope.selectUnit')}</h2>
+              <p className="text-sm text-gray-400">{t('scope.selectUnitDesc')}</p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
               {DEPARTMENTS.map((dept) => {
@@ -161,8 +161,8 @@ export function CreateBusinessScope() {
             </div>
             {selectedDept === 'Other' && (
               <div className="animate-fade-in">
-                <h3 className="text-base font-semibold mb-3">Custom Unit Name</h3>
-                <input type="text" value={customDeptName} onChange={(e) => setCustomDeptName(e.target.value)} placeholder="Enter department name..." autoFocus
+                <h3 className="text-base font-semibold mb-3">{t('scope.customUnitName')}</h3>
+                <input type="text" value={customDeptName} onChange={(e) => setCustomDeptName(e.target.value)} placeholder={t('scope.enterDeptName')} autoFocus
                   className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all" />
               </div>
             )}
@@ -170,8 +170,8 @@ export function CreateBusinessScope() {
 
           <section className="space-y-6">
             <div>
-              <h2 className="text-xl font-bold mb-2">2. Choose Generation Strategy</h2>
-              <p className="text-sm text-gray-400">Select how you want the AI to construct your initial workflow draft.</p>
+              <h2 className="text-xl font-bold mb-2">{t('scope.chooseStrategy')}</h2>
+              <p className="text-sm text-gray-400">{t('scope.chooseStrategyDesc')}</p>
             </div>
             <div className="space-y-5">
               {STRATEGIES.map((strategy) => {
@@ -188,8 +188,8 @@ export function CreateBusinessScope() {
                           <Icon className="w-6 h-6" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="text-lg font-bold mb-1">{strategy.title}</h3>
-                          <p className="text-sm text-gray-400 leading-relaxed">{strategy.description}</p>
+                          <h3 className="text-lg font-bold mb-1">{t(strategy.titleKey)}</h3>
+                          <p className="text-sm text-gray-400 leading-relaxed">{t(strategy.descKey)}</p>
                         </div>
                       </div>
                       {isActive && (
@@ -198,8 +198,8 @@ export function CreateBusinessScope() {
                             <div onClick={(e) => { e.stopPropagation(); document.getElementById('file-upload')?.click() }}
                               className="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center bg-gray-800/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all cursor-pointer">
                               <CloudUpload className="w-8 h-8 text-cyan-500 mx-auto mb-3" />
-                              <p className="text-sm text-gray-300">{uploadedFile ? <>Selected: <strong>{uploadedFile.name}</strong></> : <>Drag & drop SOP document or <strong>click to browse</strong></>}</p>
-                              <p className="text-xs text-gray-500 mt-1">Supports PDF, DOCX, TXT</p>
+                              <p className="text-sm text-gray-300">{uploadedFile ? <>{t('scope.selected')} <strong>{uploadedFile.name}</strong></> : <>{t('scope.dragDropSop')}</>}</p>
+                              <p className="text-xs text-gray-500 mt-1">{t('scope.supportsPdf')}</p>
                               <input id="file-upload" type="file" accept=".pdf,.docx,.txt" onChange={handleFileUpload} className="hidden" />
                             </div>
                           )}
@@ -207,7 +207,7 @@ export function CreateBusinessScope() {
                             <div className="space-y-3">
                               <div className="relative bg-gray-900/50 border border-gray-700 rounded-xl p-3 flex items-end gap-3">
                                 <textarea value={naturalLanguageInput} onChange={(e) => setNaturalLanguageInput(e.target.value)} rows={4} onClick={(e) => e.stopPropagation()}
-                                  placeholder="e.g. We're an e-commerce fashion brand with 50 employees. We need agents for customer support, inventory management, marketing campaigns, and order fulfillment..."
+                                  placeholder={t('scope.nlPlaceholder')}
                                   className="flex-1 bg-transparent border-none text-white placeholder-gray-500 resize-none focus:outline-none text-sm" />
                               </div>
                               <button
@@ -225,7 +225,7 @@ export function CreateBusinessScope() {
                                 }`}
                               >
                                 <Sparkles className="w-4 h-4" />
-                                Generate with AI
+                                {t('scope.generateWithAi')}
                               </button>
                             </div>
                           )}
@@ -239,7 +239,7 @@ export function CreateBusinessScope() {
           </section>
 
           <div className="flex items-center justify-end gap-4 pt-8 border-t border-gray-800">
-            <button onClick={handleCancel} className="px-8 py-3 text-sm font-semibold text-gray-300 hover:text-white border border-gray-700 hover:border-gray-600 rounded-xl transition-colors">Cancel</button>
+            <button onClick={handleCancel} className="px-8 py-3 text-sm font-semibold text-gray-300 hover:text-white border border-gray-700 hover:border-gray-600 rounded-xl transition-colors">{t('common.cancel')}</button>
             {/* Strategy 3 has its own inline button; strategies 1 & 2 use this Confirm button */}
             {selectedStrategy !== 3 && (
               <button onClick={handleConfirm}
@@ -250,7 +250,7 @@ export function CreateBusinessScope() {
                     : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                 }`}>
                 <Sparkles className="w-4 h-4" />
-                Generate with AI
+                {t('scope.generateWithAi')}
               </button>
             )}
           </div>
@@ -264,7 +264,7 @@ export function CreateBusinessScope() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
               <div className="flex items-center gap-2">
                 <Globe className="w-5 h-5 text-purple-400" />
-                <h3 className="text-lg font-semibold text-white">Agent Language</h3>
+                <h3 className="text-lg font-semibold text-white">{t('scope.langDialogTitle')}</h3>
               </div>
               <button onClick={() => setShowLangDialog(false)} className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
                 <X className="w-4 h-4" />
@@ -272,7 +272,7 @@ export function CreateBusinessScope() {
             </div>
             <div className="px-6 py-5 space-y-4">
               <p className="text-sm text-gray-400">
-                Choose the language for the generated agents. This determines the language of agent names, system prompts, and skill descriptions.
+                {t('scope.langDialogDesc')}
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -284,7 +284,7 @@ export function CreateBusinessScope() {
                   }`}
                 >
                   <span className="text-2xl">🇺🇸</span>
-                  <span className={`text-sm font-medium ${selectedLang === 'en' ? 'text-purple-300' : 'text-gray-300'}`}>English</span>
+                  <span className={`text-sm font-medium ${selectedLang === 'en' ? 'text-purple-300' : 'text-gray-300'}`}>{t('scope.langEnglish')}</span>
                 </button>
                 <button
                   onClick={() => setSelectedLang('cn')}
@@ -301,12 +301,12 @@ export function CreateBusinessScope() {
             </div>
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-700">
               <button onClick={() => setShowLangDialog(false)} className="px-5 py-2 text-sm text-gray-300 hover:text-white border border-gray-600 rounded-xl transition-colors">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={confirmLanguageAndNavigate}
                 className="px-6 py-2 text-sm font-semibold rounded-xl bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:shadow-lg hover:shadow-purple-500/30 transition-all flex items-center gap-2">
                 <Sparkles className="w-4 h-4" />
-                Generate
+                {t('scope.langGenerate')}
               </button>
             </div>
           </div>

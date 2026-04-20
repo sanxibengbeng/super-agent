@@ -83,12 +83,12 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     const ec2Sg = new ec2.SecurityGroup(this, 'EC2SG', {
       vpc,
-      description: 'Super Agent EC2',
+      description: 'Super Agent V2 EC2 - hardened',
       allowAllOutbound: true,
     });
     ec2Sg.addIngressRule(
       ec2.Peer.ipv4(allowedCidr.valueAsString),
-      ec2.Port.tcp(80), 'HTTP',
+      ec2.Port.tcp(80), 'HTTP (redirects to HTTPS)',
     );
     ec2Sg.addIngressRule(
       ec2.Peer.ipv4(allowedCidr.valueAsString),
@@ -112,7 +112,7 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     // RDS PostgreSQL
     // =========================================================================
-    const dbInstance = new rds.DatabaseInstance(this, 'DB', {
+    const dbInstance = new rds.DatabaseInstance(this, 'SuperAgentDB', {
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_16_6,
       }),
@@ -122,7 +122,7 @@ export class SuperAgentStack extends cdk.Stack {
       securityGroups: [dbSg],
       databaseName: 'super_agent',
       credentials: rds.Credentials.fromGeneratedSecret('superagent', {
-        secretName: `${id}/db-credentials`,
+        secretName: 'super-agent/db-credentials',
       }),
       allocatedStorage: 20,
       maxAllocatedStorage: 50,
@@ -158,7 +158,7 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     // IAM Role for EC2
     // =========================================================================
-    const role = new iam.Role(this, 'EC2Role', {
+    const role = new iam.Role(this, 'SuperAgentEC2Role', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
@@ -198,6 +198,7 @@ export class SuperAgentStack extends cdk.Stack {
 
     // Skills bucket (for agent skill definitions)
     const skillsBucket = new s3.Bucket(this, 'SkillsBucket', {
+      bucketName: `super-agent-skills-${this.account}`,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -206,6 +207,7 @@ export class SuperAgentStack extends cdk.Stack {
 
     // Workspace bucket (for AgentCore S3 sync)
     const workspaceBucket = new s3.Bucket(this, 'WorkspaceBucket', {
+      bucketName: `super-agent-workspace-${this.account}`,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -222,8 +224,8 @@ export class SuperAgentStack extends cdk.Stack {
     let cognitoDomainFull: string | undefined;
 
     if (authMode === 'cognito') {
-      userPool = new cognito.UserPool(this, 'UserPool', {
-        userPoolName: `${id}-users`,
+      userPool = new cognito.UserPool(this, 'SuperAgentUserPool', {
+        userPoolName: 'super-agent-users',
         selfSignUpEnabled: false,
         signInAliases: { email: true },
         autoVerify: { email: true },
@@ -247,8 +249,8 @@ export class SuperAgentStack extends cdk.Stack {
         cognitoDomain: { domainPrefix: cognitoDomainPrefix.valueAsString },
       });
 
-      appClient = userPool.addClient('AppClient', {
-        userPoolClientName: `${id}-web`,
+      appClient = userPool.addClient('SuperAgentAppClient', {
+        userPoolClientName: 'super-agent-web',
         generateSecret: false,
         authFlows: { userSrp: true },
         oAuth: {
@@ -283,7 +285,6 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     let frontendBucket: s3.Bucket | undefined;
     let distribution: cloudfront.Distribution | undefined;
-    let hostedZone: route53.IHostedZone | undefined;
 
     if (enableCdn) {
       // S3 bucket for frontend static files
@@ -296,7 +297,7 @@ export class SuperAgentStack extends cdk.Stack {
       frontendBucket.grantReadWrite(role); // for deploy script S3 sync
 
       // ACM certificate (must be us-east-1 for CloudFront)
-      hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
+      const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
         hostedZoneId: hostedZoneId!,
         zoneName: domainName!.split('.').slice(1).join('.'), // extract parent domain
       });
@@ -333,7 +334,13 @@ export class SuperAgentStack extends cdk.Stack {
         ],
       });
 
-      // Add API/WS behavior → EC2 origin (added after EC2/EIP section below)
+      // Add API/WS behavior → EC2 origin
+      const ec2Origin = new origins.HttpOrigin(`ec2-origin.${domainName}`, {
+        // This will be overridden by post-deploy to use the actual EIP
+        // For now, use a placeholder — the deploy script patches it
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+        httpPort: 80,
+      });
 
       // Route53 ALIAS → CloudFront
       new route53.ARecord(this, 'DnsAlias', {
@@ -352,7 +359,7 @@ export class SuperAgentStack extends cdk.Stack {
     );
     userData.addCommands(userDataScript);
 
-    const instance = new ec2.Instance(this, 'Instance', {
+    const instance = new ec2.Instance(this, 'SuperAgentInstance', {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
@@ -371,58 +378,11 @@ export class SuperAgentStack extends cdk.Stack {
       userData,
     });
 
-    const eip = new ec2.CfnEIP(this, 'EIP');
+    const eip = new ec2.CfnEIP(this, 'SuperAgentEIP');
     new ec2.CfnEIPAssociation(this, 'EIPAssoc', {
       allocationId: eip.attrAllocationId,
       instanceId: instance.instanceId,
     });
-
-    // =========================================================================
-    // CloudFront → EC2 API behaviors (must be after EIP creation)
-    // =========================================================================
-    if (distribution && hostedZone && domainName) {
-      // Create a DNS record for EC2 so CloudFront can use it as origin (CF rejects IP addresses)
-      const ec2DnsName = `api-origin.${domainName}`;
-      new route53.ARecord(this, 'Ec2OriginDns', {
-        zone: hostedZone,
-        recordName: ec2DnsName,
-        target: route53.RecordTarget.fromIpAddresses(eip.attrPublicIp),
-        ttl: cdk.Duration.seconds(60),
-      });
-
-      const ec2Origin = new origins.HttpOrigin(ec2DnsName, {
-        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-        httpPort: 80,
-      });
-
-      const apiCachePolicy = cloudfront.CachePolicy.CACHING_DISABLED;
-
-      const apiOriginRequestPolicy = cloudfront.OriginRequestPolicy.ALL_VIEWER;
-
-      // /api/* → EC2
-      distribution.addBehavior('/api/*', ec2Origin, {
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: apiCachePolicy,
-        originRequestPolicy: apiOriginRequestPolicy,
-      });
-
-      // /v1/* → EC2 (OpenAI-compatible LLM proxy)
-      distribution.addBehavior('/v1/*', ec2Origin, {
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: apiCachePolicy,
-        originRequestPolicy: apiOriginRequestPolicy,
-      });
-
-      // /ws/* → EC2 (WebSocket)
-      distribution.addBehavior('/ws/*', ec2Origin, {
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: apiOriginRequestPolicy,
-      });
-    }
 
     // =========================================================================
     // Outputs — always

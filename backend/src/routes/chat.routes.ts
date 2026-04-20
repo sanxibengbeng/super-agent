@@ -153,6 +153,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           properties: {
             agent_id: { type: 'string', format: 'uuid' },
             business_scope_id: { type: 'string', format: 'uuid' },
+            mention_agent_id: { type: 'string', format: 'uuid' },
             session_id: { type: 'string', format: 'uuid' },
             message: { type: 'string', minLength: 1 },
             context: { type: 'object' },
@@ -185,6 +186,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       await chatService.streamChat(reply, request.user!.orgId, request.user!.id, {
         agentId: data.agent_id,
         businessScopeId: data.business_scope_id,
+        mentionAgentId: data.mention_agent_id,
         sessionId: data.session_id,
         message: data.message,
         context: data.context,
@@ -475,22 +477,18 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
 
       const session = await chatService.createSession(data, request.user!.orgId, request.user!.id);
 
-      // Eagerly provision workspace if requested (allows frontend to pre-warm
-      // the workspace when the user selects a business scope, before sending
-      // the first message).
+      // Fire-and-forget workspace provisioning — return the session ID immediately
+      // so the frontend can show the chat UI without waiting. The workspace will
+      // be ready by the time the first message arrives (prepareScopeSession calls
+      // ensureWorkspaceUpToDate as a fallback if provisioning hasn't finished).
       if (data.provision_workspace && session.business_scope_id) {
-        try {
-          console.log(`[chat] Eagerly provisioning workspace for session ${session.id}, scope=${session.business_scope_id}`);
-          await chatService.provisionSessionWorkspace(
-            session.id, request.user!.orgId,
-          );
+        chatService.provisionSessionWorkspace(
+          session.id, request.user!.orgId,
+        ).then(() => {
           console.log(`[chat] Workspace provisioned successfully for session ${session.id}`);
-        } catch (err) {
-          // Non-fatal: workspace will be provisioned on first message as fallback
+        }).catch(err => {
           console.warn(`[chat] Eager workspace provisioning failed for session ${session.id}:`, err instanceof Error ? err.message : err);
-        }
-      } else if (data.provision_workspace) {
-        console.log(`[chat] provision_workspace requested but session has no business_scope_id (scope=${session.business_scope_id})`);
+        });
       }
 
       return reply.status(201).send(session);

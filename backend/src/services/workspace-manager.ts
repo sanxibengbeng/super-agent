@@ -431,18 +431,19 @@ export class WorkspaceManager {
     if (scope.agents.length > 0) {
       lines.push('## Available Agents', '');
       lines.push('You have access to specialized subagents for this business scope.');
-      lines.push('When the user\'s request matches a specific agent\'s expertise, delegate to that subagent.', '');
+      lines.push('When the user\'s request matches a specific agent\'s expertise, delegate to that subagent.');
+      lines.push('**IMPORTANT**: When calling a subagent via the Task tool, you MUST use the agent\'s `name` (the identifier shown in parentheses), NOT the display name.', '');
 
       if (selectedAgentId) {
         const selected = scope.agents.find(a => a.id === selectedAgentId);
         if (selected) {
-          lines.push(`The user has selected the "${selected.displayName}" agent. Use this agent's expertise`);
+          lines.push(`The user has selected the "${selected.displayName}" agent (name: \`${selected.name}\`). Use this agent's expertise`);
           lines.push('as your primary mode of operation. You may still delegate to other agents if needed.', '');
         }
       }
 
       for (const agent of scope.agents) {
-        lines.push(`- **${agent.displayName}**: ${agent.role ?? 'General assistant'}`);
+        lines.push(`- **${agent.displayName}** (name: \`${agent.name}\`): ${agent.role ?? 'General assistant'}`);
       }
       lines.push('');
     }
@@ -628,7 +629,7 @@ export class WorkspaceManager {
 
       const lines: string[] = ['---'];
       lines.push(`name: ${agent.name}`);
-      lines.push(`description: ${agent.role ?? agent.displayName}. Use when the user needs help with ${agent.role ?? 'this domain'}.`);
+      lines.push(`description: ${agent.displayName} — ${agent.role ?? 'General assistant'}. Use when the user needs help with ${agent.role ?? 'this domain'}.`);
       lines.push('model: inherit');
       lines.push('permissionMode: bypassPermissions');
       if (allSkillNames.length > 0) {
