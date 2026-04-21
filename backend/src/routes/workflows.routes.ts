@@ -25,6 +25,26 @@ import { paginationSchema, idParamSchema } from '../schemas/common.schema.js';
 import { ZodError } from 'zod';
 import { AppError } from '../middleware/errorHandler.js';
 
+function safeStringify(obj: unknown): string {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    if (typeof obj === 'object' && obj !== null) {
+      const safe: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(obj)) {
+        try {
+          JSON.stringify(value);
+          safe[key] = value;
+        } catch {
+          safe[key] = '[Circular or unserializable]';
+        }
+      }
+      return JSON.stringify(safe);
+    }
+    return JSON.stringify({ error: 'Unserializable object' });
+  }
+}
+
 function formatSSEEvent(payload: { event?: string; data: string }): string {
   let result = '';
   if (payload.event) result += `event: ${payload.event}\n`;
@@ -979,7 +999,7 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
 
         for await (const event of generator) {
           if (clientDisconnected) break;
-          reply.raw.write(formatSSEEvent({ data: JSON.stringify(event) }));
+          reply.raw.write(formatSSEEvent({ data: safeStringify(event) }));
         }
       } catch (error) {
         if (!clientDisconnected) {

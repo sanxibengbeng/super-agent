@@ -1,55 +1,45 @@
 /**
  * Schedule Processor Setup
- * 
- * Sets up a recurring job to process due workflow schedules.
- * This runs every minute to check for schedules that need to be executed.
+ *
+ * Initializes the BullMQ-based schedule processor.
+ * Replaces the old setInterval polling with distributed repeatable jobs.
  */
 
-import { scheduleService } from '../services/schedule.service.js';
+import { scheduleQueueService } from '../services/schedule-queue.service.js';
 
-const POLL_INTERVAL_MS = 15_000; // 15 seconds — keeps cron trigger latency under 15s
-
-let intervalId: NodeJS.Timeout | null = null;
+let initialized = false;
 
 /**
- * Start the schedule processor
+ * Start the schedule processor (BullMQ worker)
  */
-export function startScheduleProcessor(): void {
-  if (intervalId) {
-    console.log('[SCHEDULE_PROCESSOR] Already running');
+export async function startScheduleProcessor(): Promise<void> {
+  if (initialized) {
+    console.log('[SCHEDULE_PROCESSOR] Already initialized');
     return;
   }
 
-  console.log('[SCHEDULE_PROCESSOR] Starting schedule processor');
+  console.log('[SCHEDULE_PROCESSOR] Starting BullMQ schedule processor');
 
-  // Run immediately on startup
-  processSchedules();
+  await scheduleQueueService.initialize();
 
-  // Then run every minute
-  intervalId = setInterval(processSchedules, POLL_INTERVAL_MS);
+  initialized = true;
+  console.log('[SCHEDULE_PROCESSOR] Started');
+}
+
+/**
+ * Initialize queue only (for API role - can manage schedules but doesn't process them)
+ */
+export async function initializeScheduleQueue(): Promise<void> {
+  await scheduleQueueService.initializeQueue();
 }
 
 /**
  * Stop the schedule processor
  */
-export function stopScheduleProcessor(): void {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-    console.log('[SCHEDULE_PROCESSOR] Stopped');
-  }
-}
+export async function stopScheduleProcessor(): Promise<void> {
+  if (!initialized) return;
 
-/**
- * Process due schedules
- */
-async function processSchedules(): Promise<void> {
-  try {
-    const processedCount = await scheduleService.processDueSchedules();
-    if (processedCount > 0) {
-      console.log(`[SCHEDULE_PROCESSOR] Processed ${processedCount} schedules`);
-    }
-  } catch (error: any) {
-    console.error(`[SCHEDULE_PROCESSOR] Error processing schedules: ${error.message}`);
-  }
+  await scheduleQueueService.shutdown();
+  initialized = false;
+  console.log('[SCHEDULE_PROCESSOR] Stopped');
 }

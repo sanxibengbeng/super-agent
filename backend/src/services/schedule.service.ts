@@ -1,12 +1,16 @@
 /**
  * Schedule Service
  * Manages cron-based workflow scheduling.
+ *
+ * Schedules are persisted in PostgreSQL and triggered by BullMQ repeatable jobs.
+ * When a schedule is created/updated/deleted, both DB and BullMQ are updated.
  */
 
 import { prisma } from '../config/database.js';
 import { workflowRepository } from '../repositories/workflow.repository.js';
 import cronParser from 'cron-parser';
 import { workflowExecutorV2, type WorkflowV2Plan } from './workflow-executor-v2.js';
+import { scheduleQueueService } from './schedule-queue.service.js';
 
 /**
  * Build a WorkflowV2Plan from stored workflow data, matching the execute-v2 route.
@@ -132,7 +136,17 @@ class ScheduleService {
       },
     });
 
-    // If enabled, create the first scheduled record
+    // Sync to BullMQ repeatable job
+    await scheduleQueueService.upsertRepeatableJob(
+      schedule.id,
+      workflowId,
+      organizationId,
+      options.cronExpression,
+      options.timezone || 'UTC',
+      options.isEnabled || false
+    );
+
+    // If enabled, create the first scheduled record (for UI display)
     if (options.isEnabled && nextRunAt) {
       await this.createScheduledRecord(schedule.id, organizationId, nextRunAt);
     }
@@ -188,7 +202,17 @@ class ScheduleService {
       },
     });
 
-    // Update or create scheduled record
+    // Sync to BullMQ repeatable job
+    await scheduleQueueService.upsertRepeatableJob(
+      scheduleId,
+      schedule.workflow_id,
+      organizationId,
+      newCron,
+      newTimezone,
+      newEnabled
+    );
+
+    // Update or create scheduled record (for UI display)
     if (newEnabled && nextRunAt) {
       await this.createOrUpdateScheduledRecord(scheduleId, organizationId, nextRunAt);
     } else {
@@ -218,6 +242,9 @@ class ScheduleService {
         next_run_at: null,
       },
     });
+
+    // Remove from BullMQ
+    await scheduleQueueService.removeRepeatableJob(scheduleId);
 
     // Delete pending scheduled records
     await this.deleteScheduledRecords(scheduleId);
@@ -489,7 +516,27 @@ class ScheduleService {
   }
 
   /**
-   * Execute a schedule
+   * Execute a schedule by ID (called by BullMQ worker)
+   */
+  async executeScheduleById(scheduleId: string, organizationId: string): Promise<void> {
+    const schedule = await prisma.workflow_schedules.findFirst({
+      where: { id: scheduleId, organization_id: organizationId, deleted_at: null },
+    });
+
+    if (!schedule) {
+      throw new Error(`Schedule ${scheduleId} not found`);
+    }
+
+    if (!schedule.is_enabled) {
+      console.log(`[SCHEDULE] Schedule ${scheduleId} is disabled, skipping execution`);
+      return;
+    }
+
+    await this.executeSchedule(schedule);
+  }
+
+  /**
+   * Execute a schedule (internal)
    */
   private async executeSchedule(schedule: any): Promise<void> {
     const workflow = await workflowRepository.findById(

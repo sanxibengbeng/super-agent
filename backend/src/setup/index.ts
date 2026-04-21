@@ -22,6 +22,7 @@ export {
 export {
   startScheduleProcessor,
   stopScheduleProcessor,
+  initializeScheduleQueue,
 } from './schedule-processor.js';
 
 export {

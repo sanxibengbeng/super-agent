@@ -47,3 +47,8 @@ export {
   type ScheduleConfig,
   type ScheduleExecutionRecord,
 } from './schedule.service.js';
+
+export {
+  scheduleQueueService,
+  type ScheduleJobData,
+} from './schedule-queue.service.js';

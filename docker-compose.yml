@@ -45,7 +45,7 @@ services:
       SKILLS_S3_BUCKET: super-agent-local-dev-workspace
       AGENT_RUNTIME: agentcore
       AGENT_WORKSPACE_BASE_DIR: /tmp/workspaces
-      CLAUDE_MODEL: claude-sonnet-4-5-20250929
+      CLAUDE_MODEL: claude-sonnet-4-6
       AGENTCORE_RUNTIME_ARN: arn:aws:bedrock-agentcore:us-east-1:873543029686:runtime/SuperAgentEks_Runtime-3xzeklD05D
       AGENTCORE_EXECUTION_ROLE_ARN: arn:aws:iam::873543029686:role/SuperAgentEks-AgentCoreRole
       AGENTCORE_BACKEND_API_URL: http://backend:3000

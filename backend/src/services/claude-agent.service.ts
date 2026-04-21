@@ -480,7 +480,13 @@ export class ClaudeAgentService {
               content: (block as unknown as { content: string | null }).content ?? null,
               is_error: (block as unknown as { is_error: boolean }).is_error ?? false,
             };
-            default: return { type: 'text' as const, text: JSON.stringify(block) };
+            default: {
+              try {
+                return { type: 'text' as const, text: JSON.stringify(block) };
+              } catch {
+                return { type: 'text' as const, text: `[Unserializable block: ${block.type ?? 'unknown'}]` };
+              }
+            }
           }
         });
         return { type: 'assistant', sessionId, content: contentBlocks, model: msg.message?.model };

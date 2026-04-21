@@ -18,7 +18,7 @@ import { errorHandler, registerRequestLogger } from './middleware/index.js';
 import { registerRoutes } from './routes/index.js';
 import { executionWebSocketGateway } from './websocket/index.js';
 import { initializeEventWebSocketBridge, initializeWorkflowQueues } from './setup/index.js';
-import { startScheduleProcessor, stopScheduleProcessor } from './setup/index.js';
+import { startScheduleProcessor, stopScheduleProcessor, initializeScheduleQueue } from './setup/index.js';
 import { startProjectAutoProcessor, stopProjectAutoProcessor } from './setup/index.js';
 import { claudeAgentService } from './services/claude-agent.service.js';
 import { devServerManager } from './services/dev-server-manager.js';
@@ -214,8 +214,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     // Start briefing generation scheduler (runs every 5 minutes)
     briefingScheduler.start();
 
-    // Start schedule processor for cron-based workflow triggers (polls every 15s)
-    startScheduleProcessor();
+    // Start schedule processor for cron-based workflow triggers (BullMQ repeatable jobs)
+    await startScheduleProcessor();
 
     // Start project auto-processor for kanban board automation (polls every 15s)
     startProjectAutoProcessor();
@@ -240,7 +240,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     app.addHook('onClose', async () => {
       clearInterval(workspacePruneInterval);
       briefingScheduler.stop();
-      stopScheduleProcessor();
+      await stopScheduleProcessor();
       stopProjectAutoProcessor();
       await imQueueService.shutdown();
       await distillationService.shutdown();
@@ -253,6 +253,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     await redisService.initialize();
     // Distillation: only init queue (no worker) so chat.service can enqueue
     await distillationService.initializeQueue();
+    // Schedule: only init queue (no worker) so schedule CRUD can manage repeatable jobs
+    await initializeScheduleQueue();
   }
 
   // ── IM Gateways (gateway + all) ──
