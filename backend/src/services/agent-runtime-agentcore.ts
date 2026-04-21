@@ -49,6 +49,8 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
   private sdkLoaded = false;
   private s3Client: S3Client;
   private readonly workspaceBucket: string;
+  /** Tracks configVersion already uploaded per session to skip redundant S3 uploads. */
+  private uploadedConfigVersions = new Map<string, number>();
 
   constructor() {
     this.s3Client = new S3Client({ region: config.aws.region });
@@ -87,27 +89,17 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
   ): AsyncGenerator<ConversationEvent> {
     await this.ensureSDK();
 
-    // --- Upload the locally-prepared workspace to S3 ---
-    // chat.service already called ensureSessionWorkspace() which created the
-    // full workspace (skills, agents, CLAUDE.md, settings.json) at the local
-    // workspacePath. We upload that entire directory to S3 so the container
-    // can pull it without calling back to the backend.
+    // --- Upload workspace to S3 (if needed) and load chat history in parallel ---
     const chatSessionId = options.sessionId;
     const scopeId = options.scopeId ?? 'default';
     const s3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
 
-    if (chatSessionId && options.workspacePath) {
-      try {
-        const count = await this.uploadDirToS3(options.workspacePath, s3Prefix);
-        console.log(`[agentcore-runtime] Uploaded ${count} files to s3://${this.workspaceBucket}/${s3Prefix}`);
-      } catch (err) {
-        console.warn('[agentcore-runtime] Failed to upload workspace to S3:', err);
-      }
-    }
-
-    // Load recent chat history from DB — used as fallback when Claude Code
-    // session resume fails (microVM recycled after idle timeout / max lifetime).
-    const history = await this.loadChatHistory(options.organizationId, options.sessionId);
+    const [history] = await Promise.all([
+      this.loadChatHistory(options.organizationId, options.sessionId),
+      (chatSessionId && options.workspacePath)
+        ? this.uploadWorkspaceIfNeeded(chatSessionId, options.workspacePath, s3Prefix)
+        : Promise.resolve(),
+    ]);
 
     const payload = JSON.stringify({
       prompt: options.message,
@@ -191,18 +183,20 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       }
     }
 
-    // --- S3 sync-back: pull container changes back to local workspace ---
+    // --- S3 sync-back: fire-and-forget ---
+    // Local workspace is just a cache; container/S3 is the source of truth.
+    // No need to block the generator return (which delays [DONE]) for this.
     if (options.workspacePath && chatSessionId) {
       const syncS3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
-      try {
-        const count = await this.syncBackFromS3(syncS3Prefix, options.workspacePath);
-        if (count > 0) {
-          console.log(`[agentcore-runtime] Synced back ${count} files from S3 to local workspace`);
-        }
-      } catch (err) {
-        // Non-critical — local workspace is a cache, container/S3 is source of truth
-        console.warn('[agentcore-runtime] S3 sync-back failed:', err instanceof Error ? err.message : err);
-      }
+      this.syncBackFromS3(syncS3Prefix, options.workspacePath)
+        .then(count => {
+          if (count > 0) {
+            console.log(`[agentcore-runtime] Synced back ${count} files from S3 to local workspace`);
+          }
+        })
+        .catch(err => {
+          console.warn('[agentcore-runtime] S3 sync-back failed:', err instanceof Error ? err.message : err);
+        });
     }
   }
 
@@ -210,6 +204,48 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
   async disconnectAll(): Promise<number> { return 0; }
   get activeSessionCount(): number { return 0; }
   hasSession(_sessionId: string): boolean { return false; }
+
+  // ---------------------------------------------------------------------------
+  // Workspace upload (skip if unchanged)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload workspace to S3 only when the local config has changed since the
+   * last upload for this session. Reads the workspace manifest to get the
+   * current configVersion and compares against a cached value.
+   */
+  private async uploadWorkspaceIfNeeded(
+    sessionId: string,
+    workspacePath: string,
+    s3Prefix: string,
+  ): Promise<void> {
+    try {
+      // Read manifest to get current configVersion
+      let configVersion = -1;
+      try {
+        const { readFile: readFileAsync } = await import('fs/promises');
+        const { join } = await import('path');
+        const manifest = JSON.parse(
+          await readFileAsync(join(workspacePath, '.workspace-manifest.json'), 'utf-8'),
+        );
+        configVersion = manifest.configVersion ?? -1;
+      } catch {
+        // No manifest (first provision) — always upload
+      }
+
+      const lastUploaded = this.uploadedConfigVersions.get(sessionId);
+      if (lastUploaded !== undefined && lastUploaded >= configVersion && configVersion >= 0) {
+        console.log(`[agentcore-runtime] Skipping S3 upload for session ${sessionId} (configVersion ${configVersion} already uploaded)`);
+        return;
+      }
+
+      const count = await this.uploadDirToS3(workspacePath, s3Prefix);
+      this.uploadedConfigVersions.set(sessionId, configVersion);
+      console.log(`[agentcore-runtime] Uploaded ${count} files to s3://${this.workspaceBucket}/${s3Prefix}`);
+    } catch (err) {
+      console.warn('[agentcore-runtime] Failed to upload workspace to S3:', err);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Chat history loading

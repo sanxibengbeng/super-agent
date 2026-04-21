@@ -494,8 +494,9 @@ const CATEGORY_TAB_STRIP: Record<string, string> = {
 /*  Tool Card                                                          */
 /* ================================================================== */
 function ToolCard({ tool, installing, onInstall }: { tool: ToolItem; installing?: boolean; onInstall?: (tool: ToolItem) => void }) {
+  const { t } = useTranslation()
   const Icon = tool.icon
-  const categoryLabel = tool.category === 'skills' ? 'Skill' : tool.category === 'mcp' ? 'MCP' : 'Plugin'
+  const categoryLabel = tool.category === 'skills' ? t('tools.skill') : tool.category === 'mcp' ? t('tools.mcp') : t('tools.plugin')
   const categoryColor = tool.category === 'skills' ? 'text-yellow-400 bg-yellow-500/10' : tool.category === 'mcp' ? 'text-blue-400 bg-blue-500/10' : 'text-violet-400 bg-violet-500/10'
   const borderColor = CATEGORY_BORDER[tool.category] || 'border-l-gray-500'
 
@@ -558,7 +559,7 @@ function ToolCard({ tool, installing, onInstall }: { tool: ToolItem; installing?
           ) : (
             <div className="flex items-center gap-3">
               <span className="text-[10px] text-gray-600 flex items-center gap-1">
-                <Wrench className="w-3 h-3" />Internal
+                <Wrench className="w-3 h-3" />{t('tools.internal')}
               </span>
               {(tool.category === 'skills' || tool.category === 'mcp') && tool.resourceId && (
                 <GroupAccessPopover
@@ -572,7 +573,7 @@ function ToolCard({ tool, installing, onInstall }: { tool: ToolItem; installing?
 
           {tool.installed ? (
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-500/10 text-green-400">
-              Installed
+              {t('tools.installed')}
             </span>
           ) : (
             <button
@@ -581,9 +582,9 @@ function ToolCard({ tool, installing, onInstall }: { tool: ToolItem; installing?
               className="text-[10px] font-medium px-2.5 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {installing ? (
-                <><Loader2 className="w-3 h-3 animate-spin" />Installing...</>
+                <><Loader2 className="w-3 h-3 animate-spin" />{t('tools.installingSkill')}</>
               ) : (
-                <><Download className="w-3 h-3" />Install</>
+                <><Download className="w-3 h-3" />{t('tools.install')}</>
               )}
             </button>
           )}
@@ -697,7 +698,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
 
   const handleFileSelect = (file: File) => {
     if (!isValidArchive(file.name)) {
-      setError('Only .zip, .tar.gz, and .tgz files are supported')
+      setError(t('tools.unsupportedArchive'))
       return
     }
     setSelectedFile(file)
@@ -769,7 +770,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
             }`}
           >
             <Github className="w-3.5 h-3.5" />
-            GitHub URL
+            {t('tools.githubUrl')}
           </button>
           <button
             onClick={() => { setTab('zip'); setError(null) }}
@@ -778,7 +779,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
             }`}
           >
             <Package className="w-3.5 h-3.5" />
-            Upload Zip
+            {t('tools.uploadZipTab')}
           </button>
         </div>
 
@@ -789,7 +790,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
           {tab === 'github' && (
             <>
               <p className="text-xs text-gray-400">
-                Paste a GitHub link to check for SKILL.md files. Supports repo links, directory links, or direct file links.
+                {t('tools.githubHint')}
               </p>
               <div className="flex gap-2">
                 <div className="flex-1 relative">
@@ -809,14 +810,14 @@ function ImportSkillDialog({ open, onClose, onImported }: {
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5"
                 >
                   {probing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                  Check
+                  {t('tools.check')}
                 </button>
               </div>
 
               {probeResult && !probeResult.found && !error && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                   <AlertCircle className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                  <p className="text-xs text-yellow-400">No SKILL.md files found at this location.</p>
+                  <p className="text-xs text-yellow-400">{t('tools.noSkillMdFound')}</p>
                 </div>
               )}
 
@@ -846,7 +847,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
                         </div>
                         {importedSkills.has(skill.name) ? (
                           <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 flex-shrink-0">
-                            Installed
+                            {t('tools.installed')}
                           </span>
                         ) : (
                           <button
@@ -855,9 +856,9 @@ function ImportSkillDialog({ open, onClose, onImported }: {
                             className="text-[10px] font-medium px-2.5 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors flex items-center gap-1 disabled:opacity-50 flex-shrink-0"
                           >
                             {installingSkill === skill.name ? (
-                              <><Loader2 className="w-3 h-3 animate-spin" />Installing...</>
+                              <><Loader2 className="w-3 h-3 animate-spin" />{t('tools.installingSkill')}</>
                             ) : (
-                              <><Download className="w-3 h-3" />Install</>
+                              <><Download className="w-3 h-3" />{t('tools.install')}</>
                             )}
                           </button>
                         )}
@@ -873,7 +874,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
           {tab === 'zip' && (
             <>
               <p className="text-xs text-gray-400">
-                Upload a .zip or .tar.gz archive containing one or more SKILL.md files. Skills will be auto-detected and installed.
+                {t('tools.zipHint')}
               </p>
 
               {/* Drop zone */}
@@ -915,8 +916,8 @@ function ImportSkillDialog({ open, onClose, onImported }: {
                 ) : (
                   <>
                     <Package className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                    <p className="text-xs text-gray-400">Drop a .zip or .tar.gz file here, or click to browse</p>
-                    <p className="text-[10px] text-gray-600 mt-1">Max 20MB</p>
+                    <p className="text-xs text-gray-400">{t('tools.dropZipHere')}</p>
+                    <p className="text-[10px] text-gray-600 mt-1">{t('tools.maxSize')}</p>
                   </>
                 )}
               </div>
@@ -929,9 +930,9 @@ function ImportSkillDialog({ open, onClose, onImported }: {
                   className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5"
                 >
                   {uploading ? (
-                    <><Loader2 className="w-3.5 h-3.5 animate-spin" />Processing...</>
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" />{t('tools.processingFile')}</>
                   ) : (
-                    <><Download className="w-3.5 h-3.5" />Upload &amp; Install</>
+                    <><Download className="w-3.5 h-3.5" />{t('tools.uploadInstall')}</>
                   )}
                 </button>
               )}
@@ -951,7 +952,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
                         <Sparkles className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
                         <span className="text-sm text-white">{skill.displayName}</span>
                         <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 ml-auto">
-                          Installed
+                          {t('tools.installed')}
                         </span>
                       </div>
                     ))}
@@ -962,7 +963,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
               {zipResult && zipResult.skills.length === 0 && !error && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                   <AlertCircle className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                  <p className="text-xs text-yellow-400">No SKILL.md files found in the archive.</p>
+                  <p className="text-xs text-yellow-400">{t('tools.noSkillMdArchive')}</p>
                 </div>
               )}
             </>
@@ -980,7 +981,7 @@ function ImportSkillDialog({ open, onClose, onImported }: {
         {/* Footer */}
         <div className="px-5 py-3 border-t border-gray-800 flex justify-end">
           <button onClick={handleClose} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors">
-            Close
+            {t('common.close')}
           </button>
         </div>
       </div>
@@ -1270,13 +1271,13 @@ export function Tools() {
             <Package className="w-10 h-10 text-gray-700 mx-auto mb-3" />
             <p className="text-sm text-gray-500">
               {useMarketplaceSearchResults
-                ? `No skills found for "${searchQuery}" on skills.sh`
-                : 'No tools match your filters'}
+                ? t('tools.noMarketResults').replace('{q}', searchQuery)
+                : t('tools.noMatchFilters')}
             </p>
             <p className="text-xs text-gray-600 mt-1">
               {useMarketplaceSearchResults
-                ? 'Try a different search term'
-                : 'Try adjusting the category, source, or search query'}
+                ? t('tools.tryDifferent')
+                : t('tools.tryAdjusting')}
             </p>
           </div>
         ) : (

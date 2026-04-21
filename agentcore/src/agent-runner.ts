@@ -66,22 +66,29 @@ function createFileChangeHook(bucket: string, prefix: string) {
  */
 function createStopHook(bucket: string, prefix: string) {
   return async () => {
-    // 1. Extract git diff before syncing files
-    try {
-      extractAndUploadDiff(bucket, prefix);
-    } catch (err) {
-      console.warn('[hook:Stop] Diff extraction failed:', err);
-    }
-
-    // 2. Full workspace sync to S3
-    try {
-      const count = await syncWorkspaceToS3(s3, bucket, prefix);
-      if (count > 0) {
-        console.log(`[hook:Stop] Final sync: ${count} files → s3://${bucket}/${prefix}`);
+    // Fire-and-forget: run diff extraction + full S3 sync in the background
+    // so the agent result is returned immediately without waiting for sync.
+    // PostToolUse hooks already handle incremental file sync for Write/Edit,
+    // and the frontend reads files directly from the container while it's alive.
+    // This full sync is just a safety net for files created via Bash or other
+    // indirect means.
+    (async () => {
+      try {
+        extractAndUploadDiff(bucket, prefix);
+      } catch (err) {
+        console.warn('[hook:Stop] Diff extraction failed:', err);
       }
-    } catch (err) {
-      console.warn('[hook:Stop] Final sync failed:', err);
-    }
+
+      try {
+        const count = await syncWorkspaceToS3(s3, bucket, prefix);
+        if (count > 0) {
+          console.log(`[hook:Stop] Final sync: ${count} files → s3://${bucket}/${prefix}`);
+        }
+      } catch (err) {
+        console.warn('[hook:Stop] Final sync failed:', err);
+      }
+    })();
+
     return {};
   };
 }

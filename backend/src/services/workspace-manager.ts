@@ -431,18 +431,19 @@ export class WorkspaceManager {
     if (scope.agents.length > 0) {
       lines.push('## Available Agents', '');
       lines.push('You have access to specialized subagents for this business scope.');
-      lines.push('When the user\'s request matches a specific agent\'s expertise, delegate to that subagent.', '');
+      lines.push('When the user\'s request matches a specific agent\'s expertise, delegate to that subagent.');
+      lines.push('**IMPORTANT**: When calling a subagent via the Task tool, you MUST use the agent\'s `name` (the identifier shown in parentheses), NOT the display name.', '');
 
       if (selectedAgentId) {
         const selected = scope.agents.find(a => a.id === selectedAgentId);
         if (selected) {
-          lines.push(`The user has selected the "${selected.displayName}" agent. Use this agent's expertise`);
+          lines.push(`The user has selected the "${selected.displayName}" agent (name: \`${selected.name}\`). Use this agent's expertise`);
           lines.push('as your primary mode of operation. You may still delegate to other agents if needed.', '');
         }
       }
 
       for (const agent of scope.agents) {
-        lines.push(`- **${agent.displayName}**: ${agent.role ?? 'General assistant'}`);
+        lines.push(`- **${agent.displayName}** (name: \`${agent.name}\`): ${agent.role ?? 'General assistant'}`);
       }
       lines.push('');
     }
@@ -457,6 +458,13 @@ export class WorkspaceManager {
     lines.push('- All file operations must use relative paths rooted in the current working directory.');
     lines.push(`- The workspace root is: ${workspacePath}`);
     lines.push('- If a user asks to access files outside this workspace, politely decline and explain the restriction.');
+
+    lines.push('');
+    lines.push('## Application Code Directory', '');
+    lines.push('- All application source code MUST be placed inside the `app/` directory.');
+    lines.push('- The workspace root is reserved for system files (.claude/, documents/, memories/).');
+    lines.push('- When creating new projects or features, always use `app/` as the base directory.');
+    lines.push('- Example structure: `app/src/`, `app/public/`, `app/package.json`, etc.');
 
     // Inject document groups (Knowledge Base)
     const docGroups = scope.documentGroups ?? [];
@@ -621,7 +629,7 @@ export class WorkspaceManager {
 
       const lines: string[] = ['---'];
       lines.push(`name: ${agent.name}`);
-      lines.push(`description: ${agent.role ?? agent.displayName}. Use when the user needs help with ${agent.role ?? 'this domain'}.`);
+      lines.push(`description: ${agent.displayName} — ${agent.role ?? 'General assistant'}. Use when the user needs help with ${agent.role ?? 'this domain'}.`);
       lines.push('model: inherit');
       lines.push('permissionMode: bypassPermissions');
       if (allSkillNames.length > 0) {
@@ -1279,6 +1287,34 @@ export class WorkspaceManager {
       }));
       if (response.Body && typeof (response.Body as any).transformToString === 'function') {
         return await (response.Body as any).transformToString();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read a workspace file from S3 as raw binary Buffer.
+   * Used for binary files (images, xlsx, etc.) that cannot be safely converted to UTF-8 strings.
+   */
+  async readWorkspaceFileFromS3Raw(
+    orgId: string,
+    scopeId: string,
+    sessionId: string,
+    filePath: string,
+  ): Promise<Buffer | null> {
+    const s3Bucket = config.agentcore.workspaceS3Bucket;
+    const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+    try {
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const response = await this.s3Client.send(new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: key,
+      }));
+      if (response.Body && typeof (response.Body as any).transformToByteArray === 'function') {
+        const bytes = await (response.Body as any).transformToByteArray();
+        return Buffer.from(bytes);
       }
       return null;
     } catch {

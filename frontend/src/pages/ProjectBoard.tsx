@@ -25,11 +25,11 @@ const PRIORITY_BADGES: Record<string, { label: string; cls: string }> = {
   low: { label: '🟢', cls: 'text-green-400' },
 }
 
-const RELATION_TYPE_CONFIG: Record<string, { icon: string; label: string }> = {
-  conflicts_with: { icon: '⚠️', label: 'Conflicts with' },
-  depends_on: { icon: '🔗', label: 'Depends on' },
-  duplicates: { icon: '📋', label: 'Duplicates' },
-  related_to: { icon: '🔄', label: 'Related to' },
+const RELATION_TYPE_CONFIG: Record<string, { icon: string; labelKey: string }> = {
+  conflicts_with: { icon: '⚠️', labelKey: 'project.conflictsWith' },
+  depends_on: { icon: '🔗', labelKey: 'project.dependsOn' },
+  duplicates: { icon: '📋', labelKey: 'project.duplicatesOf' },
+  related_to: { icon: '🔄', labelKey: 'project.relatedTo' },
 }
 
 type ViewMode = 'board' | 'list'
@@ -329,7 +329,7 @@ export function ProjectBoard() {
   }
 
   const handleDeleteSelectedIssue = async () => {
-    if (!projectId || !selectedIssue || !confirm('Delete this issue?')) return
+    if (!projectId || !selectedIssue || !confirm(t('project.deleteIssueConfirm'))) return
     await RestProjectService.deleteIssue(projectId, selectedIssue.id)
     setSelectedIssue(null)
     loadData()
@@ -446,10 +446,10 @@ export function ProjectBoard() {
             onClick={handleGenerateTriage}
             disabled={isGeneratingTriage}
             className="flex items-center gap-1 px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs rounded-lg border border-purple-500/20 transition-colors disabled:opacity-50"
-            title="AI analyzes all backlog issues and suggests priorities"
+            title={t('project.aiTriageHint')}
           >
             {isGeneratingTriage ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-            AI Triage
+            {t('project.aiTriage')}
           </button>
           <button onClick={() => setShowSettings(true)} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors" title={t('project.settings')}>
             <Settings size={18} />
@@ -559,16 +559,16 @@ export function ProjectBoard() {
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800 bg-gray-900/80">
             <div className="flex items-center gap-2">
               <Terminal size={14} className="text-green-400" />
-              <span className="text-xs font-medium text-gray-300">Agent Console</span>
+              <span className="text-xs font-medium text-gray-300">{t('project.agentConsole')}</span>
               {consoleMessages.length > 0 && (
-                <span className="text-[10px] text-gray-500">{consoleMessages.length} messages</span>
+                <span className="text-[10px] text-gray-500">{consoleMessages.length} {t('project.consoleMessages')}</span>
               )}
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setConsoleHeight(h => h === 200 ? 400 : 200)}
                 className="p-1 text-gray-500 hover:text-white rounded transition-colors"
-                title={consoleHeight === 200 ? 'Expand' : 'Shrink'}
+                title={consoleHeight === 200 ? t('project.consoleExpand') : t('project.consoleShrink')}
               >
                 {consoleHeight === 200 ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
@@ -586,8 +586,8 @@ export function ProjectBoard() {
             {consoleMessages.length === 0 ? (
               <div className="text-gray-600 text-center py-4">
                 {project?.workspace_session_id
-                  ? 'Waiting for agent activity...'
-                  : 'No workspace session yet. Start a task to see agent output.'}
+                  ? t('project.consoleWaiting')
+                  : t('project.consoleNoSession')}
               </div>
             ) : (
               consoleMessages.map(msg => {
@@ -636,23 +636,23 @@ export function ProjectBoard() {
       {showCreateIssue && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowCreateIssue(false)}>
           <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-96 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-white mb-4">New Issue</h3>
+            <h3 className="text-sm font-semibold text-white mb-4">{t('project.newIssue')}</h3>
             <div className="space-y-3">
-              <input value={newIssueTitle} onChange={e => setNewIssueTitle(e.target.value)} placeholder="Issue title..." className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500" autoFocus onKeyDown={e => e.key === 'Enter' && handleCreateIssue()} />
+              <input value={newIssueTitle} onChange={e => setNewIssueTitle(e.target.value)} placeholder={t('project.issueTitlePlaceholder')} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500" autoFocus onKeyDown={e => e.key === 'Enter' && handleCreateIssue()} />
               <div className="grid grid-cols-2 gap-2">
                 <select value={newIssueLane} onChange={e => setNewIssueLane(e.target.value)} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none">
                   {LANES.map(l => <option key={l.id} value={l.id}>{t(l.labelKey)}</option>)}
                 </select>
                 <select value={newIssuePriority} onChange={e => setNewIssuePriority(e.target.value)} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none">
-                  <option value="critical">🔴 Critical</option>
-                  <option value="high">🟠 High</option>
-                  <option value="medium">🟡 Medium</option>
-                  <option value="low">🟢 Low</option>
+                  <option value="critical">{t('project.criticalPriority')}</option>
+                  <option value="high">{t('project.highPriority')}</option>
+                  <option value="medium">{t('project.mediumPriority')}</option>
+                  <option value="low">{t('project.lowPriority')}</option>
                 </select>
               </div>
               <div className="flex justify-end gap-2">
-                <button onClick={() => setShowCreateIssue(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white">Cancel</button>
-                <button onClick={handleCreateIssue} disabled={!newIssueTitle.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-xs rounded-lg transition-colors">Create</button>
+                <button onClick={() => setShowCreateIssue(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white">{t('common.cancel')}</button>
+                <button onClick={handleCreateIssue} disabled={!newIssueTitle.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-xs rounded-lg transition-colors">{t('common.create')}</button>
               </div>
             </div>
           </div>
@@ -663,32 +663,32 @@ export function ProjectBoard() {
       {showExecuteConfirm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowExecuteConfirm(null)}>
           <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-[420px] shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-white mb-2">Start Agent Execution?</h3>
+            <h3 className="text-sm font-semibold text-white mb-2">{t('project.startAgentExecution')}</h3>
             <p className="text-xs text-gray-400 mb-4">
-              Moving <span className="text-white font-medium">#{showExecuteConfirm.issue_number} {showExecuteConfirm.title}</span> to In Progress.
+              {t('project.movingToInProgress')} <span className="text-white font-medium">#{showExecuteConfirm.issue_number} {showExecuteConfirm.title}</span> {t('project.toInProgress')}
             </p>
 
             <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 mb-4">
               <div className="flex items-center gap-2 mb-2">
                 <Bot size={16} className="text-purple-400" />
                 <span className="text-xs text-gray-300">
-                  {project?.agent_id ? 'Project Agent' : 'Default Claude Code Agent'}
+                  {project?.agent_id ? t('project.projectAgent') : t('project.defaultAgent')}
                 </span>
               </div>
               <p className="text-[10px] text-gray-500">
-                The agent will create a branch, receive the issue description, and start coding.
+                {t('project.agentWillCreateBranch')}
               </p>
             </div>
 
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowExecuteConfirm(null)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={handleSkipExecute} className="px-3 py-1.5 text-xs text-gray-300 hover:text-white border border-gray-600 rounded-lg transition-colors">
-                Just Move (no agent)
+                {t('project.justMove')}
               </button>
               <button onClick={() => handleExecuteConfirm()} className="flex items-center gap-1 px-4 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs rounded-lg transition-colors">
-                <Play size={12} /> Start Agent
+                <Play size={12} /> {t('project.startAgent')}
               </button>
             </div>
           </div>
@@ -755,7 +755,7 @@ export function ProjectBoard() {
                       title={t('project.aiBeautifyHint')}
                     >
                       {isRefining ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                      {isRefining ? 'Refining...' : t('project.aiBeautify')}
+                      {isRefining ? t('project.refining') : t('project.aiBeautify')}
                     </button>
                   ) : (
                     <div className="flex items-center gap-1">
@@ -763,13 +763,13 @@ export function ProjectBoard() {
                         onClick={() => { setEditDesc(refinedDesc); setRefinedDesc(null) }}
                         className="px-2 py-0.5 text-[10px] text-green-400 hover:text-green-300 hover:bg-green-500/10 rounded transition-colors"
                       >
-                        ✓ Accept
+                        {t('project.accept')}
                       </button>
                       <button
                         onClick={() => setRefinedDesc(null)}
                         className="px-2 py-0.5 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors"
                       >
-                        ✕ Discard
+                        {t('project.discard')}
                       </button>
                     </div>
                   )}
@@ -780,15 +780,15 @@ export function ProjectBoard() {
                   <div className="space-y-2">
                     <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-2.5">
                       <div className="flex items-center gap-1 mb-1.5">
-                        <span className="text-[10px] font-medium text-red-400">Before</span>
+                        <span className="text-[10px] font-medium text-red-400">{t('project.before')}</span>
                       </div>
                       <p className="text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">
-                        {editDesc || '(empty)'}
+                        {editDesc || t('project.empty')}
                       </p>
                     </div>
                     <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-2.5">
                       <div className="flex items-center gap-1 mb-1.5">
-                        <span className="text-[10px] font-medium text-green-400">After (AI Refined)</span>
+                        <span className="text-[10px] font-medium text-green-400">{t('project.afterRefined')}</span>
                       </div>
                       <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
                         {refinedDesc}
@@ -840,7 +840,7 @@ export function ProjectBoard() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-1.5">
                       <FileCode size={12} className="text-blue-400" />
-                      <span className="text-xs font-medium text-gray-300">Changes</span>
+                      <span className="text-xs font-medium text-gray-300">{t('project.changes')}</span>
                       {selectedIssue.diff_stat && (
                         <span className="text-[10px] text-gray-500">
                           {selectedIssue.diff_stat.files_changed} file{selectedIssue.diff_stat.files_changed !== 1 ? 's' : ''}
@@ -876,7 +876,7 @@ export function ProjectBoard() {
                           }}
                           className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
                         >
-                          {loadingDiff ? <Loader2 size={10} className="animate-spin" /> : showDiffPanel ? 'Hide diff' : 'View diff'}
+                          {loadingDiff ? <Loader2 size={10} className="animate-spin" /> : showDiffPanel ? t('project.hideDiff') : t('project.viewDiff')}
                         </button>
                       </div>
                     )}
@@ -905,7 +905,7 @@ export function ProjectBoard() {
                   )}
 
                   {!selectedIssue.diff_stat && (
-                    <p className="text-[10px] text-gray-600">No diff data available yet. Diff is captured when the agent completes execution.</p>
+                    <p className="text-[10px] text-gray-600">{t('project.noDiffYet')}</p>
                   )}
 
                   {/* Full diff view */}
@@ -933,9 +933,9 @@ export function ProjectBoard() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-1.5">
                       <Sparkles size={12} className="text-purple-400" />
-                      <span className="text-xs font-medium text-purple-300">Acceptance Criteria</span>
+                      <span className="text-xs font-medium text-purple-300">{t('project.acceptanceCriteria')}</span>
                     </div>
-                    <span className="text-[10px] text-gray-500">AI Generated</span>
+                    <span className="text-[10px] text-gray-500">{t('project.aiGenerated')}</span>
                   </div>
                   <div className="space-y-1">
                     {(selectedIssue.acceptance_criteria as Array<{ criterion: string; verified?: boolean }>).map((ac, i) => (
@@ -952,14 +952,14 @@ export function ProjectBoard() {
               {issueRelations.length > 0 && (
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
                   <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-xs font-medium text-gray-300">Relations</span>
+                    <span className="text-xs font-medium text-gray-300">{t('project.relations')}</span>
                     <span className="text-[10px] text-gray-500">({issueRelations.length})</span>
                   </div>
                   <div className="space-y-1.5">
                     {issueRelations.map(rel => {
                       const isSource = rel.source_issue_id === selectedIssue.id
                       const otherIssue = isSource ? rel.target_issue : rel.source_issue
-                      const typeConfig = RELATION_TYPE_CONFIG[rel.relation_type] ?? { icon: '🔄', label: rel.relation_type }
+                      const typeConfig = RELATION_TYPE_CONFIG[rel.relation_type] ?? { icon: '🔄', labelKey: 'project.relatedTo' }
                       return (
                         <div key={rel.id} className={`flex items-center justify-between p-2 rounded-lg border ${
                           rel.status === 'dismissed' ? 'opacity-40 border-gray-800' :
@@ -969,7 +969,7 @@ export function ProjectBoard() {
                         }`}>
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-xs">{typeConfig.icon}</span>
-                            <span className="text-[10px] text-gray-500">{typeConfig.label}</span>
+                            <span className="text-[10px] text-gray-500">{t(typeConfig.labelKey)}</span>
                             <span className="text-xs text-white truncate">#{otherIssue.issue_number} {otherIssue.title}</span>
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
@@ -980,8 +980,8 @@ export function ProjectBoard() {
                                 <button onClick={() => handleReviewRelation(rel.id, 'dismissed')} className="p-0.5 text-red-500/60 hover:text-red-400 rounded transition-colors" title="Dismiss">✕</button>
                               </>
                             )}
-                            {rel.status === 'confirmed' && <span className="text-[10px] text-green-500">Confirmed</span>}
-                            {rel.status === 'dismissed' && <span className="text-[10px] text-gray-600">Dismissed</span>}
+                            {rel.status === 'confirmed' && <span className="text-[10px] text-green-500">{t('project.confirmed')}</span>}
+                            {rel.status === 'dismissed' && <span className="text-[10px] text-gray-600">{t('project.dismissed')}</span>}
                           </div>
                         </div>
                       )
@@ -989,7 +989,7 @@ export function ProjectBoard() {
                   </div>
                   {issueRelations.some(r => r.reasoning) && (
                     <details className="mt-2">
-                      <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">View AI reasoning</summary>
+                      <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">{t('project.viewAiReasoning')}</summary>
                       <div className="mt-1 space-y-1">
                         {issueRelations.filter(r => r.reasoning).map(r => {
                           const other = r.source_issue_id === selectedIssue.id ? r.target_issue : r.source_issue
@@ -1009,11 +1009,11 @@ export function ProjectBoard() {
               {['backlog', 'todo'].includes(editStatus) && selectedIssue.readiness_details && (
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium text-gray-300">Readiness Score</span>
+                    <span className="text-xs font-medium text-gray-300">{t('project.readinessScore')}</span>
                     <div className="flex items-center gap-2">
                       {selectedIssue.ai_analysis_status === 'stale' && (
                         <button onClick={handleReanalyze} className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 transition-colors">
-                          <RefreshCw size={10} /> Re-analyze
+                          <RefreshCw size={10} /> {t('project.reanalyze')}
                         </button>
                       )}
                       <span className={`text-sm font-bold ${
@@ -1160,7 +1160,7 @@ export function ProjectBoard() {
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
               <div className="flex items-center gap-2">
                 <Sparkles size={16} className="text-purple-400" />
-                <span className="text-sm font-semibold text-white">AI Triage Report</span>
+                <span className="text-sm font-semibold text-white">{t('project.aiTriageReport')}</span>
               </div>
               <button onClick={() => setShowTriageReport(false)} className="p-1.5 text-gray-500 hover:text-white rounded transition-colors">
                 <X size={16} />
@@ -1170,13 +1170,13 @@ export function ProjectBoard() {
               {/* Summary */}
               <div className="bg-purple-500/5 border border-purple-500/10 rounded-lg p-3">
                 <p className="text-xs text-gray-300 leading-relaxed">{triageReport.summary}</p>
-                <p className="text-[10px] text-gray-500 mt-2">Sprint capacity: {triageReport.sprint_estimate}</p>
+                <p className="text-[10px] text-gray-500 mt-2">{t('project.sprintCapacity')}: {triageReport.sprint_estimate}</p>
               </div>
 
               {/* Recommended Order */}
               {triageReport.recommended_order?.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-gray-300 mb-2">📋 Recommended Execution Order</h4>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">{t('project.recommendedOrder')}</h4>
                   <div className="space-y-1">
                     {triageReport.recommended_order.map((item, i) => (
                       <div key={i} className="flex items-start gap-2 p-2 bg-gray-800/50 rounded-lg">
@@ -1194,7 +1194,7 @@ export function ProjectBoard() {
               {/* Merge Suggestions */}
               {triageReport.merge_suggestions?.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-gray-300 mb-2">🔀 Merge Suggestions</h4>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">{t('project.mergeSuggestions')}</h4>
                   {triageReport.merge_suggestions.map((m, i) => (
                     <div key={i} className="p-2 bg-orange-500/5 border border-orange-500/10 rounded-lg mb-1.5">
                       <div className="flex items-center gap-1 mb-1">
@@ -1213,7 +1213,7 @@ export function ProjectBoard() {
               {/* Missing Info */}
               {triageReport.missing_info?.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-gray-300 mb-2">❓ Information Needed</h4>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">{t('project.infoNeeded')}</h4>
                   {triageReport.missing_info.map((m, i) => (
                     <div key={i} className="flex items-start gap-2 p-2 bg-yellow-500/5 border border-yellow-500/10 rounded-lg mb-1.5">
                       <span className="text-xs text-white flex-shrink-0">#{m.issue_number}</span>
@@ -1226,7 +1226,7 @@ export function ProjectBoard() {
               {/* Risk Flags */}
               {triageReport.risk_flags?.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-gray-300 mb-2">🚩 Risk Flags</h4>
+                  <h4 className="text-xs font-medium text-gray-300 mb-2">{t('project.riskFlags')}</h4>
                   {triageReport.risk_flags.map((r, i) => (
                     <div key={i} className="flex items-start gap-2 p-2 bg-red-500/5 border border-red-500/10 rounded-lg mb-1.5">
                       <span className="text-xs text-white flex-shrink-0">#{r.issue_number}</span>
@@ -1382,7 +1382,7 @@ function ProjectSettingsModal({ project, autoProcess, onToggleAutoProcess, onClo
 
         <div className="mt-4 flex justify-end">
           <button onClick={onClose} className="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors">
-            Close
+            {t('common.close')}
           </button>
         </div>
       </div>
@@ -1416,6 +1416,7 @@ function ReadinessRing({ score, size = 28 }: { score: number; size?: number }) {
 }
 
 function IssueCard({ issue, relations, onDragStart, onClick }: { issue: ProjectIssue; relations?: IssueRelation[]; onDragStart: () => void; onClick: () => void }) {
+  const { t } = useTranslation()
   const priority = PRIORITY_BADGES[issue.priority]
   const isWorking = issue.status === 'in_progress' && issue.workspace_session_id
   const isAnalyzing = issue.ai_analysis_status === 'analyzing'
@@ -1445,12 +1446,12 @@ function IssueCard({ issue, relations, onDragStart, onClick }: { issue: ProjectI
             {priority && <span className={`text-xs ${priority.cls}`}>{priority.label}</span>}
             {isWorking && (
               <span className="flex items-center gap-0.5 text-[10px] text-yellow-400">
-                <Bot size={10} className="animate-pulse" /> Working...
+                <Bot size={10} className="animate-pulse" /> {t('project.issueWorking')}
               </span>
             )}
             {isAnalyzing && (
               <span className="flex items-center gap-0.5 text-[10px] text-purple-400">
-                <Sparkles size={10} className="animate-pulse" /> Analyzing...
+                <Sparkles size={10} className="animate-pulse" /> {t('project.issueAnalyzing')}
               </span>
             )}
           </div>
