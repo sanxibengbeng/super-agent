@@ -525,10 +525,14 @@ Local dev uses the shared AgentCore runtime:
 - **AgentCore requires ARM (linux/arm64) images.** Build natively on ARM hosts — do not cross-compile to amd64.
 
 ```bash
-# Build and push agentcore image
+# Build and push agentcore image (use the script)
+cd agentcore && ./build-and-push.sh
+
+# Or manually — DOCKER_BUILDKIT=0 is critical: BuildKit adds attestation
+# manifests (unknown/unknown arch) that break AgentCore microVM startup.
 cd agentcore
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 873543029686.dkr.ecr.us-east-1.amazonaws.com
-docker build -t 873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore:latest .
+DOCKER_BUILDKIT=0 docker build --platform linux/arm64 -t 873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore:latest .
 docker push 873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore:latest
 ```
 
