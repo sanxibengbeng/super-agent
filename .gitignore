@@ -2,7 +2,7 @@
 *.code-workspace
 .kiro/skills
 super-agent-workspaces/
-docs/
+
 
 # CDK synthesis output (contains AWS account IDs, IAM role ARNs, templates)
 infra/cdk.out/
