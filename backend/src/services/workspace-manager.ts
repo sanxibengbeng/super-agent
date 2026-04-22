@@ -1062,7 +1062,9 @@ export class WorkspaceManager {
         for (const obj of result.Contents ?? []) {
           if (obj.Key) {
             const relKey = obj.Key.slice(prefix.length);
-            if (relKey) allKeys.push({ key: relKey, size: obj.Size ?? 0 });
+            if (relKey && !relKey.startsWith('__claude_home__/')) {
+              allKeys.push({ key: relKey, size: obj.Size ?? 0 });
+            }
           }
         }
         continuationToken = result.NextContinuationToken;

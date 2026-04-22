@@ -449,7 +449,7 @@ npm run test:ui                # Vitest UI
 
 ### Local Development (Docker Compose)
 
-All services run in Docker containers with Nginx reverse proxy. No host port conflicts.
+All services run in Docker containers with hot reload. Local code changes take effect immediately.
 
 **Prerequisites:**
 - Docker and Docker Compose
@@ -475,6 +475,11 @@ localhost:8080 (Nginx)
 └── /*      → frontend:5173 (Frontend container)
 ```
 
+**Hot Reload:**
+- Backend: `tsx watch` auto-restarts on `.ts` file changes
+- Frontend: Vite HMR updates the browser instantly on save
+- Source directories are volume-mounted — no rebuild needed for code changes
+
 **Docker Services:**
 | Service | Image | Exposed Port | Purpose |
 |---------|-------|--------------|---------|
@@ -493,9 +498,6 @@ docker compose ps
 docker compose logs -f backend
 docker compose logs -f frontend
 docker compose logs -f nginx
-
-# Rebuild after code changes (hot reload works for most changes)
-docker compose up -d --build
 
 # Stop all services
 docker compose down

@@ -21,6 +21,7 @@ export interface ChatSessionEntity {
   claude_session_id: string | null;
   title: string | null;
   status: SessionStatus;
+  source: 'user' | 'workflow';
   sop_context: string | null;
   context: Record<string, unknown>;
   room_mode: 'single' | 'group';
@@ -72,7 +73,7 @@ export class ChatSessionRepository extends BaseRepository<ChatSessionEntity> {
   ): Promise<ChatSessionEntity[]> {
     return this.findAll(organizationId, {
       ...options,
-      where: { user_id: userId },
+      where: { user_id: userId, source: { not: 'workflow' } } as any,
     });
   }
 
@@ -139,7 +140,7 @@ export class ChatSessionRepository extends BaseRepository<ChatSessionEntity> {
     businessScopeId: string,
     userId?: string,
   ): Promise<ChatSessionEntity[]> {
-    const where: Record<string, unknown> = { business_scope_id: businessScopeId };
+    const where: Record<string, unknown> = { business_scope_id: businessScopeId, source: { not: 'workflow' } };
     if (userId) where.user_id = userId;
     return this.findAll(organizationId, {
       where: where as Partial<ChatSessionEntity>,

@@ -23,6 +23,7 @@ export interface Schedule {
   runCount: number;
   failureCount: number;
   maxRetries: number;
+  timeoutMinutes: number;
   createdAt: string;
 }
 
@@ -54,6 +55,7 @@ export interface CreateScheduleRequest {
   variables?: unknown[];
   isEnabled?: boolean;
   maxRetries?: number;
+  timeoutMinutes?: number;
 }
 
 export interface UpdateScheduleRequest {
@@ -63,6 +65,7 @@ export interface UpdateScheduleRequest {
   variables?: unknown[];
   isEnabled?: boolean;
   maxRetries?: number;
+  timeoutMinutes?: number;
 }
 
 export interface ListSchedulesResponse {

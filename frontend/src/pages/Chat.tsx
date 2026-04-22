@@ -2014,6 +2014,7 @@ export function Chat() {
 
   return (
     <ChatProvider
+      key={urlSession || 'default'}
       initialSessionId={urlSession}
       initialScopeId={urlScope}
       initialAgentId={urlAgent}

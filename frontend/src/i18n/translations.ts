@@ -2302,6 +2302,22 @@ export const translations: TranslationData = {
     en: 'Output',
     cn: '输出'
   },
+  'execution.workflowCompleted': {
+    en: 'Workflow completed',
+    cn: '工作流已完成'
+  },
+  'execution.workflowFailed': {
+    en: 'Workflow failed',
+    cn: '工作流执行失败'
+  },
+  'execution.workflowRunning': {
+    en: 'Workflow running...',
+    cn: '工作流执行中...'
+  },
+  'execution.viewChat': {
+    en: 'Chat',
+    cn: '对话'
+  },
 
   // Create Room Dialog
   'room.createTitle': {
@@ -3101,6 +3117,14 @@ export const translations: TranslationData = {
   'schedule.disabled': {
     en: 'Disabled',
     cn: '已禁用'
+  },
+  'schedule.timeout': {
+    en: 'Timeout',
+    cn: '超时时间'
+  },
+  'schedule.minutes': {
+    en: 'minutes',
+    cn: '分钟'
   },
   'schedule.runs': {
     en: '{n} runs',

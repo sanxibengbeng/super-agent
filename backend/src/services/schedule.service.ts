@@ -15,35 +15,64 @@ import { scheduleQueueService } from './schedule-queue.service.js';
 /**
  * Build a WorkflowV2Plan from stored workflow data, matching the execute-v2 route.
  */
+const PASSTHROUGH_TYPES = new Set(['trigger', 'start', 'end']);
+
 function buildV2Plan(
   workflow: { name: string; nodes: any; connections: any },
   variables: any[],
 ): WorkflowV2Plan {
-  const nodes = (workflow.nodes || []) as Array<{
+  const allNodes = (workflow.nodes || []) as Array<{
     id: string; title?: string; label?: string; type: string; prompt?: string;
     dependentTasks?: string[]; agentId?: string;
     metadata?: Record<string, unknown>;
   }>;
 
+  // Extract default variables from trigger node when schedule has none
+  let resolvedVars = variables || [];
+  if (resolvedVars.length === 0) {
+    const triggerNode = allNodes.find(n => PASSTHROUGH_TYPES.has(n.type) && n.metadata?.inputVariables);
+    if (triggerNode) {
+      const inputVars = triggerNode.metadata!.inputVariables as Array<{
+        variableId: string; name: string; description?: string; required?: boolean;
+        value?: Array<{ text: string; type: string }> | string;
+      }>;
+      resolvedVars = inputVars.map(v => ({
+        variableId: v.variableId,
+        name: v.name,
+        value: Array.isArray(v.value)
+          ? v.value.map(seg => seg.text).join('')
+          : (v.value || ''),
+        description: v.description || '',
+        required: v.required,
+      }));
+    }
+  }
+
   return {
     title: workflow.name,
-    nodes: nodes.map(n => ({
-      id: n.id,
-      title: n.title || n.label || n.id,
-      type: (n.type as 'agent' | 'action' | 'condition' | 'document' | 'codeArtifact') || 'agent',
-      prompt: n.prompt || (n.metadata?.prompt as string) || n.title || n.label || n.id,
-      dependentTasks: n.dependentTasks || (n.metadata?.dependentTasks as string[]),
-      agentId: n.agentId || (n.metadata?.agentId as string),
-    })),
+    nodes: allNodes
+      .filter(n => !PASSTHROUGH_TYPES.has(n.type))
+      .map(n => ({
+        id: n.id,
+        title: n.title || n.label || n.id,
+        type: (n.type as 'agent' | 'action' | 'condition' | 'document' | 'codeArtifact') || 'agent',
+        prompt: n.prompt || (n.metadata?.prompt as string) || n.title || n.label || n.id,
+        dependentTasks: n.dependentTasks || (n.metadata?.dependentTasks as string[]),
+        agentId: n.agentId || (n.metadata?.agentId as string),
+        checkpointConfig: n.metadata?.checkpointConfig as Record<string, unknown> | undefined,
+      })),
     edges: ((workflow.connections || []) as Array<{ source?: string; target?: string; from?: string; to?: string }>).map(c => ({
       source: c.source || c.from || '',
       target: c.target || c.to || '',
     })),
-    variables: (variables || []).map((v: any) => ({
+    variables: resolvedVars.map((v: any) => ({
       variableId: v.variableId || v.variable_id || '',
       name: v.name || '',
-      value: Array.isArray(v.value) ? v.value.join(', ') : (v.value || ''),
+      value: Array.isArray(v.value)
+        ? v.value.map((seg: any) => typeof seg === 'string' ? seg : seg.text).join('')
+        : (v.value || ''),
       description: v.description || '',
+      required: v.required,
     })),
   };
 }
@@ -62,6 +91,7 @@ export interface ScheduleConfig {
   runCount: number;
   failureCount: number;
   maxRetries: number;
+  timeoutMinutes: number;
   createdAt: Date;
 }
 
@@ -107,6 +137,7 @@ class ScheduleService {
       variables?: any[];
       isEnabled?: boolean;
       maxRetries?: number;
+      timeoutMinutes?: number;
       createdBy?: string;
     }
   ): Promise<ScheduleConfig> {
@@ -132,6 +163,7 @@ class ScheduleService {
         is_enabled: options.isEnabled || false,
         next_run_at: nextRunAt,
         max_retries: options.maxRetries || 3,
+        timeout_minutes: options.timeoutMinutes ?? 10,
         created_by: options.createdBy,
       },
     });
@@ -167,6 +199,7 @@ class ScheduleService {
       variables?: any[];
       isEnabled?: boolean;
       maxRetries?: number;
+      timeoutMinutes?: number;
     }
   ): Promise<ScheduleConfig> {
     const schedule = await prisma.workflow_schedules.findFirst({
@@ -198,6 +231,7 @@ class ScheduleService {
         variables: updates.variables,
         is_enabled: updates.isEnabled,
         max_retries: updates.maxRetries,
+        timeout_minutes: updates.timeoutMinutes,
         next_run_at: nextRunAt,
       },
     });
@@ -324,7 +358,9 @@ class ScheduleService {
     }
 
     // Execute asynchronously using V2 executor (same agentic path as manual Run)
-    this.runV2Execution(plan, organizationId, scopeId, record.id, scheduleId)
+    const creatorId = schedule.created_by || organizationId;
+    const timeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
+    this.runV2Execution(plan, organizationId, scopeId, record.id, scheduleId, schedule.workflow_id, creatorId, timeoutMs)
       .catch(err => console.error(`[SCHEDULE] V2 execution error for schedule ${scheduleId}:`, err));
 
     // Update schedule stats
@@ -348,6 +384,9 @@ class ScheduleService {
     scopeId: string,
     recordId: string,
     scheduleId: string,
+    workflowId: string,
+    userId: string,
+    timeoutMs?: number,
   ): Promise<void> {
     console.log(`[SCHEDULE] Starting V2 execution for schedule=${scheduleId} record=${recordId} scope=${scopeId}`);
     console.log(`[SCHEDULE] Plan: title="${plan.title}" nodes=${plan.nodes.length} edges=${plan.edges.length}`);
@@ -369,7 +408,8 @@ class ScheduleService {
         plan,
         organizationId,
         scopeId,
-        'system',
+        userId,
+        { workflowId, triggerType: 'scheduled', timeoutMs },
       );
 
       let lastError: string | null = null;
@@ -392,7 +432,14 @@ class ScheduleService {
           console.log(`[SCHEDULE] step_failed: task=${event.taskId} title="${event.taskTitle || ''}"`);
         } else if (event.type === 'done') {
           addLog({ type: 'done', timestamp });
-          console.log(`[SCHEDULE] Execution done for schedule=${scheduleId}`);
+          console.log(`[SCHEDULE] Execution done for schedule=${scheduleId} chatSession=${event.chatSessionId ?? 'none'} execution=${event.executionId ?? 'none'}`);
+          // Link schedule record to workflow execution
+          if (event.executionId) {
+            prisma.schedule_execution_records.update({
+              where: { id: recordId },
+              data: { execution_id: event.executionId },
+            }).catch(() => {});
+          }
         } else if (event.type === 'log') {
           const content = typeof event.content === 'string' ? event.content : JSON.stringify(event.content);
           addLog({ type: 'log', content: content?.slice(0, 2000), timestamp });
@@ -609,7 +656,8 @@ class ScheduleService {
       const plan = buildV2Plan(workflow, schedule.variables as any[]);
 
       // Execute using runV2Execution (same as manual trigger — collects logs)
-      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id);
+      const cronTimeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
+      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id, schedule.workflow_id, schedule.created_by || schedule.organization_id, cronTimeoutMs);
 
       // runV2Execution handles status updates and failure_count internally.
       // We just need to update run_count and create the next scheduled placeholder.
@@ -693,6 +741,7 @@ class ScheduleService {
       runCount: schedule.run_count,
       failureCount: schedule.failure_count,
       maxRetries: schedule.max_retries,
+      timeoutMinutes: (schedule as any).timeout_minutes ?? 10,
       createdAt: schedule.created_at,
     };
   }

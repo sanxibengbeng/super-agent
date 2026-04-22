@@ -101,6 +101,21 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         : Promise.resolve(),
     ]);
 
+    // Filter out in-process SDK MCP servers — they can't be serialized or
+    // forwarded to a remote AgentCore container. Only keep config-based servers.
+    let serializableMcpServers: Record<string, MCPServerSDKConfig> | undefined;
+    if (mcpServers) {
+      const filtered: Record<string, MCPServerSDKConfig> = {};
+      for (const [name, cfg] of Object.entries(mcpServers)) {
+        if ((cfg as any).type !== 'sdk') {
+          filtered[name] = cfg;
+        }
+      }
+      if (Object.keys(filtered).length > 0) {
+        serializableMcpServers = filtered;
+      }
+    }
+
     const payload = JSON.stringify({
       prompt: options.message,
       session_id: options.providerSessionId ?? undefined,
@@ -110,8 +125,9 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       org_id: options.organizationId,
       agent_id: options.agentId,
       system_prompt: agentConfig.systemPrompt ?? undefined,
-      mcp_servers: mcpServers && Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+      mcp_servers: serializableMcpServers,
       workspace_s3_bucket: this.workspaceBucket,
+      workspace_s3_region: config.agentcore.workspaceS3Region,
       workspace_s3_prefix: s3Prefix,
     });
 
@@ -163,40 +179,40 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
 
     const contentType: string = response.contentType ?? '';
     console.log(`[agentcore-runtime] Response contentType: ${contentType}`);
-    if (contentType.includes('text/event-stream')) {
-      let eventCount = 0;
-      for await (const event of this.parseSSEStream(response.response)) {
-        eventCount++;
-        if (eventCount <= 3 || event.type === 'error') {
-          console.log(`[agentcore-runtime] Event ${eventCount}: type=${event.type}`);
+    try {
+      if (contentType.includes('text/event-stream')) {
+        let eventCount = 0;
+        for await (const event of this.parseSSEStream(response.response)) {
+          eventCount++;
+          if (eventCount <= 3 || event.type === 'error') {
+            console.log(`[agentcore-runtime] Event ${eventCount}: type=${event.type}`);
+          }
+          yield event;
         }
-        yield event;
+        console.log(`[agentcore-runtime] Total events received: ${eventCount}`);
+      } else {
+        const body = await this.readBody(response.response);
+        console.log(`[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`);
+        try {
+          yield this.mapEvent(JSON.parse(body));
+        } catch {
+          yield { type: 'error', code: 'PARSE_ERROR', message: `Failed to parse response: ${body.slice(0, 200)}` };
+        }
       }
-      console.log(`[agentcore-runtime] Total events received: ${eventCount}`);
-    } else {
-      const body = await this.readBody(response.response);
-      console.log(`[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`);
-      try {
-        yield this.mapEvent(JSON.parse(body));
-      } catch {
-        yield { type: 'error', code: 'PARSE_ERROR', message: `Failed to parse response: ${body.slice(0, 200)}` };
-      }
-    }
-
-    // --- S3 sync-back: fire-and-forget ---
-    // Local workspace is just a cache; container/S3 is the source of truth.
-    // No need to block the generator return (which delays [DONE]) for this.
-    if (options.workspacePath && chatSessionId) {
-      const syncS3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
-      this.syncBackFromS3(syncS3Prefix, options.workspacePath)
-        .then(count => {
+    } finally {
+      // --- S3 sync-back: pull container changes back to local workspace ---
+      // Runs in finally so sync-back happens even when the consumer breaks early (e.g. timeout).
+      if (options.workspacePath && chatSessionId) {
+        const syncS3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
+        try {
+          const count = await this.syncBackFromS3(syncS3Prefix, options.workspacePath);
           if (count > 0) {
             console.log(`[agentcore-runtime] Synced back ${count} files from S3 to local workspace`);
           }
-        })
-        .catch(err => {
+        } catch (err) {
           console.warn('[agentcore-runtime] S3 sync-back failed:', err instanceof Error ? err.message : err);
-        });
+        }
+      }
     }
   }
 
@@ -383,6 +399,8 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         if (!obj.Key) continue;
         const relativePath = obj.Key.slice(s3Prefix.length);
         if (!relativePath || relativePath.endsWith('/')) continue;
+        // Skip container-internal ~/.claude state — not relevant to local workspace
+        if (relativePath.startsWith('__claude_home__/')) continue;
 
         const localPath = join(localDir, relativePath);
         const localDirPath = dirname(localPath);

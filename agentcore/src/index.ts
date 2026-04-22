@@ -12,28 +12,26 @@
  *   4. Runs Claude Agent SDK with cwd=/workspace
  *   5. SDK hooks (PostToolUse + Stop) sync /workspace changes back to S3
  *
- * Note: file-watcher.ts has been replaced by Claude Code SDK hooks
- * registered in agent-runner.ts. The hooks provide more precise,
- * event-driven S3 sync (per-file on Write/Edit, full sync on Stop).
+ * Sync strategy:
+ *   - /workspace/ writes: SDK hooks (PostToolUse + Stop) in agent-runner.ts
+ *   - ~/.claude/ writes: fs.watch in file-watcher.ts (SDK hooks can't see these)
  */
 
 import http from 'http';
 import { S3Client } from '@aws-sdk/client-s3';
 import { runAgent } from './agent-runner.js';
-import { restoreWorkspaceFromS3 } from './workspace-sync.js';
+import { restoreWorkspaceFromS3, restoreClaudeHomeFromS3 } from './workspace-sync.js';
+import { startClaudeHomeWatcher } from './file-watcher.js';
 import { createGitBaseline } from './agent-runner.js';
 import type { AgentPayload, AgentEvent } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 
-// S3 client for workspace sync.
-// IMPORTANT: The workspace S3 bucket is in us-east-1, but the container's
-// AWS_REGION env var is set to us-west-2 (for Bedrock). We must explicitly
-// use us-east-1 for S3. The container's AWS_ACCESS_KEY_ID/SECRET are for
-// Bedrock (cross-account); S3 uses the same creds since the execution role
-// has S3 permissions and the Bedrock creds also belong to the same account.
-const S3_REGION = process.env.WORKSPACE_S3_REGION ?? 'us-east-1';
-const s3 = new S3Client({ region: S3_REGION });
+const DEFAULT_S3_REGION = process.env.WORKSPACE_S3_REGION ?? 'us-east-1';
+
+function createS3Client(region?: string): S3Client {
+  return new S3Client({ region: region ?? DEFAULT_S3_REGION });
+}
 
 // ---------------------------------------------------------------------------
 // /invocations
@@ -57,6 +55,7 @@ async function handleInvocations(
 
   const bucket = payload.workspace_s3_bucket;
   const prefix = payload.workspace_s3_prefix;
+  const s3 = createS3Client(payload.workspace_s3_region);
 
   // --- Restore full workspace from S3 → /workspace/ ---
   if (bucket && prefix) {
@@ -67,14 +66,26 @@ async function handleInvocations(
       console.error('[index] Workspace restore failed:', err);
     }
 
+    // Restore ~/.claude (session resume data, projects state)
+    try {
+      const homeCount = await restoreClaudeHomeFromS3(s3, bucket, prefix);
+      if (homeCount > 0) {
+        console.log(`[index] Restored ${homeCount} ~/.claude files from S3`);
+      }
+    } catch (err) {
+      console.warn('[index] ~/.claude restore failed:', err);
+    }
+
+    // Start watching ~/.claude for near-real-time sync to S3
+    startClaudeHomeWatcher(s3, bucket, prefix);
+
     // Create git baseline snapshot for diff tracking
     createGitBaseline();
   }
 
   // --- SSE streaming response ---
-  // S3 sync is now handled by SDK hooks in agent-runner.ts:
-  //   PostToolUse (Write|Edit) → incremental file sync
-  //   Stop → full workspace sync (safety net)
+  // /workspace/ sync: SDK hooks (PostToolUse + Stop) in agent-runner.ts
+  // ~/.claude/ sync: fs.watch in file-watcher.ts (near-real-time)
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',

@@ -89,7 +89,10 @@ type EventCallback = (event: WorkflowEvent) => void;
  * Get API configuration from environment variables
  */
 function getApiConfig(): { mode: 'rest' | 'mock'; baseUrl: string } {
-  const mode = import.meta.env.VITE_API_MODE === 'rest' ? 'rest' : 'mock';
+  const useMockEnv = import.meta.env.VITE_USE_MOCK;
+  const useMock = useMockEnv === 'true' || useMockEnv === '1' ||
+    (useMockEnv === undefined && import.meta.env.VITE_API_MODE !== 'rest' && import.meta.env.DEV);
+  const mode = useMock ? 'mock' : 'rest';
   const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
   return { mode, baseUrl };
 }
@@ -268,6 +271,8 @@ export const RestWorkflowExecutionService = {
         workflow_id: string;
         status: string;
         title?: string;
+        trigger_type?: string;
+        chat_session_id?: string;
         error_message?: string;
         started_at: string;
         completed_at?: string;
@@ -291,6 +296,8 @@ export const RestWorkflowExecutionService = {
       executionId: exec.id,
       canvasId: exec.workflow_id,
       title: exec.title,
+      triggerType: exec.trigger_type,
+      chatSessionId: exec.chat_session_id,
       status: exec.status as WorkflowExecution['status'],
       nodeExecutions: exec.node_executions?.map(ne => ({
         nodeExecutionId: ne.id,

@@ -19,6 +19,8 @@ export interface AgentPayload {
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   /** S3 bucket where the backend uploaded the full workspace */
   workspace_s3_bucket?: string;
+  /** S3 region for the workspace bucket */
+  workspace_s3_region?: string;
   /** S3 prefix — workspace files are at s3://{bucket}/{prefix}{relativePath} */
   workspace_s3_prefix?: string;
 }

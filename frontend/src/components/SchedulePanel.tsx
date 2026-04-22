@@ -65,6 +65,7 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
   const [newName, setNewName] = useState('');
   const [newCron, setNewCron] = useState('0 9 * * *');
   const [newTimezone, setNewTimezone] = useState('UTC');
+  const [newTimeoutMinutes, setNewTimeoutMinutes] = useState(10);
 
   useEffect(() => {
     loadSchedules(workflowId);
@@ -115,6 +116,7 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
       name: newName.trim(),
       cronExpression: newCron.trim(),
       timezone: newTimezone,
+      timeoutMinutes: newTimeoutMinutes,
       isEnabled: true,
     });
     setIsCreating(false);
@@ -261,6 +263,21 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
               </select>
             </div>
 
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">{t('schedule.timeout')}</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={newTimeoutMinutes}
+                  onChange={(e) => setNewTimeoutMinutes(Math.max(1, Math.min(1440, Number(e.target.value))))}
+                  className="w-20 px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-white focus:border-blue-500 outline-none"
+                />
+                <span className="text-xs text-gray-400">{t('schedule.minutes')}</span>
+              </div>
+            </div>
+
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setShowCreateForm(false)}
@@ -380,15 +397,16 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
                 {/* Status & Next Run */}
                 <div className="flex items-center justify-between text-xs">
                   <span className={`px-2 py-0.5 rounded ${
-                    schedule.isEnabled 
-                      ? 'bg-green-500/20 text-green-400' 
+                    schedule.isEnabled
+                      ? 'bg-green-500/20 text-green-400'
                       : 'bg-gray-500/20 text-gray-400'
                   }`}>
                     {schedule.isEnabled ? t('schedule.active') : t('schedule.disabled')}
                   </span>
-                  <span className="text-gray-500">
-                    {schedule.timezone}
-                  </span>
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <span>{schedule.timeoutMinutes ?? 10}min</span>
+                    <span>{schedule.timezone}</span>
+                  </div>
                 </div>
 
                 {/* Next Run */}

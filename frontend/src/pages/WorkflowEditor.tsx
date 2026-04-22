@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   ChevronDown, 
   Check, 
@@ -22,6 +22,7 @@ import {
   PanelLeftOpen,
   PanelLeftClose,
   Pencil,
+  MessageSquare,
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useWorkflows, useWorkflowExecution } from '@/services';
@@ -174,6 +175,7 @@ function getIconForNodeType(type: CanvasNodeType): string {
 export function WorkflowEditor() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { 
     workflows, 
     isLoading: workflowsLoading, 
@@ -197,7 +199,13 @@ export function WorkflowEditor() {
     history,
   } = useWorkflowExecution();
   
-  const [activeScopeId, setActiveScopeId] = useState<string | null>(null);
+  const WORKFLOW_SCOPE_STORAGE_KEY = 'super-agent-workflow-scope';
+  const [activeScopeId, setActiveScopeId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(WORKFLOW_SCOPE_STORAGE_KEY) || null;
+    }
+    return null;
+  });
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
     searchParams.get('id')
   );
@@ -229,10 +237,28 @@ export function WorkflowEditor() {
 
   // Set default active scope when scopes load
   useEffect(() => {
-    if (!activeScopeId && businessScopes.length > 0) {
-      setActiveScopeId(businessScopes[0].id);
+    if (businessScopes.length === 0) return;
+
+    // If a workflow ID is in URL, select the scope that owns it
+    const urlWorkflowId = searchParams.get('id');
+    if (urlWorkflowId && workflows.length > 0) {
+      const urlWorkflow = workflows.find(w => w.id === urlWorkflowId);
+      if (urlWorkflow?.businessScopeId && businessScopes.some(s => s.id === urlWorkflow.businessScopeId)) {
+        if (activeScopeId !== urlWorkflow.businessScopeId) {
+          setActiveScopeId(urlWorkflow.businessScopeId);
+          localStorage.setItem(WORKFLOW_SCOPE_STORAGE_KEY, urlWorkflow.businessScopeId);
+        }
+        return;
+      }
     }
-  }, [activeScopeId, businessScopes]);
+
+    // Validate stored scope still exists, otherwise fall back to first
+    if (!activeScopeId || !businessScopes.some(s => s.id === activeScopeId)) {
+      const fallback = businessScopes[0].id;
+      setActiveScopeId(fallback);
+      localStorage.setItem(WORKFLOW_SCOPE_STORAGE_KEY, fallback);
+    }
+  }, [activeScopeId, businessScopes, workflows, searchParams]);
 
   // Helper to find scope for a workflow
   const findScopeForWorkflow = useCallback((workflow: WorkflowType) => {
@@ -321,6 +347,7 @@ export function WorkflowEditor() {
   // Handle scope tab change
   const handleScopeChange = useCallback((scopeId: string) => {
     setActiveScopeId(scopeId);
+    localStorage.setItem(WORKFLOW_SCOPE_STORAGE_KEY, scopeId);
     setSelectedWorkflowId(null);
     setIsVersionDropdownOpen(false);
   }, []);
@@ -1095,15 +1122,45 @@ export function WorkflowEditor() {
                                 {exec.status}
                               </span>
                             </div>
-                            <div className="text-xs text-gray-400">
-                              {exec.createdAt && new Date(exec.createdAt).toLocaleString()}
+                            <div className="flex items-center gap-2 text-xs text-gray-400">
+                              <span>{exec.createdAt && new Date(exec.createdAt).toLocaleString()}</span>
+                              {exec.triggerType && (
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  exec.triggerType === 'scheduled'
+                                    ? 'bg-purple-500/20 text-purple-400'
+                                    : exec.triggerType === 'webhook'
+                                    ? 'bg-yellow-500/20 text-yellow-400'
+                                    : 'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {exec.triggerType}
+                                </span>
+                              )}
                             </div>
-                            {exec.nodeExecutions && (
-                              <div className="mt-2 text-xs text-gray-500">
-                                {exec.nodeExecutions.filter(n => n.status === 'finish' || n.status === 'completed').length}/
-                                {exec.nodeExecutions.length} nodes completed
-                              </div>
-                            )}
+                            <div className="mt-1.5 flex items-center justify-between">
+                              {exec.createdAt && exec.updatedAt && exec.status !== 'executing' ? (
+                                <span className="text-[10px] text-gray-500">
+                                  {(() => {
+                                    const ms = new Date(exec.updatedAt).getTime() - new Date(exec.createdAt).getTime();
+                                    const sec = Math.floor(ms / 1000);
+                                    return sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
+                                  })()}
+                                </span>
+                              ) : (
+                                <span />
+                              )}
+                              {exec.chatSessionId && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/chat?session=${exec.chatSessionId}`);
+                                  }}
+                                  className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-blue-400 transition-colors"
+                                  title="View chat session"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))
                       ) : (

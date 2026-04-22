@@ -5,7 +5,8 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { getAuthToken } from '@/services/api/restClient';
 import { useTranslation } from '@/i18n';
 
@@ -29,6 +30,8 @@ interface ExecutionDetail {
   workflow_id: string;
   status: string;
   title: string | null;
+  trigger_type: string | null;
+  chat_session_id: string | null;
   error_message: string | null;
   started_at: string;
   completed_at: string | null;
@@ -144,6 +147,7 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const token = getAuthToken();
@@ -163,6 +167,9 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
   ).length ?? 0;
   const failedCount = detail?.node_executions.filter(n => n.status === 'failed').length ?? 0;
   const totalCount = detail?.node_executions.length ?? 0;
+
+  const allNodesInit = totalCount > 0 && detail?.node_executions.every(n => n.status === 'init');
+  const isV2Execution = allNodesInit && detail?.status !== 'init';
 
   // Sort nodes by the original plan order (canvas_data.nodes)
   const sortedNodes = (() => {
@@ -192,6 +199,17 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
             {detail && (
               <div className="flex items-center gap-3 mt-1">
                 <StatusBadge status={detail.status} />
+                {detail.trigger_type && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    detail.trigger_type === 'scheduled'
+                      ? 'bg-purple-500/20 text-purple-400'
+                      : detail.trigger_type === 'webhook'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {detail.trigger_type}
+                  </span>
+                )}
                 <span className="text-xs text-gray-400">
                   {new Date(detail.started_at).toLocaleString()}
                 </span>
@@ -199,6 +217,18 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
                   <span className="text-xs text-gray-500">
                     {t('execution.duration').replace('{n}', String(Math.round((new Date(detail.completed_at).getTime() - new Date(detail.started_at).getTime()) / 1000)))}
                   </span>
+                )}
+                {detail.chat_session_id && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      navigate(`/chat?session=${detail.chat_session_id}`);
+                    }}
+                    className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    {t('execution.viewChat')}
+                  </button>
                 )}
               </div>
             )}
@@ -226,11 +256,27 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
           {detail && (
             <div className="space-y-4">
               {/* Summary */}
-              <div className="flex items-center gap-4 text-sm">
-                <span className="text-green-400">{t('execution.completed').replace('{n}', String(completedCount))}</span>
-                {failedCount > 0 && <span className="text-red-400">{t('execution.failed').replace('{n}', String(failedCount))}</span>}
-                <span className="text-gray-500">{t('execution.totalNodes').replace('{n}', String(totalCount))}</span>
-              </div>
+              {isV2Execution ? (
+                <div className="flex items-center gap-4 text-sm">
+                  <span className={
+                    detail.status === 'finish' ? 'text-green-400' :
+                    detail.status === 'failed' ? 'text-red-400' :
+                    detail.status === 'executing' ? 'text-blue-400' : 'text-gray-400'
+                  }>
+                    {detail.status === 'finish' ? t('execution.workflowCompleted') :
+                     detail.status === 'failed' ? t('execution.workflowFailed') :
+                     detail.status === 'executing' ? t('execution.workflowRunning') :
+                     detail.status}
+                  </span>
+                  <span className="text-gray-500">{t('execution.totalNodes').replace('{n}', String(totalCount))}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-4 text-sm">
+                  <span className="text-green-400">{t('execution.completed').replace('{n}', String(completedCount))}</span>
+                  {failedCount > 0 && <span className="text-red-400">{t('execution.failed').replace('{n}', String(failedCount))}</span>}
+                  <span className="text-gray-500">{t('execution.totalNodes').replace('{n}', String(totalCount))}</span>
+                </div>
+              )}
 
               {/* Execution error */}
               {detail.error_message && (
@@ -262,7 +308,10 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
                 <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">{t('execution.nodeLog')}</h3>
                 <div className="space-y-2">
                   {sortedNodes.map((node) => (
-                    <NodeRow key={node.id} node={node} />
+                    <NodeRow
+                      key={node.id}
+                      node={isV2Execution ? { ...node, status: detail.status === 'finish' ? 'finish' : detail.status === 'failed' ? 'failed' : node.status } : node}
+                    />
                   ))}
                 </div>
               </div>

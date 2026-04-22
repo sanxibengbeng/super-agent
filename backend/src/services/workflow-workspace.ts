@@ -27,6 +27,7 @@ export interface WorkflowWorkspaceResult {
 export async function provisionWorkflowWorkspace(
   organizationId: string,
   scopeId: string,
+  sessionId?: string,
 ): Promise<WorkflowWorkspaceResult> {
   // Load scope
   const scope = await businessScopeService.getBusinessScopeById(scopeId, organizationId);
@@ -69,8 +70,9 @@ export async function provisionWorkflowWorkspace(
     }
   }
 
-  // Provision workspace
-  const sessionId = crypto.randomUUID();
+  // Provision workspace — use provided sessionId (e.g. chatSessionId) so
+  // the workspace is accessible from the chat interface.
+  if (!sessionId) sessionId = crypto.randomUUID();
   const scopeForWorkspace: ScopeForWorkspace = {
     id: scope.id,
     name: scope.name,

@@ -91,6 +91,7 @@ const envSchema = z.object({
   AGENTCORE_BACKEND_API_URL: z.string().optional(),
   AGENTCORE_BACKEND_API_KEY: z.string().optional(),
   AGENTCORE_WORKSPACE_S3_BUCKET: z.string().optional().default('super-agent-workspaces'),
+  AGENTCORE_WORKSPACE_S3_REGION: z.string().optional(),
 
   // Agent Runtime selection: "claude" (default), "agentcore", or "openclaw"
   AGENT_RUNTIME: z.enum(['claude', 'agentcore', 'openclaw']).optional().default('claude'),
@@ -224,6 +225,7 @@ export const config = {
     backendApiUrl: env.AGENTCORE_BACKEND_API_URL,
     backendApiKey: env.AGENTCORE_BACKEND_API_KEY,
     workspaceS3Bucket: env.AGENTCORE_WORKSPACE_S3_BUCKET,
+    workspaceS3Region: env.AGENTCORE_WORKSPACE_S3_REGION ?? env.AWS_REGION,
     region: env.AWS_REGION,
   },
 

@@ -10,7 +10,7 @@
 
 import { query } from '@anthropic-ai/claude-agent-sdk'; 
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { syncWorkspaceToS3 } from './workspace-sync.js';
+import { syncWorkspaceToS3, syncClaudeHomeToS3 } from './workspace-sync.js';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import type { AgentPayload, AgentEvent, ContentBlock } from './types.js';
@@ -21,7 +21,8 @@ const DEFAULT_TOOLS = [
   'TodoWrite', 'ToolSearch', 'NotebookEdit',
 ];
 
-const s3 = new S3Client({ region: process.env.WORKSPACE_S3_REGION ?? 'us-east-1' });
+const DEFAULT_S3_REGION = process.env.WORKSPACE_S3_REGION ?? 'us-east-1';
+let s3: S3Client = new S3Client({ region: DEFAULT_S3_REGION });
 
 // ---------------------------------------------------------------------------
 // SDK Hooks for S3 sync (replaces file-watcher.ts)
@@ -87,8 +88,17 @@ function createStopHook(bucket: string, prefix: string) {
       } catch (err) {
         console.warn('[hook:Stop] Final sync failed:', err);
       }
-    })();
 
+      // 3. Sync ~/.claude to S3 (session resume data, projects state)
+      try {
+        const count = await syncClaudeHomeToS3(s3, bucket, prefix);
+        if (count > 0) {
+          console.log(`[hook:Stop] ~/.claude sync: ${count} files → S3`);
+        }
+      } catch (err) {
+        console.warn('[hook:Stop] ~/.claude sync failed:', err);
+      }
+    })();
     return {};
   };
 }
@@ -276,6 +286,11 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
 
   if (payload.mcp_servers && Object.keys(payload.mcp_servers).length > 0) {
     baseOptions.mcpServers = payload.mcp_servers;
+  }
+
+  // Update S3 client if payload specifies a region
+  if (payload.workspace_s3_region) {
+    s3 = new S3Client({ region: payload.workspace_s3_region });
   }
 
   // Register S3 sync hooks (replaces file-watcher)

@@ -449,6 +449,7 @@ model chat_sessions {
   status            String    @default("idle") // idle | generating | error
   sop_context       String?
   context           Json      @default("{}")
+  source            String    @default("user") @db.VarChar(20) // user | workflow
   room_mode         String    @default("single") @db.VarChar(20) // single | group
   routing_strategy  String    @default("auto") @db.VarChar(20) // auto | mention | round_robin
   is_starred        Boolean   @default(false)
@@ -458,15 +459,17 @@ model chat_sessions {
   created_at        DateTime  @default(now()) @db.Timestamptz
   updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz
 
-  organization       organizations        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  business_scope     business_scopes?     @relation(fields: [business_scope_id], references: [id], onDelete: SetNull)
-  chat_messages      chat_messages[]
-  im_thread_sessions im_thread_sessions[]
-  room_members       chat_room_members[]
+  organization        organizations          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope      business_scopes?       @relation(fields: [business_scope_id], references: [id], onDelete: SetNull)
+  chat_messages       chat_messages[]
+  im_thread_sessions  im_thread_sessions[]
+  room_members        chat_room_members[]
+  workflow_executions workflow_executions[]
 
   @@index([organization_id])
   @@index([user_id])
   @@index([business_scope_id])
+  @@index([source])
   @@index([room_mode])
   @@index([created_at(sort: Desc)])
   @@index([organization_id, user_id])
@@ -516,6 +519,7 @@ model workflow_executions {
   paused_at_node  String?
   current_segment Int       @default(0)
   segment_plan    Json      @default("[]")
+  chat_session_id String?   @db.Uuid
   error_message   String?
   error_stack     String?
   started_at      DateTime  @default(now()) @db.Timestamptz
@@ -525,6 +529,7 @@ model workflow_executions {
 
   workflow                   workflows                    @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
   organization               organizations                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  chat_session               chat_sessions?               @relation(fields: [chat_session_id], references: [id], onDelete: SetNull)
   node_executions            node_executions[]
   execution_checkpoints      execution_checkpoints[]
   webhook_call_records       webhook_call_records[]
@@ -535,6 +540,7 @@ model workflow_executions {
   @@index([user_id])
   @@index([status])
   @@index([trigger_type])
+  @@index([chat_session_id])
   @@index([created_at(sort: Desc)])
   @@index([started_at(sort: Desc)])
   @@index([organization_id, workflow_id])
@@ -701,6 +707,7 @@ model workflow_schedules {
   run_count       Int       @default(0)
   failure_count   Int       @default(0)
   max_retries     Int       @default(3)
+  timeout_minutes Int       @default(10)
   created_by      String?   @db.Uuid
   created_at      DateTime  @default(now()) @db.Timestamptz
   updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz

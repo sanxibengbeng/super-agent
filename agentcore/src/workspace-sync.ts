@@ -26,6 +26,8 @@ import { pipeline } from 'stream/promises';
 import { createReadStream, createWriteStream } from 'fs';
 
 const WORKSPACE_DIR = '/workspace';
+const CLAUDE_HOME_DIR = `${process.env.HOME ?? '/root'}/.claude`;
+const CLAUDE_HOME_S3_PREFIX = '__claude_home__/';
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '__pycache__']);
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
@@ -64,6 +66,8 @@ export async function restoreWorkspaceFromS3(
   for (const key of allKeys) {
     const relativePath = key.slice(prefix.length);
     if (!relativePath) continue;
+    // Skip __claude_home__/ files — those go to ~/.claude via restoreClaudeHomeFromS3
+    if (relativePath.startsWith(CLAUDE_HOME_S3_PREFIX)) continue;
 
     const localPath = path.join(WORKSPACE_DIR, relativePath);
     fs.mkdirSync(path.dirname(localPath), { recursive: true });
@@ -138,4 +142,94 @@ function walkDir(dir: string): string[] {
     }
   }
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// ~/.claude sync: persist Claude Code session state across microVM restarts
+// ---------------------------------------------------------------------------
+
+export async function restoreClaudeHomeFromS3(
+  s3: S3Client,
+  bucket: string,
+  workspacePrefix: string,
+): Promise<number> {
+  const s3Prefix = `${workspacePrefix}${CLAUDE_HOME_S3_PREFIX}`;
+
+  const allKeys: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const result = await s3.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: s3Prefix,
+      ContinuationToken: continuationToken,
+    }));
+    for (const obj of result.Contents ?? []) {
+      if (obj.Key) allKeys.push(obj.Key);
+    }
+    continuationToken = result.NextContinuationToken;
+  } while (continuationToken);
+
+  if (allKeys.length === 0) return 0;
+
+  console.log(`[workspace-sync] Restoring ${allKeys.length} ~/.claude files from S3...`);
+
+  let restored = 0;
+  for (const key of allKeys) {
+    const relativePath = key.slice(s3Prefix.length);
+    if (!relativePath) continue;
+
+    const localPath = path.join(CLAUDE_HOME_DIR, relativePath);
+    fs.mkdirSync(path.dirname(localPath), { recursive: true });
+
+    try {
+      const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      if (response.Body) {
+        await pipeline(response.Body as NodeJS.ReadableStream, createWriteStream(localPath));
+        restored++;
+      }
+    } catch (err) {
+      console.warn(`[workspace-sync] Failed to restore ~/.claude/${relativePath}: ${err}`);
+    }
+  }
+
+  if (restored > 0) {
+    console.log(`[workspace-sync] Restored ${restored} ~/.claude files`);
+  }
+  return restored;
+}
+
+export async function syncClaudeHomeToS3(
+  s3: S3Client,
+  bucket: string,
+  workspacePrefix: string,
+): Promise<number> {
+  if (!fs.existsSync(CLAUDE_HOME_DIR)) return 0;
+
+  const s3Prefix = `${workspacePrefix}${CLAUDE_HOME_S3_PREFIX}`;
+  let uploaded = 0;
+
+  for (const filePath of walkDir(CLAUDE_HOME_DIR)) {
+    const relativePath = path.relative(CLAUDE_HOME_DIR, filePath);
+    const key = `${s3Prefix}${relativePath}`;
+
+    try {
+      const fileStat = fs.statSync(filePath);
+      if (fileStat.size > MAX_FILE_SIZE) continue;
+
+      await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentLength: fileStat.size,
+      }));
+      uploaded++;
+    } catch (err) {
+      console.warn(`[workspace-sync] Upload failed for ~/.claude/${relativePath}: ${err}`);
+    }
+  }
+
+  if (uploaded > 0) {
+    console.log(`[workspace-sync] Synced ${uploaded} ~/.claude files to S3`);
+  }
+  return uploaded;
 }

@@ -20,6 +20,7 @@ const createScheduleSchema = z.object({
   variables: z.array(z.any()).optional(),
   isEnabled: z.boolean().optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
+  timeoutMinutes: z.number().int().min(1).max(1440).optional(),
 });
 
 const updateScheduleSchema = z.object({
@@ -29,6 +30,7 @@ const updateScheduleSchema = z.object({
   variables: z.array(z.any()).optional(),
   isEnabled: z.boolean().optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
+  timeoutMinutes: z.number().int().min(1).max(1440).optional(),
 });
 
 const paginationSchema = z.object({
@@ -99,6 +101,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
           cronExpression: s.cronExpression,
           timezone: s.timezone,
           isEnabled: s.isEnabled,
+          timeoutMinutes: s.timeoutMinutes,
           nextRunAt: s.nextRunAt?.toISOString() || null,
           lastRunAt: s.lastRunAt?.toISOString() || null,
           runCount: s.runCount,
@@ -138,6 +141,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             variables: { type: 'array' },
             isEnabled: { type: 'boolean' },
             maxRetries: { type: 'integer', minimum: 0, maximum: 10 },
+            timeoutMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
           },
         },
       },
@@ -162,6 +166,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             cronExpression: schedule.cronExpression,
             timezone: schedule.timezone,
             isEnabled: schedule.isEnabled,
+            timeoutMinutes: schedule.timeoutMinutes,
             nextRunAt: schedule.nextRunAt?.toISOString() || null,
             createdAt: schedule.createdAt.toISOString(),
           },
@@ -215,6 +220,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
           timezone: schedule.timezone,
           isEnabled: schedule.isEnabled,
           variables: schedule.variables,
+          timeoutMinutes: schedule.timeoutMinutes,
           nextRunAt: schedule.nextRunAt?.toISOString() || null,
           lastRunAt: schedule.lastRunAt?.toISOString() || null,
           runCount: schedule.runCount,
@@ -254,6 +260,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             variables: { type: 'array' },
             isEnabled: { type: 'boolean' },
             maxRetries: { type: 'integer', minimum: 0, maximum: 10 },
+            timeoutMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
           },
         },
       },
@@ -275,6 +282,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             cronExpression: schedule.cronExpression,
             timezone: schedule.timezone,
             isEnabled: schedule.isEnabled,
+            timeoutMinutes: schedule.timeoutMinutes,
             nextRunAt: schedule.nextRunAt?.toISOString() || null,
           },
         });

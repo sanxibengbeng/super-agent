@@ -124,6 +124,7 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [backendSessionId, setBackendSessionId] = useState<string | null>(() => {
+    if (initialSessionId) return initialSessionId
     if (typeof window === 'undefined') return null
     return localStorage.getItem(CHAT_BACKEND_SESSION_STORAGE_KEY) || null
   })
@@ -230,10 +231,18 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
       setIsLoading(true)
       setError(null)
       try {
-        const history = await ChatService.getHistory(sessionId)
-        // If we have a backend session, store in manager; otherwise just load context
-        if (backendSessionId) {
-          sessionStreamManager.setMessages(backendSessionId, history)
+        if (backendSessionId && shouldUseRestApi()) {
+          RestChatService.setCurrentSessionId(backendSessionId)
+          const existingState = sessionStreamManager.getSession(backendSessionId)
+          if (existingState.messages.length === 0) {
+            const history = await RestChatService.getSessionHistory(backendSessionId)
+            sessionStreamManager.setMessages(backendSessionId, history)
+          }
+        } else {
+          const history = await ChatService.getHistory(sessionId)
+          if (backendSessionId) {
+            sessionStreamManager.setMessages(backendSessionId, history)
+          }
         }
         const contextData = await ChatService.getContext(activeSop)
         setContext(contextData)

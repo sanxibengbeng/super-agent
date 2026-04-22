@@ -105,6 +105,7 @@ export class ChatService {
    */
   async getAllSessions(organizationId: string): Promise<ChatSessionEntity[]> {
     return chatSessionRepository.findAll(organizationId, {
+      where: { source: { not: 'workflow' } } as any,
       orderBy: { created_at: 'desc' },
     });
   }
@@ -143,9 +144,10 @@ export class ChatService {
         claude_session_id: null,
         title: null,
         status: 'idle',
+        source: 'user',
         sop_context: data.sop_context ?? null,
         context: data.context ?? {},
-      },
+      } as any,
       organizationId,
       userId,
     );

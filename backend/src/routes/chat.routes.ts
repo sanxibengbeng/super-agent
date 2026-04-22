@@ -841,6 +841,67 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   );
 
   /**
+   * GET /api/chat/sessions/:id/workspace/claude-home
+   * List files in the session's ~/.claude directory (from S3 __claude_home__/).
+   */
+  fastify.get<{ Params: { id: string } }>(
+    '/sessions/:id/workspace/claude-home',
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: 'List files in the session ~/.claude directory',
+        tags: ['Chat'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = validateSchema(idParamSchema, request.params);
+      const session = await chatService.getSessionById(id, request.user!.orgId);
+
+      const context = session.context as Record<string, unknown> | null;
+      const scopeIdForPath = session.business_scope_id
+        || (context?.project_id as string | undefined)
+        || null;
+
+      if (!scopeIdForPath) {
+        return reply.status(200).send({ files: [] });
+      }
+
+      try {
+        const { config: appConfig } = await import('../config/index.js');
+        let files;
+        if (appConfig.agentRuntime === 'agentcore') {
+          try {
+            const entries = await agentCoreCommandService.listClaudeHomeFiles(session.id);
+            files = buildTreeFromEntries(entries);
+          } catch {
+            files = await workspaceManager.listClaudeHomeFromS3(
+              request.user!.orgId,
+              scopeIdForPath,
+              session.id,
+            );
+          }
+        } else {
+          files = await workspaceManager.listClaudeHomeFromS3(
+            request.user!.orgId,
+            scopeIdForPath,
+            session.id,
+          );
+        }
+        return reply.status(200).send({ files: files ?? [] });
+      } catch (err) {
+        console.warn(`[workspace] Failed to list ~/.claude for session ${id}:`, err instanceof Error ? err.message : err);
+        return reply.status(200).send({ files: [] });
+      }
+    },
+  );
+
+  /**
    * GET /api/chat/sessions/:id/workspace/skills
    * List skills installed in the session's workspace.
    */
