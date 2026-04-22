@@ -460,17 +460,21 @@ export function WorkflowEditor() {
   const executeWorkflow = useCallback(async (runtimeVariables: import('@/types/canvas/metadata').WorkflowVariableDefinition[]) => {
     if (!selectedWorkflow || isRunningV2 || !activeScopeId) return;
     setShowRunModal(false);
-    
-    // Open copilot panel and start execution message
-    setShowCopilotPanel(true);
+
+    // Show execution history panel (not copilot) for manual runs
+    setShowHistoryPanel(true);
     setIsRunningV2(true);
-    // Clear previous execution states
     setV2NodeStates(new Map());
-    const msgId = copilotRef.current?.startExecution();
-    if (!msgId) { setIsRunningV2(false); return; }
 
     const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
     const token = getAuthToken();
+
+    // Refresh execution history once after the backend creates the record, then periodically
+    setTimeout(() => { if (selectedWorkflow?.id) loadHistory(selectedWorkflow.id); }, 2000);
+    const historyInterval = setInterval(() => {
+      if (selectedWorkflow?.id) loadHistory(selectedWorkflow.id);
+    }, 5000);
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/workflows/${selectedWorkflow.id}/execute-v2`, {
         method: 'POST',
@@ -517,7 +521,6 @@ export function WorkflowEditor() {
           try {
             const event = JSON.parse(data);
             if (event.type === 'heartbeat') continue;
-            copilotRef.current?.pushExecutionEvent(msgId, event);
 
             // Update canvas node execution states
             if (event.type === 'step_start' && event.taskId) {
@@ -559,30 +562,21 @@ export function WorkflowEditor() {
                 return next;
               });
             }
-
-            if (event.type === 'done') {
-              copilotRef.current?.finishExecution(msgId, true);
-            }
           } catch {
             // skip unparseable
           }
         }
       }
-
-      // If we didn't get a 'done' event, finish anyway
-      copilotRef.current?.finishExecution(msgId, true);
     } catch (err) {
       console.error('V2 execution error:', err);
-      copilotRef.current?.finishExecution(msgId, false, err instanceof Error ? err.message : 'Execution failed');
     } finally {
+      clearInterval(historyInterval);
       setIsRunningV2(false);
-      // Refresh execution history after run completes
-      // Delay slightly to ensure the backend has finished writing the final status
       if (selectedWorkflow?.id) {
         setTimeout(() => loadHistory(selectedWorkflow.id), 1000);
       }
     }
-  }, [selectedWorkflow, isRunningV2, activeScopeId]);
+  }, [selectedWorkflow, isRunningV2, activeScopeId, loadHistory]);
 
   // Handle abort workflow
   const handleAbortWorkflow = useCallback(async () => {

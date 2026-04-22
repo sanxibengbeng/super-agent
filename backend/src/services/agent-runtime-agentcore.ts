@@ -46,6 +46,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
 
   private runtimeClient: any;
   private InvokeCommand: any;
+  private StopSessionCommand: any;
   private sdkLoaded = false;
   private s3Client: S3Client;
   private readonly workspaceBucket: string;
@@ -68,6 +69,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       console.log(`[agentcore-runtime] SDK region=${region} (from ARN: ${arnRegion}, config: ${config.agentcore.region})`);
       this.runtimeClient = new mod.BedrockAgentCoreClient({ region });
       this.InvokeCommand = mod.InvokeAgentRuntimeCommand;
+      this.StopSessionCommand = mod.StopRuntimeSessionCommand;
       this.sdkLoaded = true;
     } catch (err) {
       throw new Error(`AgentCore SDK not available. Install @aws-sdk/client-bedrock-agentcore. Error: ${err}`);
@@ -157,21 +159,54 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     };
     console.log(`[agentcore-runtime] command input:`, JSON.stringify({ ...commandInput, payload: '(omitted)' }));
 
+    const MAX_RETRIES = 2;
     let response: any;
-    try {
-      response = await this.runtimeClient.send(new this.InvokeCommand(commandInput));
-      console.log(`[agentcore-runtime] response status=${response.$metadata?.httpStatusCode}`);
-    } catch (err: any) {
-      console.error(`[agentcore-runtime] INVOKE ERROR:`);
-      console.error(`[agentcore-runtime]   name=${err?.name}`);
-      console.error(`[agentcore-runtime]   message=${err?.message}`);
-      console.error(`[agentcore-runtime]   code=${err?.$metadata?.httpStatusCode}`);
-      console.error(`[agentcore-runtime]   requestId=${err?.$metadata?.requestId}`);
-      console.error(`[agentcore-runtime]   stack=${err?.stack?.split('\n').slice(0, 5).join('\n')}`);
+    let lastError: any;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        response = await this.runtimeClient.send(new this.InvokeCommand(commandInput));
+        console.log(`[agentcore-runtime] response status=${response.$metadata?.httpStatusCode}`);
+        lastError = null;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        const isHealthCheckError = err?.name === 'RuntimeClientError'
+          && typeof err?.message === 'string'
+          && err.message.includes('health check');
+
+        console.error(`[agentcore-runtime] INVOKE ERROR (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`);
+        console.error(`[agentcore-runtime]   name=${err?.name}`);
+        console.error(`[agentcore-runtime]   message=${err?.message}`);
+        console.error(`[agentcore-runtime]   code=${err?.$metadata?.httpStatusCode}`);
+        console.error(`[agentcore-runtime]   requestId=${err?.$metadata?.requestId}`);
+
+        if (isHealthCheckError && attempt < MAX_RETRIES) {
+          // Stop the broken session so AgentCore provisions a fresh microVM
+          try {
+            await this.runtimeClient.send(new this.StopSessionCommand({
+              agentRuntimeArn: this.runtimeArn,
+              runtimeSessionId: sessionId,
+            }));
+            console.log(`[agentcore-runtime] Stopped stale session ${sessionId}, retrying in 3s...`);
+          } catch (stopErr: any) {
+            console.warn(`[agentcore-runtime] Failed to stop session: ${stopErr?.message}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          continue;
+        }
+
+        // Non-retryable error or retries exhausted
+        console.error(`[agentcore-runtime]   stack=${err?.stack?.split('\n').slice(0, 5).join('\n')}`);
+        break;
+      }
+    }
+
+    if (lastError) {
       yield {
         type: 'error',
         code: 'AGENTCORE_INVOKE_ERROR',
-        message: `Failed to invoke AgentCore: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Failed to invoke AgentCore: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
         suggestedAction: 'Check AGENTCORE_RUNTIME_ARN and IAM permissions',
       };
       return;
