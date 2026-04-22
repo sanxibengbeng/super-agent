@@ -1126,6 +1126,50 @@ export class WorkspaceManager {
   }
 
   /**
+   * List ~/.claude files from S3 (__claude_home__/ prefix).
+   * Used as fallback when the AgentCore container is unavailable.
+   */
+  async listClaudeHomeFromS3(
+    orgId: string,
+    scopeId: string,
+    sessionId: string,
+    bucket?: string,
+  ): Promise<WorkspaceFileNode[] | null> {
+    const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
+    const prefix = `${orgId}/${scopeId}/${sessionId}/__claude_home__/`;
+
+    try {
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const allKeys: Array<{ key: string; size: number }> = [];
+      let continuationToken: string | undefined;
+
+      do {
+        const result = await this.s3Client.send(new ListObjectsV2Command({
+          Bucket: s3Bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }));
+        for (const obj of result.Contents ?? []) {
+          if (obj.Key) {
+            const relKey = obj.Key.slice(prefix.length);
+            if (relKey) {
+              allKeys.push({ key: relKey, size: obj.Size ?? 0 });
+            }
+          }
+        }
+        continuationToken = result.NextContinuationToken;
+      } while (continuationToken);
+
+      if (allKeys.length === 0) return null;
+
+      return this.buildTreeFromKeys(allKeys);
+    } catch (err) {
+      console.warn('[workspace-manager] Failed to list S3 ~/.claude:', err);
+      return null;
+    }
+  }
+
+  /**
    * Copy a marketplace-installed skill into a session workspace.
    */
   async installSkillToWorkspace(

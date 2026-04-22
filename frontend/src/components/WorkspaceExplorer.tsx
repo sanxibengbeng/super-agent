@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { FolderOpen, File, ChevronRight, ChevronDown, RefreshCw, FolderTree, PanelRightClose, PanelRightOpen, Zap, Bot, Rocket, Puzzle, Server } from 'lucide-react'
+import { FolderOpen, File, ChevronRight, ChevronDown, RefreshCw, FolderTree, PanelRightClose, PanelRightOpen, Zap, Bot, Rocket, Puzzle, Server, Home } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
 import { SkillsPanel } from './SkillsPanel'
 import { PluginsPanel } from './PluginsPanel'
@@ -190,6 +190,12 @@ export function WorkspaceExplorer({
   const [mcpPanelOpen, setMcpPanelOpen] = useState(false)
   const initializedRef = useRef(false)
 
+  // ~/.claude section state
+  const [claudeHomeFiles, setClaudeHomeFiles] = useState<FileNode[]>([])
+  const [claudeHomeExpanded, setClaudeHomeExpanded] = useState(false)
+  const [claudeHomeExpandedPaths, setClaudeHomeExpandedPaths] = useState<Set<string>>(new Set())
+  const claudeHomeInitRef = useRef(false)
+
   const togglePath = useCallback((path: string) => {
     setExpandedPaths(prev => {
       const next = new Set(prev)
@@ -198,6 +204,45 @@ export function WorkspaceExplorer({
       return next
     })
   }, [])
+
+  const toggleClaudeHomePath = useCallback((path: string) => {
+    setClaudeHomeExpandedPaths(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  const loadClaudeHome = useCallback(async () => {
+    if (!sessionId) return
+    try {
+      const res = await restClient.get<{ files: FileNode[] }>(
+        `/api/chat/sessions/${sessionId}/workspace/claude-home`
+      )
+      setClaudeHomeFiles(res.files)
+      if (!claudeHomeInitRef.current && res.files.length > 0) {
+        const defaults: string[] = []
+        const walk = (nodes: FileNode[], depth: number) => {
+          for (const n of nodes) {
+            if (n.type === 'directory' && depth < 2) {
+              defaults.push(n.path)
+              if (n.children) walk(n.children, depth + 1)
+            }
+          }
+        }
+        walk(res.files, 0)
+        setClaudeHomeExpandedPaths(new Set(defaults))
+        claudeHomeInitRef.current = true
+      }
+    } catch {
+      // silently ignore
+    }
+  }, [sessionId])
+
+  useEffect(() => {
+    if (claudeHomeExpanded) void loadClaudeHome()
+  }, [claudeHomeExpanded, loadClaudeHome])
 
   // Collect default expanded paths (depth < 2) for initial load only
   const collectDefaults = useCallback((nodes: FileNode[], depth = 0): string[] => {
@@ -400,6 +445,35 @@ export function WorkspaceExplorer({
             files.map((node) => (
               <TreeNode key={node.path} node={node} onFileClick={handleFileClick} expandedPaths={expandedPaths} onToggle={togglePath} />
             ))
+          )}
+        </div>
+
+        {/* ~/.claude section */}
+        <div className="border-t border-gray-800">
+          <button
+            onClick={() => setClaudeHomeExpanded(prev => !prev)}
+            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 transition-colors"
+          >
+            {claudeHomeExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <Home className="w-3.5 h-3.5" />
+            <span className="font-medium">~/.claude</span>
+          </button>
+          {claudeHomeExpanded && (
+            <div className="max-h-48 overflow-y-auto py-1">
+              {claudeHomeFiles.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-gray-600">No ~/.claude files found</div>
+              ) : (
+                claudeHomeFiles.map((node) => (
+                  <TreeNode
+                    key={node.path}
+                    node={node}
+                    onFileClick={(p, n) => handleFileClick(`__claude_home__/${p}`, n)}
+                    expandedPaths={claudeHomeExpandedPaths}
+                    onToggle={toggleClaudeHomePath}
+                  />
+                ))
+              )}
+            </div>
           )}
         </div>
       </div>

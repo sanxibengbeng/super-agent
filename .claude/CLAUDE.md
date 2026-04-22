@@ -521,6 +521,16 @@ All environment variables are defined in `docker-compose.yml` for the containers
 Local dev uses the shared AgentCore runtime:
 - Runtime ARN: `arn:aws:bedrock-agentcore:us-east-1:873543029686:runtime/SuperAgentEks_Runtime-3xzeklD05D`
 - Workspace S3: `super-agent-local-dev-workspace`
+- ECR: `873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore`
+- **AgentCore requires ARM (linux/arm64) images.** Build natively on ARM hosts — do not cross-compile to amd64.
+
+```bash
+# Build and push agentcore image
+cd agentcore
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 873543029686.dkr.ecr.us-east-1.amazonaws.com
+docker build -t 873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore:latest .
+docker push 873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore:latest
+```
 
 ### Production (AWS)
 ```bash

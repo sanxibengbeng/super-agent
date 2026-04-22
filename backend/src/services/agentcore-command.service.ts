@@ -114,14 +114,40 @@ export class AgentCoreCommandService {
     }).filter(e => e.path); // filter out empty root entry
   }
 
-  /** Read a file from /workspace. Returns null if not found. */
+  /** List files in ~/.claude as a flat entry list. */
+  async listClaudeHomeFiles(sessionId: string): Promise<WorkspaceFileEntry[]> {
+    const { stdout, exitCode } = await this.runCommand(
+      sessionId,
+      `find ~/.claude -not -path '*/node_modules/*' -not -path '*/.git/*' -printf '%y %s %P\\n' 2>/dev/null | sort`,
+    );
+
+    if (exitCode !== 0 || !stdout.trim()) return [];
+
+    return stdout.trim().split('\n').filter(Boolean).map(line => {
+      const [type, sizeStr, ...pathParts] = line.split(' ');
+      const path = pathParts.join(' ');
+      return {
+        type: type === 'd' ? 'directory' as const : 'file' as const,
+        size: parseInt(sizeStr ?? '0', 10),
+        path,
+      };
+    }).filter(e => e.path);
+  }
+
+  /** Read a file from /workspace (or ~/.claude if prefixed with __claude_home__/). */
   async readFile(sessionId: string, filePath: string): Promise<string | null> {
-    const safe = this.sanitizePath(filePath);
+    let basePath = '/workspace';
+    let targetPath = filePath;
+    if (filePath.startsWith('__claude_home__/')) {
+      basePath = '~/.claude';
+      targetPath = filePath.slice('__claude_home__/'.length);
+    }
+    const safe = this.sanitizePath(targetPath);
     if (!safe) return null;
 
     const { stdout, exitCode } = await this.runCommand(
       sessionId,
-      `cat /workspace/${safe}`,
+      `cat ${basePath}/${safe}`,
     );
 
     return exitCode === 0 ? stdout : null;
