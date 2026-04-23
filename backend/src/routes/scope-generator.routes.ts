@@ -89,8 +89,8 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
           sseData.sessionId = event.sessionId;
         } else if (event.type === 'assistant' || event.type === 'result') {
           sseData.content = (event as ConversationEvent & { content?: unknown }).content;
-        } else if ((event as Record<string, unknown>).type === 'scope_config') {
-          sseData.content = (event as Record<string, unknown>).content;
+        } else if ((event as unknown as Record<string, unknown>).type === 'scope_config') {
+          sseData.content = (event as unknown as Record<string, unknown>).content;
         } else if (event.type === 'error') {
           sseData.code = (event as ConversationEvent & { code?: string }).code;
           sseData.message = (event as ConversationEvent & { message?: string }).message;
@@ -189,8 +189,8 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
           sseData.sessionId = event.sessionId;
         } else if (event.type === 'assistant' || event.type === 'result') {
           sseData.content = (event as ConversationEvent & { content?: unknown }).content;
-        } else if ((event as Record<string, unknown>).type === 'scope_config') {
-          sseData.content = (event as Record<string, unknown>).content;
+        } else if ((event as unknown as Record<string, unknown>).type === 'scope_config') {
+          sseData.content = (event as unknown as Record<string, unknown>).content;
         } else if (event.type === 'error') {
           sseData.code = (event as ConversationEvent & { code?: string }).code;
           sseData.message = (event as ConversationEvent & { message?: string }).message;
@@ -496,7 +496,7 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         const sseData: Record<string, unknown> = { type: event.type };
         if (event.type === 'session_start') sseData.sessionId = event.sessionId;
         else if (event.type === 'assistant' || event.type === 'result') sseData.content = (event as ConversationEvent & { content?: unknown }).content;
-        else if ((event as Record<string, unknown>).type === 'scope_config') sseData.content = (event as Record<string, unknown>).content;
+        else if ((event as unknown as Record<string, unknown>).type === 'scope_config') sseData.content = (event as unknown as Record<string, unknown>).content;
         else if (event.type === 'error') { sseData.code = (event as ConversationEvent & { code?: string }).code; sseData.message = (event as ConversationEvent & { message?: string }).message; }
         reply.raw.write(formatSSEEvent({ data: JSON.stringify(sseData) }));
       }
