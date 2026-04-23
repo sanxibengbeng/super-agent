@@ -36,9 +36,9 @@ export function CreateBusinessScope() {
   const [pendingNavState, setPendingNavState] = useState<{ description: string; hasSopFile?: boolean; deptName?: string; hasDocument?: boolean } | null>(null)
 
   /** Open the language dialog before navigating to the AI generator */
-  const promptLanguageAndNavigate = useCallback((description: string, hasSopFile?: boolean) => {
+  const promptLanguageAndNavigate = useCallback((description: string, hasSopFile?: boolean, deptName?: string) => {
     setSelectedLang(currentLanguage)
-    setPendingNavState({ description, hasSopFile })
+    setPendingNavState({ description, hasSopFile, deptName })
     setShowLangDialog(true)
   }, [currentLanguage])
 
@@ -68,7 +68,7 @@ export function CreateBusinessScope() {
       const token = getAuthToken()
       const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
-      const deptName = pendingNavState.deptName || selectedDept || 'New Scope'
+      const deptName = pendingNavState.deptName || (selectedDept === 'Other' ? customDeptName.trim() : selectedDept) || 'New Scope'
       const response = await fetch(`${API_BASE_URL}/api/business-scopes`, {
         method: 'POST',
         headers: {
@@ -242,7 +242,8 @@ export function CreateBusinessScope() {
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   if (naturalLanguageInput.trim()) {
-                                    promptLanguageAndNavigate(naturalLanguageInput.trim())
+                                    const resolvedDeptName = selectedDept === 'Other' ? customDeptName.trim() : selectedDept
+                                    promptLanguageAndNavigate(naturalLanguageInput.trim(), undefined, resolvedDeptName || undefined)
                                   }
                                 }}
                                 disabled={!naturalLanguageInput.trim()}

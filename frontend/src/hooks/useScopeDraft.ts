@@ -90,14 +90,27 @@ function localId(): string {
 const EMPTY_SCOPE: GeneratedScope = { name: '', description: '', icon: '📋', color: '#6366f1' }
 
 export function useScopeDraft(scopeId: string | null) {
-  const [draft, setDraft] = useState<ScopeDraft>({ scope: EMPTY_SCOPE, agents: [] })
-  const [chatHistory, setChatHistory] = useState<ChatMessageDraft[]>([])
-  const [isDirty, setIsDirty] = useState(false)
-  const [versions, setVersions] = useState<VersionSnapshot[]>([])
+  const [draft, setDraft] = useState<ScopeDraft>(() => {
+    if (!scopeId) return { scope: EMPTY_SCOPE, agents: [] }
+    const stored = loadDraft(scopeId)
+    return stored ? stored.draft : { scope: EMPTY_SCOPE, agents: [] }
+  })
+  const [chatHistory, setChatHistory] = useState<ChatMessageDraft[]>(() => {
+    if (!scopeId) return []
+    const stored = loadDraft(scopeId)
+    return stored ? stored.chatHistory : []
+  })
+  const [isDirty, setIsDirty] = useState(() => {
+    if (!scopeId) return false
+    return !!loadDraft(scopeId)
+  })
+  const [versions, setVersions] = useState<VersionSnapshot[]>(() => scopeId ? loadVersions(scopeId) : [])
   const [isSaving, setIsSaving] = useState(false)
-  const savedDraftRef = useRef<string>('')
+  const savedDraftRef = useRef<string>(
+    scopeId ? (() => { const s = loadDraft(scopeId); return s ? JSON.stringify(s.draft) : '' })() : ''
+  )
 
-  // Load from LocalStorage on mount
+  // Re-sync if scopeId changes after mount
   useEffect(() => {
     if (!scopeId) return
     const stored = loadDraft(scopeId)
