@@ -103,13 +103,15 @@ export class ChatSessionRepository extends BaseRepository<ChatSessionEntity> {
     data: Omit<
       ChatSessionEntity,
       'id' | 'organization_id' | 'user_id' | 'created_at' | 'updated_at'
-    >,
+    > & { id?: string },
     organizationId: string,
     userId: string
   ): Promise<ChatSessionEntity> {
+    const { id, ...rest } = data;
     return this.getModel().create({
       data: {
-        ...data,
+        ...rest,
+        ...(id ? { id } : {}),
         organization_id: organizationId,
         user_id: userId,
       },

@@ -66,6 +66,7 @@ export interface ChatStreamOptions {
   sessionId?: string;
   message: string;
   context?: Record<string, unknown>;
+  source?: string;
 }
 
 export interface ChatHistoryOptions {
@@ -139,12 +140,13 @@ export class ChatService {
 
     return chatSessionRepository.createForUser(
       {
+        ...(data.session_id ? { id: data.session_id } : {}),
         business_scope_id: data.business_scope_id ?? null,
         agent_id: data.agent_id ?? null,
         claude_session_id: null,
         title: null,
         status: 'idle',
-        source: 'user',
+        source: data.source ?? 'user',
         sop_context: data.sop_context ?? null,
         context: data.context ?? {},
       } as any,
@@ -867,9 +869,20 @@ export class ChatService {
     let session: ChatSessionEntity;
     let pluginPaths: string[] = [];
 
-    if (!sessionId) {
+    // Try to find an existing session (handles both explicit sessionId and deterministic IDs)
+    const existingSession = sessionId
+      ? await chatSessionRepository.findById(sessionId, organizationId).catch(() => null)
+      : null;
+
+    if (!existingSession) {
       session = await this.createSession(
-        { business_scope_id: scopeId, agent_id: selectedAgentId, context: options.context ?? {} },
+        {
+          session_id: sessionId,  // use deterministic id if provided
+          business_scope_id: scopeId,
+          agent_id: selectedAgentId,
+          context: options.context ?? {},
+          source: options.source,
+        },
         organizationId,
         userId,
       );
@@ -881,7 +894,8 @@ export class ChatService {
       );
       pluginPaths = provisionResult.pluginPaths;
     } else {
-      session = await this.getSessionById(sessionId, organizationId);
+      session = existingSession;
+      sessionId = session.id;
 
       // Lazy refresh: check if workspace is up-to-date
       const refreshResult = await this.workspaceManager.ensureWorkspaceUpToDate(

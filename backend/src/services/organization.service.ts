@@ -13,6 +13,7 @@ import {
   type MembershipEntity,
 } from '../repositories/membership.repository.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { seedCopilotService } from './seed-copilot.service.js';
 import type {
   CreateOrganizationInput,
   UpdateOrganizationInput,
@@ -131,6 +132,11 @@ export class OrganizationService {
       },
       organization.id
     );
+
+    // Seed system copilots (workflow-copilot, scope-copilot) for the new org
+    seedCopilotService.ensureSeedCopilots(organization.id).catch((err) => {
+      console.error('[org-create] Failed to seed copilots:', err);
+    });
 
     return organization;
   }

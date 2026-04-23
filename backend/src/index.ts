@@ -1,5 +1,6 @@
 import { buildApp } from './app.js';
 import { config } from './config/index.js';
+import { seedCopilotService } from './services/seed-copilot.service.js';
 
 // Prevent unhandled rejections from crashing the process
 process.on('unhandledRejection', (reason) => {
@@ -23,6 +24,11 @@ async function main(): Promise<void> {
     await app.listen({ port: config.port, host: config.host });
     app.log.info(`Server running at http://${config.host}:${config.port}`);
     app.log.info(`API documentation available at http://${config.host}:${config.port}/docs`);
+
+    // Ensure system copilots exist for all orgs (non-blocking)
+    seedCopilotService.ensureAllOrgs().catch((err) => {
+      app.log.error('[startup] Failed to ensure seed copilots:', err);
+    });
   } catch (err) {
     app.log.error(err);
     process.exit(1);

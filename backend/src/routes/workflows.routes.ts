@@ -11,6 +11,12 @@ import { workflowExecutorV2, type WorkflowV2Plan, type WorkflowProgressEvent } f
 import { agentService } from '../services/agent.service.js';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
 import type { ConversationEvent } from '../services/claude-agent.service.js';
+import { chatService } from '../services/chat.service.js';
+import { prisma } from '../config/database.js';
+import { computeWorkflowCopilotSessionId } from '../utils/deterministic-session.js';
+import { workspaceManager } from '../services/workspace-manager.js';
+import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
 import {
   createWorkflowSchema,
   updateWorkflowSchema,
@@ -1020,6 +1026,90 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
         }
       }
     }
+  );
+
+  /**
+   * POST /api/workflows/copilot/stream
+   * Stream workflow copilot conversation through chatService (persistent sessions).
+   */
+  fastify.post<{
+    Body: { workflow_id: string; version: string; message: string; business_scope_id?: string };
+  }>(
+    '/copilot/stream',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { workflow_id, version, message, business_scope_id } = request.body;
+      const orgId = request.user!.orgId;
+      const userId = request.user!.id;
+
+      if (!workflow_id || !version || !message?.trim()) {
+        return reply.status(400).send({ error: 'workflow_id, version, and message are required' });
+      }
+
+      const sessionId = computeWorkflowCopilotSessionId(workflow_id, version);
+
+      const copilotScope = await prisma.business_scopes.findFirst({
+        where: { organization_id: orgId, name: 'Workflow Copilot', scope_type: 'digital_twin', deleted_at: null },
+        include: { agents: { where: { name: 'workflow-copilot' } } },
+      });
+
+      if (!copilotScope || copilotScope.agents.length === 0) {
+        return reply.status(404).send({ error: 'Workflow Copilot not configured for this organization' });
+      }
+
+      // Write current workflow definition into workspace CLAUDE.md for copilot context
+      const workflow = await prisma.workflows.findFirst({
+        where: { id: workflow_id },
+        select: { name: true, nodes: true, connections: true, version: true },
+      });
+      if (workflow) {
+        const workspacePath = workspaceManager.getSessionWorkspacePath(orgId, copilotScope.id, sessionId);
+        await mkdir(workspacePath, { recursive: true });
+        const claudeMd = [
+          `# Workflow: ${workflow.name}`,
+          `Version: ${workflow.version}`,
+          '',
+          '## Current Workflow Definition',
+          '```json',
+          JSON.stringify({ nodes: workflow.nodes, connections: workflow.connections }, null, 2),
+          '```',
+        ].join('\n');
+        await writeFile(join(workspacePath, 'CLAUDE.md'), claudeMd);
+      }
+
+      await chatService.streamChat(reply, orgId, userId, {
+        sessionId,
+        businessScopeId: copilotScope.id,
+        agentId: copilotScope.agents[0]!.id,
+        message: message.trim(),
+        source: 'workflow_copilot',
+        context: { workflow_id, version, ...(business_scope_id ? { business_scope_id } : {}) },
+      });
+    },
+  );
+
+  /**
+   * GET /api/workflows/copilot/messages
+   * Load copilot chat history for a workflow version.
+   */
+  fastify.get<{
+    Querystring: { workflow_id: string; version: string };
+  }>(
+    '/copilot/messages',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { workflow_id, version } = request.query;
+      const { orgId } = request.user!;
+
+      if (!workflow_id || !version) {
+        return reply.status(400).send({ error: 'workflow_id and version are required' });
+      }
+
+      const sessionId = computeWorkflowCopilotSessionId(workflow_id, version);
+      const messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
+
+      return reply.send({ session_id: sessionId, messages: messages ?? [] });
+    },
   );
 
 }

@@ -1,22 +1,18 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Send, Loader2, User, Bot } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import {
-  generateScope,
-  generateScopeWithDocument,
-  modifyScope,
-  parseScopeConfig,
-  parseModifyResponse,
-  type SSEEvent,
-  type GeneratedScopeConfig,
-} from '@/services/scopeGeneratorService'
+import { parseScopeConfig, type GeneratedScopeConfig } from '@/services/scopeGeneratorService'
 import type { ChatMessageDraft } from '@/hooks/useScopeDraft'
+import { getAuthToken } from '@/services/api/restClient'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface ScopeCopilotProps {
+  scopeId: string
   hasAgents: boolean
   currentConfig: GeneratedScopeConfig | null
   chatHistory: ChatMessageDraft[]
@@ -43,8 +39,8 @@ function msgId(): string {
 // ---------------------------------------------------------------------------
 
 export function ScopeCopilot({
+  scopeId,
   hasAgents,
-  currentConfig,
   chatHistory,
   onChatHistoryChange,
   onApplyFullConfig,
@@ -60,13 +56,45 @@ export function ScopeCopilot({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const autoTriggered = useRef(false)
+  const historyLoaded = useRef(false)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatHistory])
 
-  // On mount, clean up any orphaned "streaming" messages left by aborted requests
-  // (e.g. React 18 StrictMode double-mount or page refresh mid-stream).
+  // Load persistent chat history from backend on first mount
+  useEffect(() => {
+    if (historyLoaded.current || !scopeId) return
+    historyLoaded.current = true
+
+    const load = async () => {
+      try {
+        const token = getAuthToken()
+        const res = await fetch(
+          `${API_BASE_URL}/api/scope-generator/copilot/messages?scope_id=${scopeId}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        )
+        if (!res.ok) return
+        const data = await res.json() as { messages: Array<{ id: string; role: string; content: string; created_at: string }> }
+        if (!data.messages?.length) return
+        // Only load if local chat history is empty (don't overwrite in-progress work)
+        const cleanLocal = chatHistory.filter(m => m.status !== 'streaming')
+        if (cleanLocal.length > 0) return
+        onChatHistoryChange(data.messages.map(m => ({
+          id: m.id,
+          role: m.role === 'user' ? 'user' as const : 'assistant' as const,
+          content: m.content,
+          status: 'done' as const,
+          timestamp: new Date(m.created_at).getTime(),
+        })))
+      } catch {
+        // non-fatal
+      }
+    }
+    void load()
+  }, [scopeId])
+
+  // Clean up orphaned streaming messages on mount
   const mountCleanupDone = useRef(false)
   useEffect(() => {
     if (mountCleanupDone.current) return
@@ -77,10 +105,9 @@ export function ScopeCopilot({
     }
   }, [])
 
-  // Auto-trigger generation when arriving with initial description and no agents.
+  // Auto-trigger generation when arriving with initial description and no agents
   useEffect(() => {
     if (!initialDescription || hasAgents || autoTriggered.current) return
-    // Only trigger if chatHistory has no real content (ignore orphaned streaming msgs already cleaned above)
     const realMessages = chatHistory.filter(m => m.status !== 'streaming')
     if (realMessages.length > 0) return
     autoTriggered.current = true
@@ -93,6 +120,23 @@ export function ScopeCopilot({
     if (!text) setInput('')
     setIsProcessing(true)
 
+    // Upload SOP document to workspace before first message if provided
+    if (sopFile && !hasAgents) {
+      try {
+        const token = getAuthToken()
+        const formData = new FormData()
+        formData.append('file', sopFile)
+        formData.append('scope_id', scopeId)
+        await fetch(`${API_BASE_URL}/api/scope-generator/copilot/upload-document`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        })
+      } catch {
+        // non-fatal — generation will proceed without the document
+      }
+    }
+
     const userMsg: ChatMessageDraft = { id: msgId(), role: 'user', content: message, timestamp: Date.now() }
     const assistantMsg: ChatMessageDraft = { id: msgId(), role: 'assistant', content: '', status: 'streaming', timestamp: Date.now() }
     const newHistory = [...chatHistory, userMsg, assistantMsg]
@@ -101,74 +145,81 @@ export function ScopeCopilot({
     const assistantId = assistantMsg.id
     let accumulated = ''
 
-    const sseHandler = (event: SSEEvent) => {
-      if ((event.type === 'assistant' || event.type === 'result') && Array.isArray(event.content)) {
-        for (const block of event.content) {
-          if (block.type === 'text' && block.text) {
-            accumulated += block.text
-          }
-        }
-        onChatHistoryChange(
-          newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated } : m)
-        )
-      }
-    }
-
     try {
-      let fullText: string
+      const token = getAuthToken()
+      const response = await fetch(`${API_BASE_URL}/api/scope-generator/copilot/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ scope_id: scopeId, message, language }),
+      })
 
-      if (!hasAgents) {
-        // Generate mode
-        fullText = sopFile
-          ? await generateScopeWithDocument(sopFile, message, sseHandler, undefined, language)
-          : await generateScope(message, sseHandler, undefined, language)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Request failed' })) as { error?: string }
+        throw new Error(err.error ?? `Request failed: ${response.status}`)
+      }
 
-        try {
-          const config = parseScopeConfig(fullText)
-          onApplyFullConfig(config)
-          onCreateSnapshot('AI generated', 'ai-generated')
-          const summary = `Generated **"${config.scope.name}"** with **${config.agents.length} agents**. Review and edit on the left, then click Save when ready.`
-          onChatHistoryChange(
-            newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated + '\n\n' + summary, status: 'done' } : m)
-          )
-        } catch {
-          onChatHistoryChange(
-            newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated || 'Failed to parse scope configuration.', status: 'error' } : m)
-          )
-        }
-      } else {
-        // Modify mode
-        const history = chatHistory
-          .filter(m => m.role === 'user' || (m.role === 'assistant' && m.status === 'done'))
-          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('No response body')
 
-        fullText = await modifyScope(
-          currentConfig!,
-          message,
-          sseHandler,
-          undefined,
-          history,
-          language,
-        )
+      const decoder = new TextDecoder()
+      let buffer = ''
 
-        try {
-          const result = parseModifyResponse(fullText)
-          if (result.type === 'full') {
-            onApplyFullConfig(result.config)
-          } else {
-            onApplyPatches(result.patches)
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') continue
+          try {
+            const event = JSON.parse(data) as { type: string; content?: unknown; message?: string }
+            if (event.type === 'assistant' && Array.isArray(event.content)) {
+              for (const block of event.content as Array<{ type: string; text?: string }>) {
+                if (block.type === 'text' && block.text) {
+                  accumulated += block.text
+                }
+              }
+              onChatHistoryChange(
+                newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated } : m)
+              )
+            }
+            if (event.type === 'result' && Array.isArray(event.content)) {
+              for (const block of event.content as Array<{ type: string; text?: string }>) {
+                if (block.type === 'text' && block.text) {
+                  accumulated += block.text
+                }
+              }
+            }
+          } catch {
+            // skip unparseable lines
           }
-          onCreateSnapshot('AI modified', 'ai-modified')
-          onChatHistoryChange(
-            newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated, status: 'done' } : m)
-          )
-        } catch {
-          // Treat as conversational reply (clarifying question, etc.)
-          onChatHistoryChange(
-            newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated, status: 'done' } : m)
-          )
         }
       }
+
+      // Try to extract scope config from accumulated text
+      let applied = false
+      try {
+        const config = parseScopeConfig(accumulated)
+        onApplyFullConfig(config)
+        onCreateSnapshot(hasAgents ? 'AI modified' : 'AI generated', hasAgents ? 'ai-modified' : 'ai-generated')
+        applied = true
+      } catch {
+        // No config in response — treat as conversational reply
+      }
+
+      onChatHistoryChange(
+        newHistory.map(m => m.id === assistantId
+          ? { ...m, content: accumulated || (applied ? 'Scope configuration updated.' : ''), status: 'done' }
+          : m
+        )
+      )
     } catch (err) {
       onChatHistoryChange(
         newHistory.map(m => m.id === assistantId
@@ -180,7 +231,7 @@ export function ScopeCopilot({
       setIsProcessing(false)
       inputRef.current?.focus()
     }
-  }, [input, isProcessing, hasAgents, currentConfig, chatHistory, sopFile, language, onChatHistoryChange, onApplyFullConfig, onApplyPatches, onCreateSnapshot])
+  }, [input, isProcessing, scopeId, hasAgents, chatHistory, sopFile, language, onChatHistoryChange, onApplyFullConfig, onApplyPatches, onCreateSnapshot])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {

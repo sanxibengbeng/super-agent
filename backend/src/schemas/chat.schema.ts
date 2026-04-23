@@ -23,6 +23,8 @@ export const createChatSessionSchema = z.object({
   sop_context: z.string().optional().nullable(),
   context: z.record(z.string(), z.unknown()).default({}),
   provision_workspace: z.boolean().optional(),
+  source: z.string().max(20).optional(),
+  session_id: uuidSchema.optional(),
 });
 
 /**

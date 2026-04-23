@@ -11,6 +11,11 @@ import { skillService } from '../services/skill.service.js';
 import { avatarService } from '../services/avatarService.js';
 import { authenticate } from '../middleware/auth.js';
 import type { ConversationEvent } from '../services/claude-agent.service.js';
+import { chatService } from '../services/chat.service.js';
+import { prisma } from '../config/database.js';
+import { computeScopeCopilotSessionId } from '../utils/deterministic-session.js';
+import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
 
 function formatSSEEvent(payload: { event?: string; data: string }): string {
   let result = '';
@@ -571,6 +576,142 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
           skills: createdSkills,
         },
       });
+    },
+  );
+
+  /**
+   * POST /api/scope-generator/copilot/stream
+   * Stream scope copilot conversation through chatService (persistent sessions).
+   */
+  fastify.post<{
+    Body: { scope_id: string; message: string };
+  }>(
+    '/copilot/stream',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { scope_id, message } = request.body;
+      const orgId = request.user!.orgId;
+      const userId = request.user!.id;
+
+      if (!scope_id || !message?.trim()) {
+        return reply.status(400).send({ error: 'scope_id and message are required' });
+      }
+
+      const sessionId = computeScopeCopilotSessionId(scope_id);
+
+      const copilotScope = await prisma.business_scopes.findFirst({
+        where: { organization_id: orgId, name: 'Scope Copilot', scope_type: 'digital_twin', deleted_at: null },
+        include: { agents: { where: { name: 'scope-copilot' } } },
+      });
+
+      if (!copilotScope || copilotScope.agents.length === 0) {
+        return reply.status(404).send({ error: 'Scope Copilot not configured for this organization' });
+      }
+
+      // Write current scope config into workspace CLAUDE.md for copilot context
+      const targetScope = await prisma.business_scopes.findFirst({
+        where: { id: scope_id, organization_id: orgId, deleted_at: null },
+      });
+      const targetAgents = targetScope
+        ? await prisma.agents.findMany({
+            where: { business_scope_id: scope_id, organization_id: orgId },
+            select: { name: true, display_name: true, role: true, system_prompt: true },
+          })
+        : [];
+      if (targetScope) {
+        const cfgModule = await import('../config/index.js');
+        const workspaceBase = cfgModule.config.claude?.workspaceBaseDir ?? '/tmp/workspaces';
+        const workspacePath = join(workspaceBase, orgId, copilotScope.id, 'sessions', sessionId);
+        await mkdir(workspacePath, { recursive: true });
+        const hasAgents = targetAgents.length > 0;
+        const claudeLines: string[] = [
+          `# Scope: ${targetScope.name}`,
+          `Description: ${targetScope.description ?? 'Not set'}`,
+          '',
+        ];
+        if (hasAgents) {
+          claudeLines.push('## Current Configuration', '```json');
+          claudeLines.push(JSON.stringify({
+            scope: { name: targetScope.name, description: targetScope.description, icon: targetScope.icon, color: targetScope.color },
+            agents: targetAgents.map((a: { name: string; display_name: string; role: string | null; system_prompt: string | null }) => ({
+              name: a.name, displayName: a.display_name, role: a.role, systemPrompt: a.system_prompt,
+            })),
+          }, null, 2));
+          claudeLines.push('```');
+        } else {
+          claudeLines.push('## Status: Empty scope — generate from scratch');
+        }
+        await writeFile(join(workspacePath, 'CLAUDE.md'), claudeLines.join('\n'));
+      }
+
+      await chatService.streamChat(reply, orgId, userId, {
+        sessionId,
+        businessScopeId: copilotScope.id,
+        agentId: copilotScope.agents[0]!.id,
+        message: message.trim(),
+        source: 'scope_copilot',
+        context: { scope_id },
+      });
+    },
+  );
+
+  /**
+   * GET /api/scope-generator/copilot/messages
+   * Load scope copilot chat history for a scope.
+   */
+  fastify.get<{
+    Querystring: { scope_id: string };
+  }>(
+    '/copilot/messages',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { scope_id } = request.query;
+      const orgId = request.user!.orgId;
+
+      if (!scope_id) {
+        return reply.status(400).send({ error: 'scope_id is required' });
+      }
+
+      const sessionId = computeScopeCopilotSessionId(scope_id);
+      const messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
+
+      return reply.send({ session_id: sessionId, messages: messages ?? [] });
+    },
+  );
+
+  /**
+   * POST /api/scope-generator/copilot/upload-document
+   * Upload a SOP document to the scope copilot workspace before starting chat.
+   */
+  fastify.post(
+    '/copilot/upload-document',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const data = await request.file();
+      if (!data) return reply.status(400).send({ error: 'No file uploaded' });
+
+      const scopeId = (data.fields.scope_id as { value: string } | undefined)?.value;
+      if (!scopeId) return reply.status(400).send({ error: 'scope_id required' });
+
+      const orgId = request.user!.orgId;
+      const sessionId = computeScopeCopilotSessionId(scopeId);
+
+      const copilotScope = await prisma.business_scopes.findFirst({
+        where: { organization_id: orgId, name: 'Scope Copilot', scope_type: 'digital_twin', deleted_at: null },
+      });
+      if (!copilotScope) return reply.status(404).send({ error: 'Scope Copilot not configured' });
+
+      const config = await import('../config/index.js');
+      const workspaceBase = config.config.claude?.workspaceBaseDir ?? '/tmp/workspaces';
+      const workspacePath = join(workspaceBase, orgId, copilotScope.id, 'sessions', sessionId);
+      await mkdir(workspacePath, { recursive: true });
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of data.file) chunks.push(chunk);
+      const fileBuffer = Buffer.concat(chunks);
+      await writeFile(join(workspacePath, data.filename || 'document'), fileBuffer);
+
+      return reply.send({ uploaded: true, filename: data.filename });
     },
   );
 }

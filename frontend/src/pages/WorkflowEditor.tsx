@@ -1203,6 +1203,7 @@ export function WorkflowEditor() {
                       <WorkflowCopilot
                         ref={copilotRef}
                         workflowId={selectedWorkflow.id}
+                        workflowVersion={selectedWorkflow.version}
                         workflowName={selectedWorkflow.name}
                         canvasData={canvasData}
                         availableAgents={agents.filter(a => a.businessScopeId === activeScopeId)}

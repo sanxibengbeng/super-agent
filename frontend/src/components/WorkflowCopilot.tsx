@@ -63,6 +63,7 @@ export interface WorkflowCopilotHandle {
 
 interface WorkflowCopilotProps {
   workflowId: string | null
+  workflowVersion?: string
   workflowName?: string
   canvasData?: CanvasData
   availableAgents?: Agent[]
@@ -343,6 +344,7 @@ function ToolStep({ step }: { step: IntermediateStep }) {
 
 export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilotProps>(function WorkflowCopilot({
   workflowId,
+  workflowVersion,
   workflowName,
   canvasData,
   availableAgents = [],
@@ -357,6 +359,7 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { t } = useTranslation()
+  const historyLoadedRef = useRef(false)
 
   const hasNodes = canvasData && canvasData.nodes.length > 0
 
@@ -364,6 +367,37 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Load persistent chat history on mount
+  useEffect(() => {
+    if (!workflowId || historyLoadedRef.current) return
+    historyLoadedRef.current = true
+    const version = workflowVersion ?? '1'
+
+    const load = async () => {
+      try {
+        const token = getAuthToken()
+        const res = await fetch(
+          `${API_BASE_URL}/api/workflows/copilot/messages?workflow_id=${workflowId}&version=${encodeURIComponent(version)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        )
+        if (!res.ok) return
+        const data = await res.json() as { messages: Array<{ id: string; role: string; content: string; created_at: string }> }
+        if (!data.messages?.length) return
+        setMessages(data.messages.map(m => ({
+          id: m.id,
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: m.content,
+          status: 'done' as const,
+          steps: [],
+          timestamp: new Date(m.created_at).getTime(),
+        })))
+      } catch {
+        // non-fatal — history just won't be pre-loaded
+      }
+    }
+    void load()
+  }, [workflowId, workflowVersion])
 
   const createMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp' | 'steps'> & { steps?: IntermediateStep[] }) => {
     const id = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
@@ -476,21 +510,19 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
     try {
       let accumulatedText = ''
 
+      const version = workflowVersion ?? '1'
+
       if (!hasNodes || !workflowId) {
         // Generate mode — no existing nodes
         if (!onGenerateWorkflow) throw new Error('Generation not available')
 
         let validatedPlan: WorkflowPlan | null = null
 
-        for await (const chunk of streamSSE('/api/workflows/generate', {
-          description: text,
-          businessScopeId,
-          availableAgents: availableAgents.map(a => ({
-            id: a.id,
-            name: a.displayName,
-            role: a.role,
-          })),
-          history: history.length > 0 ? history : undefined,
+        for await (const chunk of streamSSE('/api/workflows/copilot/stream', {
+          workflow_id: workflowId ?? '',
+          version,
+          message: text,
+          business_scope_id: businessScopeId,
         })) {
           if (chunk.type === 'error') throw new Error(chunk.error)
           if (chunk.type === 'text' && chunk.text) {
@@ -570,10 +602,11 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
 
         const currentPlan = canvasDataToWorkflowPlan(canvasData!, workflowName || 'Workflow')
 
-        for await (const chunk of streamSSE('/api/workflows/modify', {
-          currentPlan,
-          modificationRequest: text,
-          history: history.length > 0 ? history : undefined,
+        for await (const chunk of streamSSE('/api/workflows/copilot/stream', {
+          workflow_id: workflowId,
+          version,
+          message: text,
+          business_scope_id: businessScopeId,
         })) {
           if (chunk.type === 'error') throw new Error(chunk.error)
           if (chunk.type === 'text' && chunk.text) {
