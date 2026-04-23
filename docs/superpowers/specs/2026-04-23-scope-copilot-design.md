@@ -27,22 +27,17 @@ Redesign the `/create-business-scope/ai` page from a single-column chat-only flo
 - Scope already exists in DB (empty); this page fills it in via AI + manual edits
 - **Same URL for editing existing scopes** — dashboard can link directly to edit
 
-### New Backend Endpoint
+### New Backend Endpoints
 
-**`PATCH /api/business-scopes/:scopeId/full`** — Save the complete scope + agents + skills configuration.
+All scope copilot endpoints live under `/api/scope-generator`:
 
-This replaces the old `/generate/confirm` endpoint for the copilot flow. The endpoint:
-- Updates scope fields (name, description, icon, color)
-- Upserts agents (create new, update existing, delete removed)
-- Upserts skills per agent (create new, update existing, delete removed)
-- All within a transaction
-- Returns the full updated scope with agents
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/scope-generator/generate` | POST | First-time AI generation (existing) |
+| `/api/scope-generator/modify` | POST | AI modification of existing config (new) |
+| `/api/scope-generator/save` | POST | Save full config to DB (new, replaces `/generate/confirm`) |
 
-The old `/generate/confirm` endpoint remains for backward compatibility but is no longer called by the copilot UI.
-
-### New Backend Endpoint: Scope Modification
-
-**`POST /api/scope-generator/modify`** — Patch-based modification of existing scope config.
+**`POST /api/scope-generator/modify`** — AI-powered modification of existing scope config.
 
 Accepts: `{ scopeConfig: GeneratedScopeConfig, modificationRequest: string, history?: ChatMessage[] }`
 
@@ -51,6 +46,19 @@ Returns: SSE stream with either:
 - Patch array `[{op, path, value}]` (for targeted changes)
 
 The frontend detects the response type and applies accordingly.
+
+**`POST /api/scope-generator/save`** — Persist the complete scope + agents + skills to the database.
+
+Accepts: `{ scopeId: string, config: GeneratedScopeConfig }`
+
+Logic:
+- Updates scope fields (name, description, icon, color)
+- Upserts agents (create new, update existing, delete removed)
+- Upserts skills per agent (create new, update existing, delete removed)
+- All within a Prisma transaction
+- Returns the full updated scope with agents
+
+The old `/generate/confirm` endpoint remains for backward compatibility.
 
 ## Frontend Components
 
@@ -199,33 +207,37 @@ interface VersionSnapshot {
 - `updateScope(fields)` — manual scope field edits
 - `updateAgent(localId, fields)` — manual agent edits
 - `addAgent()` / `removeAgent(localId)` — add/remove agents
-- `save()` — call `PATCH /api/business-scopes/:scopeId/full` → clear dirty → create "saved" snapshot
+- `save()` — call `POST /api/scope-generator/save` → clear dirty → create "saved" snapshot
 
 ## Backend Changes
 
-### New Endpoint: Full Scope Update
+All new endpoints are added to the existing `scope-generator.routes.ts`.
 
-**Route:** `PATCH /api/business-scopes/:scopeId/full`
+### POST /api/scope-generator/save
+
 **Auth:** JWT required
 **Body:**
 ```typescript
 {
-  scope: { name, description, icon, color },
-  agents: [{
-    id?: string,              // existing agent ID (for update)
-    name: string,
-    displayName: string,
-    role: string,
-    systemPrompt: string,
-    _deleted?: boolean,       // true = delete this agent
-    skills?: [{
-      id?: string,            // existing skill ID
+  scopeId: string,
+  config: {
+    scope: { name, description, icon, color },
+    agents: [{
+      id?: string,              // existing agent ID (for update)
       name: string,
-      description: string,
-      body: string,
-      _deleted?: boolean,
+      displayName: string,
+      role: string,
+      systemPrompt: string,
+      _deleted?: boolean,       // true = delete this agent
+      skills?: [{
+        id?: string,            // existing skill ID
+        name: string,
+        description: string,
+        body: string,
+        _deleted?: boolean,
+      }]
     }]
-  }]
+  }
 }
 ```
 
@@ -239,9 +251,8 @@ interface VersionSnapshot {
 4. All in a Prisma transaction
 5. Return updated scope with full agent + skill tree
 
-### New Endpoint: Scope Modification
+### POST /api/scope-generator/modify
 
-**Route:** `POST /api/scope-generator/modify`
 **Auth:** JWT required
 **Body:**
 ```typescript
@@ -316,7 +327,6 @@ The wizard page (`CreateBusinessScope`) remains full-page. After the wizard crea
 | `frontend/src/components/ScopeWorkspace.tsx` | Left panel: scope dashboard + agent grid + detail |
 | `frontend/src/components/ScopeCopilot.tsx` | Right panel: chat with generate/modify modes |
 | `frontend/src/hooks/useScopeDraft.ts` | Draft state, LocalStorage sync, version management |
-| `backend/src/routes/scope-full-update.routes.ts` | PATCH endpoint for full scope save |
 
 ## Files to Modify
 
@@ -324,7 +334,7 @@ The wizard page (`CreateBusinessScope`) remains full-page. After the wizard crea
 |------|--------|
 | `frontend/src/App.tsx` | Move `/create-business-scope/ai` inside AppShell, point to new page |
 | `frontend/src/pages/CreateBusinessScope.tsx` | Create empty scope on submit, navigate with scopeId |
-| `frontend/src/services/scopeGeneratorService.ts` | Add `modifyScope()`, `saveFullScope()` functions |
-| `backend/src/routes/scope-generator.routes.ts` | Add `/modify` SSE endpoint |
-| `backend/src/services/scope-generator.service.ts` | Add `modify()` generator method |
+| `frontend/src/services/scopeGeneratorService.ts` | Add `modifyScope()`, `saveScopeConfig()` functions |
+| `backend/src/routes/scope-generator.routes.ts` | Add `/modify` SSE endpoint + `/save` endpoint |
+| `backend/src/services/scope-generator.service.ts` | Add `modify()` generator method + `saveFullConfig()` method |
 | `frontend/src/components/index.ts` | Export new components, remove old AIScopeGenerator export |
