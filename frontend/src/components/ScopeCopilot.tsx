@@ -11,7 +11,6 @@ import {
   type GeneratedScopeConfig,
 } from '@/services/scopeGeneratorService'
 import type { ChatMessageDraft } from '@/hooks/useScopeDraft'
-import { useTranslation } from '@/i18n'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,7 +60,6 @@ export function ScopeCopilot({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const autoTriggered = useRef(false)
-  const { t } = useTranslation()
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -74,17 +72,6 @@ export function ScopeCopilot({
       void handleSend(initialDescription)
     }
   }, [initialDescription, hasAgents, chatHistory.length])
-
-  const addMessage = useCallback((msg: Omit<ChatMessageDraft, 'id' | 'timestamp'>): string => {
-    const id = msgId()
-    const newMsg: ChatMessageDraft = { ...msg, id, timestamp: Date.now() }
-    onChatHistoryChange([...chatHistory, newMsg])
-    return id
-  }, [chatHistory, onChatHistoryChange])
-
-  const updateMessage = useCallback((id: string, updates: Partial<ChatMessageDraft>) => {
-    onChatHistoryChange(chatHistory.map(m => m.id === id ? { ...m, ...updates } : m))
-  }, [chatHistory, onChatHistoryChange])
 
   const handleSend = useCallback(async (text?: string) => {
     const message = (text ?? input).trim()
