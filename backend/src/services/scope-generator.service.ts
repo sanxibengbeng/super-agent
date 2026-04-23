@@ -704,7 +704,10 @@ QUALITY CHECK — before outputting, verify:
       };
 
       const currentConfigJson = JSON.stringify(scopeConfig, null, 2);
-      const message = `Current scope configuration:\n\`\`\`json\n${currentConfigJson}\n\`\`\`\n\nModification request: ${modificationRequest}`;
+      const historyContext = history && history.length > 0
+        ? '\n\nConversation history:\n' + history.map(h => `${h.role}: ${h.content}`).join('\n') + '\n\n'
+        : '';
+      const message = `Current scope configuration:\n\`\`\`json\n${currentConfigJson}\n\`\`\`${historyContext}\n\nModification request: ${modificationRequest}`;
 
       yield { type: 'session_start', sessionId } as ConversationEvent & { content?: unknown };
 
