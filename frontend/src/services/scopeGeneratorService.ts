@@ -235,6 +235,44 @@ export function parseScopeConfig(text: string): GeneratedScopeConfig {
 }
 
 /**
+ * Parse the modification response from the AI.
+ * Returns either a full config replacement or JSON patches.
+ */
+export function parseModifyResponse(text: string):
+  | { type: 'full'; config: GeneratedScopeConfig }
+  | { type: 'patch'; patches: Array<{ op: string; path: string; value?: unknown }> } {
+  let jsonStr = text.trim();
+
+  // Extract from code fence
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) jsonStr = fenceMatch[1]!.trim();
+
+  // Try parsing as array first (patches)
+  if (jsonStr.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].op) {
+        return { type: 'patch', patches: parsed };
+      }
+    } catch { /* fall through */ }
+  }
+
+  // Try parsing as full config
+  try {
+    const config = parseScopeConfig(jsonStr);
+    return { type: 'full', config };
+  } catch { /* fall through */ }
+
+  // Try extracting from full text (brute force)
+  try {
+    const config = parseScopeConfig(text);
+    return { type: 'full', config };
+  } catch {
+    throw new Error('Could not parse modification response as patches or full config');
+  }
+}
+
+/**
  * Upload a SOP document and stream scope generation via SSE.
  * The file is sent as multipart/form-data so the backend agent can parse it autonomously.
  */
@@ -264,6 +302,39 @@ export async function generateScopeWithDocument(
 
   if (!response.ok) {
     throw new Error(`Generation failed: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+
+  return processSSEStream(reader, onEvent);
+}
+
+/**
+ * Modify an existing scope configuration via SSE.
+ * The AI will return either a full replacement config or JSON patches.
+ */
+export async function modifyScope(
+  scopeConfig: GeneratedScopeConfig,
+  modificationRequest: string,
+  onEvent: GenerateCallback,
+  signal?: AbortSignal,
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  language?: string,
+): Promise<string> {
+  const token = getAuthToken();
+  const response = await fetch(`${API_BASE_URL}/api/scope-generator/modify`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ scopeConfig, modificationRequest, history, language }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Modification failed: ${response.status}`);
   }
 
   const reader = response.body?.getReader();
