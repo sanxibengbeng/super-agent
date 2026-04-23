@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { TranslationProvider } from '@/i18n'
-import { AppShell, ErrorBoundary, ToastProvider, ProtectedRoute, SkillMarketplaceBrowser, AIScopeGenerator, SkillWorkshop } from '@/components'
+import { AppShell, ErrorBoundary, ToastProvider, ProtectedRoute, SkillMarketplaceBrowser, SkillWorkshop } from '@/components'
 import { Dashboard, Chat, WorkflowEditor, Agents, Tools, AgentConfigurator, TaskAuditLog, TaskExecutionCenter, MCPConfigurator, KnowledgeManager, InfrastructureConfigurator, Login, CreateBusinessScope, Marketplace, AppRunner } from '@/pages'
+import { ScopeCopilotPage } from '@/pages/ScopeCopilotPage'
 import { StarredSessions } from '@/pages/StarredSessions'
 import { ShowcasePage } from '@/pages/ShowcasePage'
 import { Settings } from '@/pages/Settings'
@@ -21,7 +22,6 @@ function AppContent() {
     <Routes>
       {/* Full-page routes without AppShell */}
       <Route path="/create-business-scope" element={<CreateBusinessScope />} />
-      <Route path="/create-business-scope/ai" element={<AIScopeGenerator />} />
       <Route path="/agents/config/:agentId/workshop" element={<SkillWorkshop />} />
       <Route path="/create-digital-twin" element={<DigitalTwinWizard />} />
       
@@ -51,6 +51,7 @@ function AppContent() {
             <Route path="/starred" element={<StarredSessions />} />
             <Route path="/showcase" element={<ShowcasePage />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/create-business-scope/ai" element={<ScopeCopilotPage />} />
           </Routes>
         </AppShell>
       } />

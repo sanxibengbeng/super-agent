@@ -81,6 +81,8 @@ export type { ScopeItem } from './BusinessScopeDropdown'
 
 // AI Scope Generator
 export { AIScopeGenerator } from './AIScopeGenerator'
+export { ScopeWorkspace } from './ScopeWorkspace'
+export { ScopeCopilot } from './ScopeCopilot'
 
 // Skill Workshop
 export { SkillWorkshop } from './SkillWorkshop'

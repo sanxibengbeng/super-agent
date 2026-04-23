@@ -43,7 +43,7 @@ export function CreateBusinessScope() {
   }, [currentLanguage])
 
   /** Confirm language and navigate — rebuild description in the chosen language */
-  const confirmLanguageAndNavigate = useCallback(() => {
+  const confirmLanguageAndNavigate = useCallback(async () => {
     if (!pendingNavState) return
     setShowLangDialog(false)
 
@@ -62,10 +62,38 @@ export function CreateBusinessScope() {
       }
     }
 
-    navigate('/create-business-scope/ai', {
-      state: { description: finalDescription, hasSopFile: pendingNavState.hasSopFile, language: selectedLang },
-    })
-  }, [pendingNavState, selectedLang, navigate])
+    // Create empty scope first, then navigate with scopeId
+    try {
+      const { getAuthToken } = await import('@/services/api/restClient')
+      const token = getAuthToken()
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+
+      const deptName = pendingNavState.deptName || selectedDept || 'New Scope'
+      const response = await fetch(`${API_BASE_URL}/api/business-scopes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ name: deptName }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to create scope: ${response.status}`)
+      }
+
+      const result = await response.json()
+      const scopeId = result.data?.id || result.id
+
+      const params = new URLSearchParams({ scopeId })
+      if (finalDescription) params.set('description', finalDescription)
+      params.set('language', selectedLang)
+
+      navigate(`/create-business-scope/ai?${params.toString()}`)
+    } catch (err) {
+      console.error('Failed to create scope:', err)
+    }
+  }, [pendingNavState, selectedLang, selectedDept, navigate])
 
   const handleDeptSelect = useCallback((deptId: string) => {
     setSelectedDept(deptId)
