@@ -37,6 +37,15 @@ interface SaveBody {
   };
 }
 
+interface ModifyBody {
+  Body: {
+    scopeConfig: GeneratedScopeConfig;
+    modificationRequest: string;
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    language?: string;
+  };
+}
+
 export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * POST /api/business-scopes/generate
@@ -344,6 +353,77 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         error: error instanceof Error ? error.message : 'Save failed',
         code: 'SAVE_ERROR',
       });
+    }
+  });
+
+  /**
+   * POST /api/scope-generator/modify
+   * Modify an existing scope configuration via AI agent.
+   * Streams SSE responses with either JSON patch or full config.
+   */
+  fastify.post<ModifyBody>('/modify', { preHandler: [authenticate] }, async (request: FastifyRequest<ModifyBody>, reply: FastifyReply) => {
+    const { scopeConfig, modificationRequest, history, language } = request.body;
+
+    if (!scopeConfig || !modificationRequest?.trim()) {
+      return reply.status(400).send({ error: 'scopeConfig and modificationRequest are required', code: 'INVALID_INPUT' });
+    }
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    let clientDisconnected = false;
+    reply.raw.on('close', () => { clientDisconnected = true; });
+
+    const heartbeat = setInterval(() => {
+      if (!clientDisconnected) {
+        try { reply.raw.write(formatSSEEvent({ data: JSON.stringify({ type: 'heartbeat' }) })); }
+        catch { /* disconnected */ }
+      }
+    }, 15_000);
+
+    try {
+      const generator = scopeGeneratorService.modify(scopeConfig, modificationRequest.trim(), history, language);
+
+      for await (const event of generator) {
+        if (clientDisconnected) break;
+
+        const sseData: Record<string, unknown> = { type: event.type };
+
+        if (event.type === 'session_start') {
+          sseData.sessionId = event.sessionId;
+        } else if (event.type === 'assistant' || event.type === 'result') {
+          sseData.content = event.content;
+        } else if (event.type === 'error') {
+          sseData.code = (event as ConversationEvent & { code?: string }).code;
+          sseData.message = (event as ConversationEvent & { message?: string }).message;
+        }
+
+        reply.raw.write(formatSSEEvent({ data: JSON.stringify(sseData) }));
+      }
+    } catch (error) {
+      console.error('[scope-generator] Modify SSE error:', error);
+      if (!clientDisconnected) {
+        reply.raw.write(formatSSEEvent({
+          data: JSON.stringify({
+            type: 'error',
+            code: 'MODIFY_ERROR',
+            message: error instanceof Error ? error.message : 'Modification failed',
+          }),
+        }));
+      }
+    } finally {
+      clearInterval(heartbeat);
+      if (!clientDisconnected) {
+        try {
+          reply.raw.write(formatSSEEvent({ data: '[DONE]' }));
+          reply.raw.end();
+        } catch { /* disconnected */ }
+      }
     }
   });
 

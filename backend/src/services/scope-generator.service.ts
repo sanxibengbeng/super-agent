@@ -125,6 +125,33 @@ LANGUAGE REQUIREMENT: All generated content MUST be in Chinese (中文).
 - 请确保系统提示词（systemPrompt）使用流畅、专业的中文撰写。`,
 };
 
+const SCOPE_MODIFIER_SYSTEM_PROMPT = `You are a business scope configuration modifier. You will receive the current scope configuration as JSON and a modification request from the user.
+
+RULES:
+1. For SMALL, TARGETED changes (rename an agent, change a role, update a description, add/remove a single skill), respond with a JSON PATCH ARRAY:
+   \`\`\`json
+   [
+     {"op": "replace", "path": "/agents/0/displayName", "value": "New Name"},
+     {"op": "replace", "path": "/agents/0/role", "value": "New role description"}
+   ]
+   \`\`\`
+   Supported ops: "replace" (update a field), "add" (add to array), "remove" (remove from array by index).
+   Paths use JSON Pointer format: /scope/name, /agents/0/displayName, /agents/0/skills/1/body, etc.
+
+2. For LARGE, STRUCTURAL changes (add multiple agents, reorganize skills across agents, change the overall scope purpose), respond with the COMPLETE updated JSON configuration:
+   \`\`\`json
+   {
+     "scope": { "name": "...", "description": "...", "icon": "...", "color": "..." },
+     "agents": [...]
+   }
+   \`\`\`
+
+3. ALWAYS wrap your JSON output in a markdown code fence (\`\`\`json ... \`\`\`).
+4. You may include a brief explanation BEFORE the JSON code fence, but the JSON must be parseable.
+5. Preserve all existing fields that are not being changed.
+6. Agent names must be kebab-case. Skills names must be kebab-case.
+`;
+
 /**
  * Build the full system prompt with language-specific instructions appended.
  */
@@ -646,6 +673,59 @@ QUALITY CHECK — before outputting, verify:
     }
 
     return null;
+  }
+
+  /**
+   * Modify an existing scope configuration by streaming Claude's response.
+   * Accepts the current config + a modification request, and yields either:
+   * - A JSON patch array for small targeted changes
+   * - A complete updated configuration for large structural changes
+   */
+  async *modify(
+    scopeConfig: GeneratedScopeConfig,
+    modificationRequest: string,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    language?: string,
+  ): AsyncGenerator<ConversationEvent & { content?: unknown }> {
+    const tempWorkspace = await mkdtemp(join(tmpdir(), 'scope-mod-'));
+    const sessionId = `scope-mod-${Date.now()}`;
+
+    try {
+      const systemPrompt = SCOPE_MODIFIER_SYSTEM_PROMPT + '\n' + LANGUAGE_INSTRUCTIONS[language === 'cn' ? 'cn' : 'en'];
+
+      const agentConfig: AgentConfig = {
+        id: 'scope-modifier',
+        name: 'scope-modifier',
+        displayName: 'Scope Modifier',
+        organizationId: 'system',
+        systemPrompt,
+        skillIds: [],
+        mcpServerIds: [],
+      };
+
+      const currentConfigJson = JSON.stringify(scopeConfig, null, 2);
+      const message = `Current scope configuration:\n\`\`\`json\n${currentConfigJson}\n\`\`\`\n\nModification request: ${modificationRequest}`;
+
+      yield { type: 'session_start', sessionId } as ConversationEvent & { content?: unknown };
+
+      for await (const event of agentRuntime.runConversation(
+        {
+          agentId: 'scope-modifier',
+          sessionId,
+          message,
+          organizationId: 'system',
+          userId: 'system',
+          workspacePath: tempWorkspace,
+          scopeId: 'system',
+        },
+        agentConfig,
+        [],
+      )) {
+        yield event as ConversationEvent & { content?: unknown };
+      }
+    } finally {
+      try { await rm(tempWorkspace, { recursive: true }); } catch { /* ignore */ }
+    }
   }
 
   /**
