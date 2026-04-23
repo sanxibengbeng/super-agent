@@ -75,18 +75,44 @@ export function ScopeCopilot({
           { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         )
         if (!res.ok) return
-        const data = await res.json() as { messages: Array<{ id: string; role: string; content: string; created_at: string }> }
+        const data = await res.json() as { messages: Array<{ id: string; type: string; content: string; created_at: string }> }
         if (!data.messages?.length) return
-        // Only load if local chat history is empty (don't overwrite in-progress work)
-        const cleanLocal = chatHistory.filter(m => m.status !== 'streaming')
-        if (cleanLocal.length > 0) return
-        onChatHistoryChange(data.messages.map(m => ({
-          id: m.id,
-          role: m.role === 'user' ? 'user' as const : 'assistant' as const,
-          content: m.content,
-          status: 'done' as const,
-          timestamp: new Date(m.created_at).getTime(),
-        })))
+
+        let latestConfigJson: string | null = null
+        const chatMsgs = data.messages.map(m => {
+          if (m.type !== 'ai') {
+            return { id: m.id, role: 'user' as const, content: m.content, status: 'done' as const, timestamp: new Date(m.created_at).getTime() }
+          }
+          // Parse content blocks array
+          let displayText = ''
+          try {
+            const blocks = JSON.parse(m.content) as Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>
+            for (const block of blocks) {
+              if (block.type === 'text' && block.text) displayText += block.text
+              // Extract scope config from Write tool_use block
+              if (block.type === 'tool_use' && block.name === 'Write' && block.input) {
+                const fp = block.input.file_path as string | undefined
+                const ct = block.input.content as string | undefined
+                if (fp?.includes('scope-config') && ct) {
+                  latestConfigJson = ct
+                }
+              }
+            }
+          } catch {
+            displayText = m.content
+          }
+          return { id: m.id, role: 'assistant' as const, content: displayText, status: 'done' as const, timestamp: new Date(m.created_at).getTime() }
+        })
+
+        onChatHistoryChange(chatMsgs)
+
+        // Apply the latest scope config found in history to the workspace
+        if (latestConfigJson) {
+          try {
+            const config = parseScopeConfig(latestConfigJson)
+            onApplyFullConfig(config)
+          } catch { /* config parse failed — skip */ }
+        }
       } catch {
         // non-fatal
       }
@@ -179,23 +205,32 @@ export function ScopeCopilot({
           const data = line.slice(6).trim()
           if (data === '[DONE]') continue
           try {
-            const event = JSON.parse(data) as { type: string; content?: unknown; message?: string }
+            const event = JSON.parse(data) as {
+              type: string
+              content?: Array<{ type: string; text?: string; name?: string; input?: unknown }>
+              message?: string
+            }
             if (event.type === 'assistant' && Array.isArray(event.content)) {
-              for (const block of event.content as Array<{ type: string; text?: string }>) {
+              for (const block of event.content) {
                 if (block.type === 'text' && block.text) {
                   accumulated += block.text
+                }
+                // Capture tool_use input — agent writes scope-config.json via Write tool
+                if (block.type === 'tool_use' && block.input) {
+                  const input = block.input as Record<string, unknown>
+                  // Write tool: { file_path: '...scope-config.json', content: '...' }
+                  if (
+                    typeof input.file_path === 'string' &&
+                    input.file_path.includes('scope-config') &&
+                    typeof input.content === 'string'
+                  ) {
+                    accumulated = input.content
+                  }
                 }
               }
               onChatHistoryChange(
                 newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated } : m)
               )
-            }
-            if (event.type === 'result' && Array.isArray(event.content)) {
-              for (const block of event.content as Array<{ type: string; text?: string }>) {
-                if (block.type === 'text' && block.text) {
-                  accumulated += block.text
-                }
-              }
             }
           } catch {
             // skip unparseable lines

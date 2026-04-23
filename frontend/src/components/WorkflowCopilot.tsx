@@ -382,11 +382,11 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
           { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         )
         if (!res.ok) return
-        const data = await res.json() as { messages: Array<{ id: string; role: string; content: string; created_at: string }> }
+        const data = await res.json() as { messages: Array<{ id: string; type: string; content: string; created_at: string }> }
         if (!data.messages?.length) return
         setMessages(data.messages.map(m => ({
           id: m.id,
-          role: m.role === 'user' ? 'user' : 'assistant',
+          role: m.type === 'user' ? 'user' : 'assistant',
           content: m.content,
           status: 'done' as const,
           steps: [],

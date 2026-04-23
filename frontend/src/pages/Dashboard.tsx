@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Briefcase, LayoutGrid, Spade, Plus, Shield, Users } from 'lucide-react'
+import { Briefcase, LayoutGrid, Spade, Plus, Shield, Users, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from '@/i18n'
 import { DepartmentSection, CommandCenter } from '@/components'
@@ -207,10 +207,17 @@ export function Dashboard() {
                     {scope.visibility === 'restricted' && (
                       <span className="px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500/20 text-yellow-400 rounded">Restricted</span>
                     )}
+                    <button
+                      onClick={() => navigate(`/create-business-scope/ai?scopeId=${scope.id}`)}
+                      className="ml-auto p-1.5 text-gray-500 hover:text-purple-400 hover:bg-purple-400/10 rounded-lg transition-colors"
+                      title="Edit scope with Copilot"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
                     {isAdmin && (
                       <button
                         onClick={() => setAccessScope(scope)}
-                        className="ml-auto p-1.5 text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
+                        className="p-1.5 text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
                         title="Manage scope access"
                       >
                         <Shield className="w-4 h-4" />

@@ -6,6 +6,7 @@ import { ScopeCopilot } from '@/components/ScopeCopilot'
 import { useScopeDraft } from '@/hooks/useScopeDraft'
 import { useToast } from '@/components'
 import type { GeneratedScopeConfig } from '@/services/scopeGeneratorService'
+import type { AgentDraft } from '@/hooks/useScopeDraft'
 import { consumeSopFile } from '@/services/sopFileStore'
 
 export function ScopeCopilotPage() {
@@ -60,18 +61,46 @@ export function ScopeCopilotPage() {
         const data = await response.json()
         const scope = data.data ?? data
 
-        // Only initialize from API if no LocalStorage draft exists (useScopeDraft handles LS loading)
-        if (!localStorage.getItem(`scopeDraft:${scopeId}`)) {
-          initializeFromApi(
-            {
-              name: scope.name || '',
-              description: scope.description || '',
-              icon: scope.icon || '📋',
-              color: scope.color || '#6366f1',
-            },
-            [],
-          )
-          createSnapshot('Empty scope created', 'created')
+        // Map existing agents from API into AgentDraft format
+        const existingAgents: AgentDraft[] = (scope.agents ?? []).map((a: {
+          id: string; name: string; display_name?: string; displayName?: string;
+          role?: string; system_prompt?: string; systemPrompt?: string;
+          skills?: Array<{ name: string; description?: string; body?: string }>
+        }) => ({
+          id: a.id,
+          name: a.name,
+          displayName: a.display_name ?? a.displayName ?? a.name,
+          role: a.role ?? '',
+          systemPrompt: a.system_prompt ?? a.systemPrompt ?? '',
+          skills: a.skills ?? [],
+          _localId: `api-${a.id}`,
+          _deleted: false,
+        }))
+
+        const scopeFields = {
+          name: scope.name || '',
+          description: scope.description || '',
+          icon: scope.icon || '📋',
+          color: scope.color || '#6366f1',
+        }
+
+        // Always set scope metadata from DB; use LS agents if they exist, otherwise DB agents
+        const lsDraft = localStorage.getItem(`scopeDraft:${scopeId}`)
+        if (lsDraft) {
+          try {
+            const parsed = JSON.parse(lsDraft) as { draft?: { agents?: unknown[] } }
+            if (parsed.draft?.agents && (parsed.draft.agents as unknown[]).length > 0) {
+              updateScope(scopeFields)
+            } else {
+              initializeFromApi(scopeFields, existingAgents)
+            }
+          } catch {
+            initializeFromApi(scopeFields, existingAgents)
+          }
+        } else {
+          initializeFromApi(scopeFields, existingAgents)
+          const label = existingAgents.length > 0 ? 'Loaded from database' : 'Empty scope created'
+          createSnapshot(label, 'created')
         }
       } catch (err) {
         console.error('Failed to load scope:', err)
