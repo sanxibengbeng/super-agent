@@ -65,12 +65,26 @@ export function ScopeCopilot({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatHistory])
 
-  // Auto-trigger generation when arriving with initial description and no agents
+  // On mount, clean up any orphaned "streaming" messages left by aborted requests
+  // (e.g. React 18 StrictMode double-mount or page refresh mid-stream).
+  const mountCleanupDone = useRef(false)
   useEffect(() => {
-    if (initialDescription && !autoTriggered.current && !hasAgents && chatHistory.length === 0) {
-      autoTriggered.current = true
-      void handleSend(initialDescription)
+    if (mountCleanupDone.current) return
+    mountCleanupDone.current = true
+    const hasOrphaned = chatHistory.some(m => m.status === 'streaming')
+    if (hasOrphaned) {
+      onChatHistoryChange(chatHistory.filter(m => m.status !== 'streaming'))
     }
+  }, [])
+
+  // Auto-trigger generation when arriving with initial description and no agents.
+  useEffect(() => {
+    if (!initialDescription || hasAgents || autoTriggered.current) return
+    // Only trigger if chatHistory has no real content (ignore orphaned streaming msgs already cleaned above)
+    const realMessages = chatHistory.filter(m => m.status !== 'streaming')
+    if (realMessages.length > 0) return
+    autoTriggered.current = true
+    void handleSend(initialDescription)
   }, [initialDescription, hasAgents, chatHistory.length])
 
   const handleSend = useCallback(async (text?: string) => {
