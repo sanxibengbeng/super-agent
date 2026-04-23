@@ -187,6 +187,9 @@ function validateScopeConfigJson(raw: string): { ok: true; config: GeneratedScop
     }
     for (let j = 0; j < (agent.skills as unknown[]).length; j++) {
       const skill = (agent.skills as Record<string, unknown>[])[j];
+      if (!skill) {
+        return { ok: false, error: `agents[${i}].skills[${j}] is undefined` };
+      }
       for (const field of ['name', 'description', 'body']) {
         if (typeof skill[field] !== 'string' || (skill[field] as string).trim().length === 0) {
           return { ok: false, error: `agents[${i}].skills[${j}].${field} must be a non-empty string` };
@@ -705,6 +708,7 @@ QUALITY CHECK — before outputting, verify:
             scope: [],
             model_config: {},
             origin: 'scope_generation',
+            is_shared: false,
           },
           organizationId,
         );

@@ -230,6 +230,7 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
       icon: config.scope.icon,
       color: config.scope.color,
       is_default: isDefault ?? false,
+      scope_type: 'business',
     }, orgId);
 
     // 2. Create agents (with generated skills stored in model_config)
@@ -253,6 +254,8 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
               body: s.body,
             })),
           },
+          origin: 'scope_generation',
+          is_shared: false,
         }, orgId);
 
         // 3. Create skill records and assign them to the agent
@@ -285,17 +288,20 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
 
     // 4. Generate avatars in parallel and update agents
     try {
-      const rolesToGenerate = createdAgents.map(a => a.displayName || a.role);
+      const rolesToGenerate = createdAgents
+        .map(a => a.displayName || a.role)
+        .filter((role): role is string => role != null);
       const avatarResults = await avatarService.generateAvatarsBatch(rolesToGenerate);
 
       for (let i = 0; i < createdAgents.length; i++) {
         const result = avatarResults[i];
-        if (result?.avatarKey) {
+        const createdAgent = createdAgents[i];
+        if (result?.avatarKey && createdAgent) {
           try {
-            await agentService.updateAgent(createdAgents[i].id, { avatar: result.avatarKey }, orgId);
-            createdAgents[i].avatar = result.avatarKey;
+            await agentService.updateAgent(createdAgent.id, { avatar: result.avatarKey }, orgId);
+            createdAgent.avatar = result.avatarKey;
           } catch (err) {
-            console.warn(`Failed to update avatar for agent "${createdAgents[i].name}":`, err);
+            console.warn(`Failed to update avatar for agent "${createdAgent.name}":`, err);
           }
         }
       }
@@ -447,6 +453,7 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         description: config.scope.description,
         icon: config.scope.icon,
         color: config.scope.color,
+        is_default: false,
         scope_type: 'digital_twin',
         avatar: avatar ?? null,
         system_prompt: config.systemPrompt,
