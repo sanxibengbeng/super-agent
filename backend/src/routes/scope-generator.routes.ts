@@ -30,6 +30,13 @@ interface ConfirmBody {
   };
 }
 
+interface SaveBody {
+  Body: {
+    scopeId: string;
+    config: GeneratedScopeConfig;
+  };
+}
+
 export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * POST /api/business-scopes/generate
@@ -308,6 +315,30 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         agents: createdAgents,
       },
     });
+  });
+
+  /**
+   * POST /api/scope-generator/save
+   * Save the full scope + agents + skills configuration to the database.
+   */
+  fastify.post<SaveBody>('/save', { preHandler: [authenticate] }, async (request: FastifyRequest<SaveBody>, reply: FastifyReply) => {
+    const { scopeId, config } = request.body;
+    const orgId = request.user!.orgId;
+
+    if (!scopeId || !config?.scope || !config?.agents) {
+      return reply.status(400).send({ error: 'scopeId and config (scope + agents) are required', code: 'INVALID_INPUT' });
+    }
+
+    try {
+      const result = await scopeGeneratorService.saveFullConfig(scopeId, config, orgId);
+      return reply.status(200).send({ data: result });
+    } catch (error) {
+      console.error('[scope-generator] Save error:', error);
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : 'Save failed',
+        code: 'SAVE_ERROR',
+      });
+    }
   });
 
   // ==========================================================================

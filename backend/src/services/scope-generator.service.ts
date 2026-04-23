@@ -17,6 +17,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { existsSync } from 'fs';
+import { businessScopeService } from './businessScope.service.js';
+import { agentService } from './agent.service.js';
+import { skillService } from './skill.service.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -640,6 +643,121 @@ QUALITY CHECK — before outputting, verify:
     }
 
     return null;
+  }
+
+  /**
+   * Save a full scope configuration (scope + agents + skills) to the database.
+   * Supports updates to existing scopes by upserting agents and skills.
+   */
+  async saveFullConfig(
+    scopeId: string,
+    config: GeneratedScopeConfig,
+    organizationId: string,
+  ): Promise<{ scope: Record<string, unknown>; agents: Array<Record<string, unknown>> }> {
+    // 1. Update scope fields
+    const scope = await businessScopeService.updateBusinessScope(
+      scopeId,
+      {
+        name: config.scope.name,
+        description: config.scope.description,
+        icon: config.scope.icon,
+        color: config.scope.color,
+      },
+      organizationId,
+    );
+
+    // 2. Upsert agents
+    const resultAgents: Array<Record<string, unknown>> = [];
+
+    for (const agentDef of config.agents) {
+      const isDeleted = (agentDef as unknown as Record<string, unknown>)._deleted === true;
+      const existingId = (agentDef as unknown as Record<string, unknown>).id as string | undefined;
+
+      if (existingId && isDeleted) {
+        await agentService.deleteAgent(existingId, organizationId);
+        continue;
+      }
+
+      let agent;
+
+      if (existingId) {
+        agent = await agentService.updateAgent(
+          existingId,
+          {
+            name: agentDef.name,
+            display_name: agentDef.displayName,
+            role: agentDef.role,
+            system_prompt: agentDef.systemPrompt,
+          },
+          organizationId,
+        );
+      } else {
+        agent = await agentService.createAgent(
+          {
+            name: agentDef.name,
+            display_name: agentDef.displayName,
+            role: agentDef.role,
+            business_scope_id: scopeId,
+            system_prompt: agentDef.systemPrompt,
+            status: 'active',
+            metrics: {},
+            tools: [],
+            scope: [],
+            model_config: {},
+            origin: 'scope_generation',
+          },
+          organizationId,
+        );
+      }
+
+      // 3. Upsert skills
+      const skills = agentDef.skills ?? [];
+      for (const skillDef of skills) {
+        const skillDeleted = (skillDef as unknown as Record<string, unknown>)._deleted === true;
+        const skillId = (skillDef as unknown as Record<string, unknown>).id as string | undefined;
+
+        if (skillId && skillDeleted) {
+          await skillService.deleteSkill(organizationId, skillId);
+          continue;
+        }
+
+        if (skillId) {
+          // Update existing skill metadata
+          await skillService.updateSkill(organizationId, skillId, {
+            name: skillDef.name,
+            description: skillDef.description,
+            metadata: { body: skillDef.body, generatedBy: 'scope-generator' },
+          });
+        } else {
+          const skill = await skillService.createSkill(organizationId, {
+            name: skillDef.name,
+            display_name: skillDef.name.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+            description: skillDef.description,
+            metadata: { body: skillDef.body, generatedBy: 'scope-generator' },
+          });
+          await skillService.assignSkillToAgent(organizationId, agent.id, skill.id);
+        }
+      }
+
+      resultAgents.push({
+        id: agent.id,
+        name: agent.name,
+        displayName: agent.display_name,
+        role: agent.role ?? '',
+        avatar: agent.avatar ?? null,
+      });
+    }
+
+    return {
+      scope: {
+        id: scope.id,
+        name: scope.name,
+        description: scope.description,
+        icon: scope.icon,
+        color: scope.color,
+      },
+      agents: resultAgents,
+    };
   }
 
   /**
