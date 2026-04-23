@@ -17,7 +17,7 @@ import * as path from 'path';
  * SuperAgentStack — unified deployment with optional CloudFront CDN.
  *
  * Core resources (always created):
- *   VPC (default), Security Groups, EC2 (t4g.small), EIP, RDS PostgreSQL,
+ *   VPC (default), Security Groups, EC2 (m7g.medium), EIP, RDS PostgreSQL,
  *   S3 avatar bucket, IAM role, Nginx, Redis, systemd service.
  *
  * Optional Cognito (authMode=cognito):
@@ -362,7 +362,7 @@ export class SuperAgentStack extends cdk.Stack {
     const instance = new ec2.Instance(this, 'SuperAgentInstance', {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.M7G, ec2.InstanceSize.MEDIUM),
       machineImage: ec2.MachineImage.fromSsmParameter(
         '/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id',
       ),

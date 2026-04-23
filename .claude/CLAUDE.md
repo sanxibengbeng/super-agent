@@ -183,7 +183,7 @@ frontend/src/
 ### Infrastructure (AWS CDK)
 
 **Core Resources (Always Created):**
-- EC2 (t4g.small, Ubuntu 22.04) with Elastic IP
+- EC2 (m7g.medium, Ubuntu 22.04, Graviton3) with Elastic IP
 - RDS PostgreSQL 16.6 (t4g.micro, Aurora-compatible)
 - ElastiCache Redis 7.1 (cache.t4g.micro)
 - S3 Buckets: avatars, skills, workspaces

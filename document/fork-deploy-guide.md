@@ -33,7 +33,7 @@ CI/CD Pipeline 由 GitHub Actions 驱动，包含 4 个阶段：
 
 | 资源 | 说明 |
 |------|------|
-| EC2 (t4g.small) | 运行后端服务 + Nginx 反向代理 |
+| EC2 (m7g.medium) | 运行后端服务 + Nginx 反向代理 |
 | RDS PostgreSQL | 数据库 |
 | ElastiCache Redis | 消息队列 (BullMQ) |
 | S3 Buckets × 3 | 头像、Skills、工作区存储 |

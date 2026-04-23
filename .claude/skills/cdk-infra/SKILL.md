@@ -18,7 +18,7 @@ Manage AWS CDK infrastructure for Super Agent. The stack provisions EC2, RDS Pos
 ### Core Resources (Always Created)
 - VPC (default)
 - Security Groups (EC2, RDS)
-- EC2 Instance (t4g.small ARM64)
+- EC2 Instance (m7g.medium ARM64, Graviton3)
 - Elastic IP
 - RDS PostgreSQL (Aurora Serverless v2)
 - S3 Bucket (avatars, documents)
