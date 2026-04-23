@@ -18,6 +18,7 @@ interface ScopeWorkspaceProps {
   onAddAgent: () => string
   onRemoveAgent: (localId: string) => void
   onRestoreAgent: (localId: string) => void
+  onEditComplete: () => void
   onLoadVersion: (version: number) => void
   onStartOver: () => void
 }
@@ -27,10 +28,11 @@ interface ScopeWorkspaceProps {
 // ---------------------------------------------------------------------------
 
 function ScopeOverviewCard({
-  scope, onUpdate,
+  scope, onUpdate, onEditComplete,
 }: {
   scope: GeneratedScope
   onUpdate: (fields: Partial<GeneratedScope>) => void
+  onEditComplete: () => void
 }) {
   const [editing, setEditing] = useState(false)
 
@@ -39,7 +41,7 @@ function ScopeOverviewCard({
       <div className="rounded-xl border border-blue-500/40 bg-gray-800/60 p-4 space-y-3">
         <div className="flex justify-between items-center">
           <span className="text-sm font-medium text-gray-300">Edit Scope</span>
-          <button onClick={() => setEditing(false)} className="text-xs text-blue-400 hover:text-blue-300">Done</button>
+          <button onClick={() => { setEditing(false); onEditComplete() }} className="text-xs text-blue-400 hover:text-blue-300">Done</button>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -122,13 +124,14 @@ function AgentGridCard({
 }
 
 function AgentDetailPanel({
-  agent, onUpdate, onRemove, onRestore, onClose,
+  agent, onUpdate, onRemove, onRestore, onClose, onEditComplete,
 }: {
   agent: AgentDraft
   onUpdate: (fields: Partial<AgentDraft>) => void
   onRemove: () => void
   onRestore: () => void
   onClose: () => void
+  onEditComplete: () => void
 }) {
   const [editing, setEditing] = useState(false)
 
@@ -178,7 +181,7 @@ function AgentDetailPanel({
               <textarea value={agent.systemPrompt} onChange={e => onUpdate({ systemPrompt: e.target.value })} rows={4}
                 className="w-full mt-1 px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none" />
             </div>
-            <button onClick={() => setEditing(false)} className="text-xs text-blue-400 hover:text-blue-300">Done editing</button>
+            <button onClick={() => { setEditing(false); onEditComplete() }} className="text-xs text-blue-400 hover:text-blue-300">Done editing</button>
           </>
         ) : (
           <>
@@ -304,7 +307,7 @@ function VersionBar({
 export function ScopeWorkspace({
   scope, agents, activeAgents, versions, currentVersion,
   onUpdateScope, onUpdateAgent, onAddAgent, onRemoveAgent, onRestoreAgent,
-  onLoadVersion, onStartOver,
+  onEditComplete, onLoadVersion, onStartOver,
 }: ScopeWorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selectedAgent = agents.find(a => a._localId === selectedId) ?? null
@@ -315,7 +318,7 @@ export function ScopeWorkspace({
       <div className="flex-1 overflow-y-auto">
         {/* Scope Overview */}
         <div className="p-4 border-b border-gray-700">
-          <ScopeOverviewCard scope={scope} onUpdate={onUpdateScope} />
+          <ScopeOverviewCard scope={scope} onUpdate={onUpdateScope} onEditComplete={onEditComplete} />
         </div>
 
         {/* Agent Grid + Detail */}
@@ -352,6 +355,7 @@ export function ScopeWorkspace({
                   onRemove={() => onRemoveAgent(selectedAgent._localId)}
                   onRestore={() => onRestoreAgent(selectedAgent._localId)}
                   onClose={() => setSelectedId(null)}
+                  onEditComplete={onEditComplete}
                 />
               )}
             </>

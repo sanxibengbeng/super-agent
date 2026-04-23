@@ -146,11 +146,12 @@ export function ScopeCopilotPage() {
             activeAgents={activeAgents}
             versions={versions}
             currentVersion={currentVersion}
-            onUpdateScope={(fields) => { updateScope(fields); createSnapshot('Manual edit', 'manual-edit') }}
-            onUpdateAgent={(id, fields) => { updateAgent(id, fields); createSnapshot('Manual edit', 'manual-edit') }}
+            onUpdateScope={updateScope}
+            onUpdateAgent={updateAgent}
             onAddAgent={addAgent}
             onRemoveAgent={removeAgent}
             onRestoreAgent={restoreAgent}
+            onEditComplete={() => createSnapshot('Manual edit', 'manual-edit')}
             onLoadVersion={loadVersion}
             onStartOver={startOver}
           />
