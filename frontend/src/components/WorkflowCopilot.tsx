@@ -3,12 +3,9 @@ import { Send, Loader2, User, Bot, CheckCircle2, AlertCircle, Wrench, ChevronDow
 import ReactMarkdown from 'react-markdown'
 import {
   workflowPlanToCanvasData,
-  canvasDataToWorkflowPlan,
-  applyPatches,
 } from '@/lib/workflow-plan'
-import type { WorkflowPlan, WorkflowPatch, WorkflowTask, WorkflowVariable } from '@/types/workflow-plan'
+import type { WorkflowPlan, WorkflowTask, WorkflowVariable } from '@/types/workflow-plan'
 import type { CanvasData } from '@/types/canvas'
-import type { Agent } from '@/types'
 import { getAuthToken } from '@/services/api/restClient'
 import { useTranslation } from '@/i18n'
 
@@ -64,11 +61,8 @@ export interface WorkflowCopilotHandle {
 interface WorkflowCopilotProps {
   workflowId: string | null
   workflowVersion?: string
-  workflowName?: string
   canvasData?: CanvasData
-  availableAgents?: Agent[]
   businessScopeId?: string
-  onApplyChanges: (instruction: string) => Promise<boolean | void>
   onGenerateWorkflow?: (canvasData: CanvasData, title: string, variables?: WorkflowVariable[]) => void
   disabled?: boolean
 }
@@ -78,7 +72,7 @@ interface WorkflowCopilotProps {
 // ---------------------------------------------------------------------------
 
 interface SSEChunk {
-  type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'validated_plan'
+  type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error'
   text?: string
   error?: string
   toolName?: string
@@ -87,7 +81,6 @@ interface SSEChunk {
   isError?: boolean
   durationMs?: number
   numTurns?: number
-  plan?: WorkflowPlan
 }
 
 async function* streamSSE(
@@ -136,10 +129,6 @@ async function* streamSSE(
         }
         if (event.type === 'result') {
           yield { type: 'result', durationMs: event.durationMs, numTurns: event.numTurns }
-          continue
-        }
-        if (event.type === 'validated_plan' && event.plan) {
-          yield { type: 'validated_plan', plan: event.plan }
           continue
         }
         if ((event.type === 'assistant') && event.content && Array.isArray(event.content)) {
@@ -246,20 +235,6 @@ function parseWorkflowPlan(text: string): WorkflowPlan {
   }
 }
 
-function parsePatches(text: string): WorkflowPatch[] {
-  let jsonStr = text.trim()
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (fenceMatch) jsonStr = fenceMatch[1]!.trim()
-  const firstBracket = jsonStr.indexOf('[')
-  const lastBracket = jsonStr.lastIndexOf(']')
-  if (firstBracket !== -1 && lastBracket > firstBracket) {
-    jsonStr = jsonStr.substring(firstBracket, lastBracket + 1)
-  }
-  const raw = JSON.parse(jsonStr)
-  if (!Array.isArray(raw)) throw new Error('Expected a JSON array of patches')
-  return raw as WorkflowPatch[]
-}
-
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -345,11 +320,8 @@ function ToolStep({ step }: { step: IntermediateStep }) {
 export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilotProps>(function WorkflowCopilot({
   workflowId,
   workflowVersion,
-  workflowName,
   canvasData,
-  availableAgents = [],
   businessScopeId,
-  onApplyChanges,
   onGenerateWorkflow,
   disabled,
 }, ref) {
@@ -359,7 +331,7 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { t } = useTranslation()
-  const historyLoadedRef = useRef(false)
+  const loadedWorkflowRef = useRef<string | null>(null)
 
   const hasNodes = canvasData && canvasData.nodes.length > 0
 
@@ -368,10 +340,16 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Load persistent chat history on mount
+  // Reset state and load history when workflowId changes
   useEffect(() => {
-    if (!workflowId || historyLoadedRef.current) return
-    historyLoadedRef.current = true
+    const key = workflowId ?? null
+    if (key === loadedWorkflowRef.current) return
+
+    loadedWorkflowRef.current = key
+    setMessages([])
+    setInput('')
+
+    if (!workflowId) return
     const version = workflowVersion ?? '1'
 
     const load = async () => {
@@ -384,16 +362,38 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
         if (!res.ok) return
         const data = await res.json() as { messages: Array<{ id: string; type: string; content: string; created_at: string }> }
         if (!data.messages?.length) return
-        setMessages(data.messages.map(m => ({
-          id: m.id,
-          role: m.type === 'user' ? 'user' : 'assistant',
-          content: m.content,
-          status: 'done' as const,
-          steps: [],
-          timestamp: new Date(m.created_at).getTime(),
-        })))
+        let latestWorkflowJson: string | null = null
+        setMessages(data.messages.map(m => {
+          if (m.type === 'user') {
+            return { id: m.id, role: 'user' as const, content: m.content, status: 'done' as const, steps: [] as IntermediateStep[], timestamp: new Date(m.created_at).getTime() }
+          }
+          let displayText = ''
+          try {
+            const blocks = JSON.parse(m.content) as Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>
+            for (const block of blocks) {
+              if (block.type === 'text' && block.text) displayText += block.text
+              if (block.type === 'tool_use' && block.input) {
+                const fp = block.input.file_path as string | undefined
+                const ct = block.input.content as string | undefined
+                if (fp?.includes('workflow.json') && ct) {
+                  latestWorkflowJson = ct
+                }
+              }
+            }
+          } catch {
+            displayText = m.content
+          }
+          return { id: m.id, role: 'assistant' as const, content: displayText, status: 'done' as const, steps: [] as IntermediateStep[], timestamp: new Date(m.created_at).getTime() }
+        }))
+        if (latestWorkflowJson && onGenerateWorkflow) {
+          try {
+            const plan = parseWorkflowPlan(latestWorkflowJson)
+            const canvasData = workflowPlanToCanvasData(plan)
+            onGenerateWorkflow(canvasData, plan.title, plan.variables)
+          } catch { /* plan parse failed — skip */ }
+        }
       } catch {
-        // non-fatal — history just won't be pre-loaded
+        // non-fatal
       }
     }
     void load()
@@ -509,150 +509,75 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
 
     try {
       let accumulatedText = ''
+      let workflowJsonContent: string | null = null
 
       const version = workflowVersion ?? '1'
 
-      if (!hasNodes || !workflowId) {
-        // Generate mode — no existing nodes
-        if (!onGenerateWorkflow) throw new Error('Generation not available')
-
-        let validatedPlan: WorkflowPlan | null = null
-
-        for await (const chunk of streamSSE('/api/workflows/copilot/stream', {
-          workflow_id: workflowId ?? '',
-          version,
-          message: text,
-          business_scope_id: businessScopeId,
-        })) {
-          if (chunk.type === 'error') throw new Error(chunk.error)
-          if (chunk.type === 'text' && chunk.text) {
-            accumulatedText += chunk.text
-            updateMessage(assistantId, { content: accumulatedText })
-          }
-          if (chunk.type === 'tool_use') {
-            appendStep(assistantId, { type: 'tool_use', name: chunk.toolName!, input: chunk.toolInput! })
-          }
-          if (chunk.type === 'tool_result') {
-            appendStep(assistantId, { type: 'tool_result', content: chunk.toolContent ?? null, isError: chunk.isError ?? false })
-          }
-          if (chunk.type === 'validated_plan' && chunk.plan) {
-            validatedPlan = chunk.plan as WorkflowPlan
+      for await (const chunk of streamSSE('/api/workflows/copilot/stream', {
+        workflow_id: workflowId ?? '',
+        version,
+        message: text,
+        business_scope_id: businessScopeId,
+      })) {
+        if (chunk.type === 'error') throw new Error(chunk.error)
+        if (chunk.type === 'text' && chunk.text) {
+          accumulatedText += chunk.text
+          updateMessage(assistantId, { content: accumulatedText })
+        }
+        if (chunk.type === 'tool_use') {
+          appendStep(assistantId, { type: 'tool_use', name: chunk.toolName!, input: chunk.toolInput! })
+          // Capture Write tool_use for workflow.json
+          if (chunk.toolInput) {
+            const input = chunk.toolInput as Record<string, unknown>
+            if (
+              typeof input.file_path === 'string' &&
+              input.file_path.includes('workflow.json') &&
+              typeof input.content === 'string'
+            ) {
+              workflowJsonContent = input.content
+            }
           }
         }
+        if (chunk.type === 'tool_result') {
+          appendStep(assistantId, { type: 'tool_result', content: chunk.toolContent ?? null, isError: chunk.isError ?? false })
+        }
+      }
 
-        // Use server-validated plan if available, otherwise fall back to client-side parsing
+      // Try to apply the workflow plan from the Write tool_use content
+      let applied = false
+      if (workflowJsonContent && onGenerateWorkflow) {
         try {
-          const plan = validatedPlan ?? parseWorkflowPlan(accumulatedText)
+          const plan = parseWorkflowPlan(workflowJsonContent)
           const newCanvasData = workflowPlanToCanvasData(plan)
           onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
-
-          // Skill gap detection — check if required integrations have matching skills
-          const allSkillNames = new Set(
-            availableAgents.flatMap(a => a.tools?.map(t => t.name.toLowerCase()) ?? [])
-          )
-          const missingIntegrations: Array<{ task: string; integration: string }> = []
-          for (const task of plan.tasks) {
-            for (const integration of task.requiredIntegrations ?? []) {
-              const integrationLower = integration.toLowerCase()
-              const hasMatch = [...allSkillNames].some(
-                s => s.includes(integrationLower) || integrationLower.includes(s)
-              )
-              if (!hasMatch) {
-                missingIntegrations.push({ task: task.title, integration })
-              }
-            }
-          }
-
-          let statusMessage = `Generated workflow "${plan.title}" with ${plan.tasks.length} tasks.`
-          if (missingIntegrations.length > 0) {
-            statusMessage += '\n\n⚠️ **Missing integrations detected:**\n'
-            for (const { task, integration } of missingIntegrations) {
-              statusMessage += `- "${task}" requires **${integration}** — no matching skill found in this scope\n`
-            }
-            statusMessage += '\nInstall the required skills before running this workflow.'
-          }
+          applied = true
 
           updateMessage(assistantId, {
-            content: statusMessage,
+            content: accumulatedText || `${hasNodes ? 'Updated' : 'Generated'} workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
             status: 'done',
           })
-        } catch (parseErr) {
-          // Not valid JSON plan — treat as conversational reply
-          // Extract position from error message for debugging
-          const posMatch = String(parseErr).match(/line (\d+) column (\d+)/)
-          let debugContext = ''
-          if (posMatch) {
-            const lines = accumulatedText.split('\n')
-            const lineNum = parseInt(posMatch[1]) - 1
-            const colNum = parseInt(posMatch[2]) - 1
-            if (lineNum < lines.length) {
-              const line = lines[lineNum]
-              debugContext = `\nError at line ${lineNum + 1}, col ${colNum + 1}: ...${line.slice(Math.max(0, colNum - 40), colNum + 40)}...`
-              // Show char codes around the error position
-              const nearby = line.slice(Math.max(0, colNum - 5), colNum + 5)
-              debugContext += `\nChar codes: ${[...nearby].map(c => c.charCodeAt(0).toString(16)).join(' ')}`
-            }
-          }
-          console.error('parseWorkflowPlan failed:', parseErr, 'text length:', accumulatedText.length, 'text preview:', accumulatedText.slice(0, 200), debugContext)
+        } catch {
+          // workflow.json parse failed — show text as-is
           updateMessage(assistantId, { content: accumulatedText, status: 'done' })
         }
-      } else {
-        // Modify mode — has existing nodes
-        if (!onGenerateWorkflow) throw new Error('Modification not available')
+      }
 
-        const currentPlan = canvasDataToWorkflowPlan(canvasData!, workflowName || 'Workflow')
-
-        for await (const chunk of streamSSE('/api/workflows/copilot/stream', {
-          workflow_id: workflowId,
-          version,
-          message: text,
-          business_scope_id: businessScopeId,
-        })) {
-          if (chunk.type === 'error') throw new Error(chunk.error)
-          if (chunk.type === 'text' && chunk.text) {
-            accumulatedText += chunk.text
-            updateMessage(assistantId, { content: accumulatedText })
-          }
-          if (chunk.type === 'tool_use') {
-            appendStep(assistantId, { type: 'tool_use', name: chunk.toolName!, input: chunk.toolInput! })
-          }
-          if (chunk.type === 'tool_result') {
-            appendStep(assistantId, { type: 'tool_result', content: chunk.toolContent ?? null, isError: chunk.isError ?? false })
-          }
-        }
-
-        // Check if the response contains JSON patches or is a conversational reply
-        const trimmed = accumulatedText.trim()
-        const looksLikeJson = trimmed.includes('[') && trimmed.includes(']') && (trimmed.includes('"op"') || trimmed.includes('"add"') || trimmed.includes('"remove"') || trimmed.includes('"replace"') || trimmed.includes('```'))
-
-        if (looksLikeJson) {
+      if (!applied) {
+        // No workflow.json written — conversational reply (clarification, etc.)
+        // Also try fallback: parse accumulated text as JSON plan directly
+        if (onGenerateWorkflow && accumulatedText.trim()) {
           try {
-            const patches = parsePatches(accumulatedText)
-            if (patches.length === 0) {
-              // Empty patches array — just show the text as-is
-              updateMessage(assistantId, { content: accumulatedText, status: 'done' })
-            } else {
-              const result = applyPatches(currentPlan, patches)
-              if (result.success && result.data) {
-                const updatedCanvasData = workflowPlanToCanvasData(result.data)
-                onGenerateWorkflow(updatedCanvasData, result.data.title)
-                updateMessage(assistantId, {
-                  content: `Applied ${patches.length} change${patches.length > 1 ? 's' : ''} to the workflow.`,
-                  status: 'done',
-                })
-              } else {
-                updateMessage(assistantId, {
-                  content: result.error || 'Failed to apply patches.',
-                  status: 'error',
-                })
-              }
-            }
+            const plan = parseWorkflowPlan(accumulatedText)
+            const newCanvasData = workflowPlanToCanvasData(plan)
+            onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
+            updateMessage(assistantId, {
+              content: `${hasNodes ? 'Updated' : 'Generated'} workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
+              status: 'done',
+            })
           } catch {
-            // JSON parse failed — treat as conversational reply
             updateMessage(assistantId, { content: accumulatedText, status: 'done' })
           }
         } else {
-          // Conversational reply (clarifying question, explanation, etc.)
           updateMessage(assistantId, { content: accumulatedText, status: 'done' })
         }
       }
@@ -666,10 +591,10 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
       setIsProcessing(false)
       inputRef.current?.focus()
     }
-  }, [input, isProcessing, hasNodes, workflowId, canvasData, workflowName, availableAgents, businessScopeId, onApplyChanges, onGenerateWorkflow, createMessage, updateMessage, appendStep])
+  }, [input, isProcessing, hasNodes, workflowId, workflowVersion, businessScopeId, onGenerateWorkflow, createMessage, updateMessage, appendStep, t])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       void handleSubmit()
     }

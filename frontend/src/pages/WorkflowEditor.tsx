@@ -172,6 +172,28 @@ function getIconForNodeType(type: CanvasNodeType): string {
   return icons[type] || 'Zap';
 }
 
+// localStorage helpers for workflow draft persistence
+function loadWorkflowDraft(workflowId: string): { canvasData: CanvasData; title: string; variables?: WorkflowVariable[]; lastModified: number } | null {
+  try {
+    const raw = localStorage.getItem(`workflowDraft:${workflowId}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveWorkflowDraft(workflowId: string, data: { canvasData: CanvasData; title: string; variables?: WorkflowVariable[] }): void {
+  try {
+    localStorage.setItem(`workflowDraft:${workflowId}`, JSON.stringify({ ...data, lastModified: Date.now() }));
+  } catch { /* storage full */ }
+}
+
+function clearWorkflowDraft(workflowId: string): void {
+  try {
+    localStorage.removeItem(`workflowDraft:${workflowId}`);
+  } catch { /* ignore */ }
+}
+
 export function WorkflowEditor() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
@@ -307,17 +329,24 @@ export function WorkflowEditor() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
 
-  // Sync canvas data when workflow changes - use workflow data directly
+  // Sync canvas data when workflow changes - check localStorage draft first
   useEffect(() => {
     if (selectedWorkflow) {
-      console.log('🔄 Syncing canvas from selectedWorkflow:', {
-        id: selectedWorkflow.id,
-        nodes: selectedWorkflow.nodes?.length,
-        connections: selectedWorkflow.connections?.length,
-      });
-      const data = workflowToCanvasData(selectedWorkflow);
-      console.log('🔄 Setting canvasData:', { nodes: data.nodes.length, edges: data.edges.length });
-      setCanvasData(data);
+      const backendData = workflowToCanvasData(selectedWorkflow);
+      const backendEmpty = backendData.nodes.length === 0;
+
+      // If backend has no nodes, check for a localStorage draft
+      if (backendEmpty) {
+        const draft = loadWorkflowDraft(selectedWorkflow.id);
+        if (draft && draft.canvasData.nodes.length > 0) {
+          setCanvasData(draft.canvasData);
+          setIsDirty(true);
+          setSelectedNodeId(null);
+          return;
+        }
+      }
+
+      setCanvasData(backendData);
       setIsDirty(false);
       setSelectedNodeId(null);
     }
@@ -371,7 +400,10 @@ export function WorkflowEditor() {
   const handleCanvasChange = useCallback((data: CanvasData) => {
     setCanvasData(data);
     setIsDirty(true);
-  }, []);
+    if (selectedWorkflow) {
+      saveWorkflowDraft(selectedWorkflow.id, { canvasData: data, title: selectedWorkflow.name });
+    }
+  }, [selectedWorkflow]);
 
   // Handle node selection
   const handleNodeSelect = useCallback((nodeId: string | null) => {
@@ -420,17 +452,10 @@ export function WorkflowEditor() {
   // Handle save
   const handleSave = useCallback(async () => {
     if (!selectedWorkflow || !isDirty) return;
-    
+
     const updates = canvasDataToWorkflow(canvasData, selectedWorkflow);
-    console.log('💾 Saving workflow:', {
-      workflowId: selectedWorkflow.id,
-      canvasNodes: canvasData.nodes.length,
-      canvasEdges: canvasData.edges.length,
-      convertedNodes: updates.nodes?.length,
-      convertedConnections: updates.connections?.length,
-      updates,
-    });
     await updateWorkflow(selectedWorkflow.id, updates);
+    clearWorkflowDraft(selectedWorkflow.id);
     setIsDirty(false);
   }, [selectedWorkflow, canvasData, isDirty, updateWorkflow]);
 
@@ -590,26 +615,51 @@ export function WorkflowEditor() {
     }
   }, [selectedWorkflow?.id, loadHistory]);
 
-  // Handle AI Copilot changes
-  const handleCopilotApplyChanges = useCallback(async (instruction: string) => {
-    if (!selectedWorkflow) return false;
-
-    const result = await applyNaturalLanguageChanges(selectedWorkflow.id, instruction);
-    if (result) {
-      setCopilotSuccess(t('workflow.copilot.success'));
-      setTimeout(() => setCopilotSuccess(null), 3000);
-      return true;
-    }
-    return false;
-  }, [selectedWorkflow, applyNaturalLanguageChanges, t]);
-
-  // Handle workflow generation from copilot
-  const handleGenerateWorkflow = useCallback((newCanvasData: CanvasData, title: string, _variables?: WorkflowVariable[]) => {
+  // Handle workflow generation from copilot — save to localStorage immediately, then persist to backend
+  const handleGenerateWorkflow = useCallback(async (newCanvasData: CanvasData, title: string, variables?: WorkflowVariable[]) => {
     setCanvasData(newCanvasData);
-    setIsDirty(true);
+
+    // Save to localStorage immediately so the draft survives page refresh
+    if (selectedWorkflow) {
+      saveWorkflowDraft(selectedWorkflow.id, { canvasData: newCanvasData, title, variables });
+    }
+
+    // Build legacy format for saving
+    const nodes = newCanvasData.nodes.map((node) => ({
+      id: node.id,
+      type: mapCanvasNodeTypeToLegacy(node.type as CanvasNodeType) as import('@/types').NodeType,
+      label: node.data.title,
+      description: node.data.contentPreview || '',
+      position: { x: node.position.x, y: node.position.y },
+      icon: getIconForNodeType(node.type as CanvasNodeType),
+      agentId: (node.data.metadata as any)?.agentId,
+      actionType: (node.data.metadata as any)?.actionType,
+      metadata: node.data.metadata as Record<string, unknown> | undefined,
+    }));
+    const connections = newCanvasData.edges.map((edge) => ({
+      id: edge.id,
+      from: edge.source,
+      to: edge.target,
+      sourceHandle: edge.sourceHandle,
+      targetHandle: edge.targetHandle,
+      animated: edge.animated,
+    }));
+
+    // Inject input variables into the start node metadata
+    const startNode = nodes.find(n => n.type === 'trigger' || n.type === 'start');
+    if (startNode && variables && variables.length > 0) {
+      startNode.metadata = { ...startNode.metadata, inputVariables: variables };
+    }
+
+    if (selectedWorkflow) {
+      await updateWorkflow(selectedWorkflow.id, { name: title, nodes, connections });
+      clearWorkflowDraft(selectedWorkflow.id);
+    }
+
+    setIsDirty(false);
     setCopilotSuccess(`Generated workflow: ${title}`);
     setTimeout(() => setCopilotSuccess(null), 3000);
-  }, []);
+  }, [selectedWorkflow, updateWorkflow]);
 
   // Handle workflow import
   const handleImportFromImage = useCallback(async (file: File): Promise<WorkflowImportResult | null> => {
@@ -661,9 +711,10 @@ export function WorkflowEditor() {
   // Handle delete workflow
   const handleDeleteWorkflow = useCallback(async () => {
     if (!selectedWorkflow) return;
-    
+
     const success = await deleteWorkflow(selectedWorkflow.id);
     if (success) {
+      clearWorkflowDraft(selectedWorkflow.id);
       setSelectedWorkflowId(null);
       setShowDeleteConfirm(false);
       setCanvasData({ nodes: [], edges: [] });
@@ -1204,11 +1255,8 @@ export function WorkflowEditor() {
                         ref={copilotRef}
                         workflowId={selectedWorkflow.id}
                         workflowVersion={selectedWorkflow.version}
-                        workflowName={selectedWorkflow.name}
                         canvasData={canvasData}
-                        availableAgents={agents.filter(a => a.businessScopeId === activeScopeId)}
                         businessScopeId={activeScopeId ?? undefined}
-                        onApplyChanges={handleCopilotApplyChanges}
                         onGenerateWorkflow={handleGenerateWorkflow}
                       />
                     </div>
