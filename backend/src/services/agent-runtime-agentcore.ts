@@ -12,7 +12,7 @@
 
 import { config } from '../config/index.js';
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
-import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig } from './claude-agent.service.js';
+import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig, AnyMCPServerConfig } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
 import { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 import { createReadStream, statSync, createWriteStream } from 'fs';
@@ -87,7 +87,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     agentConfig: AgentConfig,
     _skills: SkillForWorkspace[],
     _pluginPaths?: string[],
-    mcpServers?: Record<string, MCPServerSDKConfig>,
+    mcpServers?: Record<string, AnyMCPServerConfig>,
   ): AsyncGenerator<ConversationEvent> {
     await this.ensureSDK();
 
@@ -109,8 +109,8 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     if (mcpServers) {
       const filtered: Record<string, MCPServerSDKConfig> = {};
       for (const [name, cfg] of Object.entries(mcpServers)) {
-        if ((cfg as any).type !== 'sdk') {
-          filtered[name] = cfg;
+        if ((cfg as AnyMCPServerConfig).type !== 'sdk') {
+          filtered[name] = cfg as MCPServerSDKConfig;
         }
       }
       if (Object.keys(filtered).length > 0) {

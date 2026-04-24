@@ -5,7 +5,7 @@
  */
 
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
-import type { ConversationEvent, AgentConfig, MCPServerSDKConfig } from './claude-agent.service.js';
+import type { ConversationEvent, AgentConfig, AnyMCPServerConfig } from './claude-agent.service.js';
 import { claudeAgentService } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
 
@@ -17,7 +17,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     agentConfig: AgentConfig,
     skills: SkillForWorkspace[],
     pluginPaths?: string[],
-    mcpServers?: Record<string, MCPServerSDKConfig>,
+    mcpServers?: Record<string, AnyMCPServerConfig>,
   ): AsyncGenerator<ConversationEvent> {
     yield* claudeAgentService.runConversation(
       {

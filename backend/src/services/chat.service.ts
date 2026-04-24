@@ -536,7 +536,7 @@ export class ChatService {
     let subAgentNameToId: Map<string, string> = new Map();
     let subAgentInfoMap: Map<string, { displayName: string; avatar: string | null }> = new Map();
     let pluginPaths: string[] = [];
-    let mcpServers: Record<string, import('./claude-agent.service.js').MCPServerSDKConfig> = {};
+    let mcpServers: Record<string, import('./claude-agent.service.js').AnyMCPServerConfig> = {};
 
     if (useScopeFlow) {
       // ---- Business Scope Flow ----
@@ -888,7 +888,7 @@ export class ChatService {
     organizationId: string,
     userId: string,
     options: ChatStreamOptions,
-  ): Promise<{ sessionId: string; workspacePath: string; agentConfig: AgentConfig; skills: SkillForWorkspace[]; claudeSessionId?: string; subAgentNames: string[]; subAgentNameToId: Map<string, string>; subAgentInfoMap: Map<string, { displayName: string; avatar: string | null }>; pluginPaths: string[]; mcpServers: Record<string, import('./claude-agent.service.js').MCPServerSDKConfig> }> {
+  ): Promise<{ sessionId: string; workspacePath: string; agentConfig: AgentConfig; skills: SkillForWorkspace[]; claudeSessionId?: string; subAgentNames: string[]; subAgentNameToId: Map<string, string>; subAgentInfoMap: Map<string, { displayName: string; avatar: string | null }>; pluginPaths: string[]; mcpServers: Record<string, import('./claude-agent.service.js').AnyMCPServerConfig> }> {
     const scopeId = options.businessScopeId!;
     // mentionAgentId is NOT used as selectedAgentId — it should not change the orchestrator identity.
     // Instead, it's handled by injecting a routing hint into the message so the orchestrator
@@ -970,7 +970,48 @@ export class ChatService {
       }
       return [a.name, { displayName: a.display_name || a.name, avatar: avatarUrl }];
     }));
-    return { sessionId, workspacePath, agentConfig, skills: scopeForWorkspace.skills, claudeSessionId: session.claude_session_id ?? undefined, subAgentNames: agentsWithSkills.map(a => a.name), subAgentNameToId: new Map(agentsWithSkills.map(a => [a.name, a.id])), subAgentInfoMap, pluginPaths, mcpServers: await this.readSessionMcpServers(workspacePath) };
+    // Build MCP servers from workspace settings
+    const baseMcpServers: Record<string, import('./claude-agent.service.js').AnyMCPServerConfig> =
+      await this.readSessionMcpServers(workspacePath);
+
+    // If this is a twin session, inject project tools as an in-process MCP server
+    if (session?.context && typeof session.context === 'object' && (session.context as Record<string, unknown>).twin_session) {
+      try {
+        const twinRecord = await prisma.project_twin_sessions.findFirst({
+          where: { session_id: sessionId },
+          include: { project: { select: { id: true, workspace_session_id: true, business_scope_id: true } } },
+        });
+        if (twinRecord) {
+          const { createProjectToolsMcpServer } = await import('./project-tools-mcp.js');
+
+          // Resolve the main project workspace path using the same directory structure
+          let mainWorkspacePath = '';
+          if (twinRecord.project.workspace_session_id && twinRecord.project.business_scope_id) {
+            mainWorkspacePath = this.workspaceManager.getSessionWorkspacePath(
+              organizationId,
+              twinRecord.project.business_scope_id,
+              twinRecord.project.workspace_session_id,
+            );
+          }
+
+          const twinCtx: import('./project-tools.js').ProjectToolContext = {
+            projectId: twinRecord.project_id,
+            organizationId,
+            userId,
+            issueId: twinRecord.issue_id ?? undefined,
+            twinWorkspacePath: workspacePath,
+            mainWorkspacePath,
+          };
+          const mcpServer = createProjectToolsMcpServer(twinCtx);
+          baseMcpServers[mcpServer.name] = mcpServer;
+          console.log(`[prepareScopeSession] Injected project-tools MCP server for twin session ${sessionId}`);
+        }
+      } catch (err) {
+        console.error('[prepareScopeSession] Failed to inject project tools:', err);
+      }
+    }
+
+    return { sessionId, workspacePath, agentConfig, skills: scopeForWorkspace.skills, claudeSessionId: session.claude_session_id ?? undefined, subAgentNames: agentsWithSkills.map(a => a.name), subAgentNameToId: new Map(agentsWithSkills.map(a => [a.name, a.id])), subAgentInfoMap, pluginPaths, mcpServers: baseMcpServers };
   }
 
   /**

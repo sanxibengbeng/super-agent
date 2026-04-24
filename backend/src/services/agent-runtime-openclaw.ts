@@ -22,7 +22,7 @@
 
 import { config } from '../config/index.js';
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
-import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig } from './claude-agent.service.js';
+import type { ConversationEvent, AgentConfig, ContentBlock, AnyMCPServerConfig } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ export class OpenClawAgentRuntime implements AgentRuntime {
     agentConfig: AgentConfig,
     _skills: SkillForWorkspace[],
     _pluginPaths?: string[],
-    _mcpServers?: Record<string, MCPServerSDKConfig>,
+    _mcpServers?: Record<string, AnyMCPServerConfig>,
   ): AsyncGenerator<ConversationEvent> {
     await this.ensureSDK();
 

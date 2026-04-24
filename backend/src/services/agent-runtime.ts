@@ -18,7 +18,7 @@ import type {
   ConversationEvent,
   AgentConfig,
   ContentBlock,
-  MCPServerSDKConfig,
+  AnyMCPServerConfig,
 } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
 
@@ -60,7 +60,7 @@ export interface AgentRuntime {
     agentConfig: AgentConfig,
     skills: SkillForWorkspace[],
     pluginPaths?: string[],
-    mcpServers?: Record<string, MCPServerSDKConfig>,
+    mcpServers?: Record<string, AnyMCPServerConfig>,
   ): AsyncGenerator<ConversationEvent>;
 
   /** Disconnect / abort a running session. */
