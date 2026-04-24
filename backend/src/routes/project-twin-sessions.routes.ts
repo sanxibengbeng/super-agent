@@ -4,13 +4,26 @@
  */
 
 import { FastifyInstance } from 'fastify';
+import { ZodError } from 'zod';
 import { authenticate } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
 import { projectTwinSessionService } from '../services/project-twin-session.service.js';
 import {
   createTwinSessionSchema,
   updateVisibilitySchema,
   listTwinSessionsSchema,
 } from '../schemas/project-twin-session.schema.js';
+
+function validate<T>(schema: { parse: (data: unknown) => T }, data: unknown): T {
+  try {
+    return schema.parse(data);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      throw AppError.validation('Validation failed', error.issues);
+    }
+    throw error;
+  }
+}
 
 export async function projectTwinSessionRoutes(fastify: FastifyInstance): Promise<void> {
 
@@ -23,18 +36,14 @@ export async function projectTwinSessionRoutes(fastify: FastifyInstance): Promis
    */
   fastify.post<{ Params: { id: string }; Body: { agent_id: string; issue_id?: string; visibility?: string } }>(
     '/',
-    {
-      preHandler: [authenticate],
-      schema: {
-        body: createTwinSessionSchema,
-      },
-    },
+    { preHandler: [authenticate] },
     async (request, reply) => {
+      const body = validate(createTwinSessionSchema, request.body);
       const session = await projectTwinSessionService.create(
         request.user!.orgId,
         request.params.id,
         request.user!.id,
-        request.body,
+        body,
       );
       return reply.status(201).send(session);
     }
@@ -48,18 +57,14 @@ export async function projectTwinSessionRoutes(fastify: FastifyInstance): Promis
     Querystring: { issue_id?: string; visibility?: string; mine_only?: boolean };
   }>(
     '/',
-    {
-      preHandler: [authenticate],
-      schema: {
-        querystring: listTwinSessionsSchema,
-      },
-    },
+    { preHandler: [authenticate] },
     async (request, reply) => {
+      const query = validate(listTwinSessionsSchema, request.query);
       const sessions = await projectTwinSessionService.list(
         request.user!.orgId,
         request.params.id,
         request.user!.id,
-        request.query,
+        query,
       );
       return reply.send({ data: sessions });
     }
@@ -103,19 +108,15 @@ export async function projectTwinSessionRoutes(fastify: FastifyInstance): Promis
     Body: { visibility: 'private' | 'public' };
   }>(
     '/:twinSessionId/visibility',
-    {
-      preHandler: [authenticate],
-      schema: {
-        body: updateVisibilitySchema,
-      },
-    },
+    { preHandler: [authenticate] },
     async (request, reply) => {
+      const body = validate(updateVisibilitySchema, request.body);
       const session = await projectTwinSessionService.updateVisibility(
         request.user!.orgId,
         request.params.id,
         request.params.twinSessionId,
         request.user!.id,
-        request.body.visibility,
+        body.visibility,
       );
       return reply.send(session);
     }
