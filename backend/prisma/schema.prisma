@@ -110,6 +110,8 @@ model profiles {
   created_at             DateTime @default(now()) @db.Timestamptz
   updated_at             DateTime @default(now()) @updatedAt @db.Timestamptz
 
+  twin_sessions project_twin_sessions[]
+
   @@index([username])
   @@index([active_organization_id])
 }
@@ -211,6 +213,7 @@ model agents {
   scope_briefings   scope_briefings[]
   scope_assignments agent_scope_assignments[]
   room_memberships  chat_room_members[]
+  twin_sessions     project_twin_sessions[]
 
   @@unique([organization_id, business_scope_id, name], name: "unique_agent_name_per_scope")
   @@index([organization_id])
@@ -459,12 +462,13 @@ model chat_sessions {
   created_at        DateTime  @default(now()) @db.Timestamptz
   updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz
 
-  organization        organizations          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  business_scope      business_scopes?       @relation(fields: [business_scope_id], references: [id], onDelete: SetNull)
+  organization        organizations           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  business_scope      business_scopes?        @relation(fields: [business_scope_id], references: [id], onDelete: SetNull)
   chat_messages       chat_messages[]
   im_thread_sessions  im_thread_sessions[]
   room_members        chat_room_members[]
   workflow_executions workflow_executions[]
+  twin_session        project_twin_sessions?
 
   @@index([organization_id])
   @@index([user_id])
@@ -1199,9 +1203,10 @@ model projects {
   created_at           DateTime @default(now()) @db.Timestamptz
   updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz
 
-  organization organizations     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  issues       project_issues[]
-  members      project_members[]
+  organization  organizations           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  issues        project_issues[]
+  members       project_members[]
+  twin_sessions project_twin_sessions[]
 
   @@index([organization_id])
   @@index([created_by])
@@ -1268,6 +1273,7 @@ model project_issues {
   parent              project_issues?           @relation("issue_parent", fields: [parent_issue_id], references: [id], onDelete: SetNull)
   relations_as_source project_issue_relations[] @relation("relation_source")
   relations_as_target project_issue_relations[] @relation("relation_target")
+  twin_sessions       project_twin_sessions[]
 
   @@unique([project_id, issue_number], name: "unique_issue_number_per_project")
   @@index([project_id])
@@ -1342,6 +1348,30 @@ model project_triage_reports {
 
   @@index([project_id])
   @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Project Twin Sessions — private AI chat sessions for project members
+// ============================================================================
+model project_twin_sessions {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id     String          @db.Uuid
+  session_id     String          @unique @db.Uuid
+  issue_id       String?         @db.Uuid
+  created_by     String          @db.Uuid
+  agent_id       String          @db.Uuid
+  visibility     String          @default("private") @db.VarChar(10)
+  created_at     DateTime        @default(now()) @db.Timestamptz(6)
+
+  project        projects        @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  session        chat_sessions   @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  issue          project_issues? @relation(fields: [issue_id], references: [id], onDelete: SetNull)
+  creator        profiles        @relation(fields: [created_by], references: [id])
+  agent          agents          @relation(fields: [agent_id], references: [id])
+
+  @@index([project_id, created_by])
+  @@index([project_id, issue_id])
+  @@index([project_id, visibility])
 }
 
 // ============================================================================
