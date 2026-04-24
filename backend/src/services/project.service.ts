@@ -598,6 +598,7 @@ export class ProjectService {
         agent_id: project.agent_id,
         title: `Project: ${project.name}`,
         status: 'idle',
+        source: 'project',
         room_mode: 'single',
         routing_strategy: 'auto',
         context: {

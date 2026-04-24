@@ -47,6 +47,7 @@ export class ProjectTwinSessionService {
           ? `Twin: ${agent.display_name ?? agent.name} on #${issue.issue_number}`
           : `Twin: ${agent.display_name ?? agent.name} - ${project.name}`,
         status: 'idle',
+        source: 'twin_session',
         room_mode: 'single',
         routing_strategy: 'auto',
         context: {
