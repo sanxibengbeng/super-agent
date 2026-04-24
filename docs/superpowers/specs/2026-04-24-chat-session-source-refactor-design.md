@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-24
 **Status:** Draft
-**Scope:** Backend schema, services, frontend project creation
+**Scope:** Backend schema, services, frontend project board + project creation
 
 ---
 
@@ -14,34 +14,37 @@ The `chat_sessions.source` field is inconsistent and incomplete:
 2. **No default agent scope**: Creating a project with "Default Claude Code Agent" sets `business_scope_id = null` and `agent_id = null`, which blocks issue execution (hard check in `project.service.ts:327`).
 3. **Type/schema mismatch**: The TypeScript type says `'user' | 'workflow'` but the code actually writes `'workflow_copilot'` and `'scope_copilot'` — silently bypassing type checks via `as any`.
 4. **Filter leaks**: `findByUser` and `getAllSessions` only exclude `source: 'workflow'`, so copilot, project, and twin sessions leak into the Chat page sidebar.
-5. **`findByBusinessScope` has no source filter**: All session types for a scope are returned mixed together.
+5. **Project Console is read-only**: The bottom Console panel polls chat history but has no input — users cannot interact with the project agent. The underlying `chat_sessions` + `/api/chat/stream` infrastructure already supports interaction; the Console just needs a send input.
+
+---
 
 ## Design
 
-### Source Enum
+### 1. Source Enum
 
 Four values, categorized by **interaction mode**:
 
 | `source` | Interaction Mode | Scenes |
 |---|---|---|
 | `chat` | User-initiated conversation | Chat page sessions |
-| `copilot` | AI assistant embedded in an editor | Workflow Copilot, Scope Copilot, Project workspace |
-| `execution` | System-triggered automation | Workflow node execution, Issue auto-execution |
-| `twin_session` | User↔Agent collaboration bound to an entity | Project twin sessions |
+| `copilot` | AI assistant embedded in an editor/workspace | Workflow Copilot, Scope Copilot, **Project workspace** |
+| `execution` | System-triggered automation (no user interaction) | Workflow node execution |
+| `twin_session` | User↔Agent collaboration bound to a project entity | Project twin sessions |
 
 Business entity association lives in external tables (not in `source`):
 
 | Scene | `source` | Entity table holding `session_id` |
 |---|---|---|
+| Normal chat | `chat` | None (managed from Chat page) |
 | Workflow Copilot | `copilot` | Deterministic UUID via `computeWorkflowCopilotSessionId()` |
 | Scope Copilot | `copilot` | Deterministic UUID via `computeScopeCopilotSessionId()` |
 | Project workspace | `copilot` | `projects.workspace_session_id` |
 | Workflow execution | `execution` | `workflow_executions` table |
-| Issue execution | `execution` | `project_issues.workspace_session_id` |
 | Twin session | `twin_session` | `project_twin_sessions.session_id` |
-| Normal chat | `chat` | None (managed directly from Chat page) |
 
-### Migration Mapping
+**Why Project workspace = `copilot`**: The project workspace session is a persistent, shared agent workspace for the project. All issues execute within it (shared file system, cumulative agent context). With this change, it also becomes interactive — users can chat with the project agent directly, not just watch execution logs. This matches the copilot pattern (embedded AI assistant within an editor/workspace).
+
+### 2. Migration Mapping
 
 | Current value | New value | Notes |
 |---|---|---|
@@ -52,7 +55,7 @@ Business entity association lives in external tables (not in `source`):
 | _(missing)_ twin sessions | `'twin_session'` | Currently defaults to `'user'` |
 | _(missing)_ project workspace | `'copilot'` | Currently defaults to `'user'` |
 
-### Claude Code Agent System Seed
+### 3. Claude Code Agent System Seed
 
 A new system scope seeded per organization, following the existing `workflow-copilot` / `scope-copilot` pattern:
 
@@ -65,6 +68,29 @@ Frontend `Projects.tsx` `AgentScopeSelector`:
 - Load scopes, find the one named `"Claude Code Agent"` with `scope_type = 'digital_twin'`
 - Use it as the value behind "Default Claude Code Agent" option (instead of empty string)
 - Result: `project.business_scope_id` and `project.agent_id` are always populated
+
+### 4. Interactive Project Console
+
+Transform the bottom Console panel from read-only log viewer to interactive chat, reusing the same infrastructure as `TwinSessionPanel`:
+
+**Current state** (read-only):
+- Polls `/api/chat/history/{sessionId}` every 3s
+- Renders messages as monospace log entries (timestamp + arrow + text)
+- No input field
+
+**New state** (interactive):
+- Same polling for history display
+- Add input field + send button at the bottom
+- Send messages via `POST /api/chat/stream` with `session_id = project.workspace_session_id` and `business_scope_id = project.business_scope_id`
+- SSE streaming for real-time response display
+- Keep the log-style rendering (not chat bubbles) to maintain the console aesthetic
+
+**Backend**: No changes needed. The workspace session already has `business_scope_id` and `agent_id` set. `/api/chat/stream` accepts any valid `session_id` — it will route to the project's agent and scope context automatically.
+
+**Frontend changes** (`ProjectBoard.tsx`):
+- Add `<input>` + `<Send>` button in the Console footer (same pattern as `TwinSessionPanel.handleSend`)
+- On send: POST to `/api/chat/stream`, stream SSE response, append messages to `consoleMessages`
+- Disable input while `isSending` or while an issue is actively executing (check `consoleMessages` for generating status)
 
 ---
 
@@ -91,7 +117,7 @@ Every location where `chat_sessions.source` is read, written, or typed.
 |---|---|---|---|---|---|
 | R1 | `services/chat.service.ts` | 109 | `{ source: { not: 'workflow' } }` | `{ source: 'chat' }` | **Medium** — behavior change: previously included copilot sessions, now excludes them. This is the desired fix. |
 | R2 | `repositories/chat.repository.ts` | 76 | `{ source: { not: 'workflow' } }` | `{ source: 'chat' }` | **Medium** — same as R1 |
-| R3 | `repositories/chat.repository.ts` | 145 | `findByBusinessScope` — no source filter | No change needed (caller decides) | None |
+| R3 | `repositories/chat.repository.ts` | 145 | `findByBusinessScope` — no source filter | No change (keep returning all types; frontend already handles display) | None |
 | R4 | `frontend/.../SessionHistoryPanel.tsx` | 63 | `session.source === 'workflow'` | `session.source === 'execution'` | Low — category label change |
 | R5 | `frontend/.../SessionHistoryPanel.tsx` | 256 | `session.source === 'workflow'` (icon) | `session.source === 'execution'` | Low — icon rendering |
 | R6 | `frontend/.../SessionHistoryPanel.tsx` | 113 | `(s as any).source ?? 'user'` | `(s as any).source ?? 'chat'` | Low — default fallback |
@@ -106,38 +132,38 @@ Every location where `chat_sessions.source` is read, written, or typed.
 
 ### UNRELATED `source` fields (no change needed)
 
-| File | Line | Field | Values | Why unrelated |
-|---|---|---|---|---|
-| `services/conversation-hooks.ts` | 22 | `ConversationHookContext.source` | `'chat' \| 'workflow' \| 'scope_generator'` | Token/metrics tracking context, not chat_session.source |
-| `services/token-usage.service.ts` | 16 | input type `.source` | `'chat' \| 'workflow' \| 'scope_generator'` | `token_usage_log.source` column, separate table |
-| `prisma/schema.prisma` | 1602 | `token_usage_log.source` | VarChar(30) | Separate table, separate concern |
+These track **who triggered the LLM call** for billing/observability, not the chat session type. Values are intentionally different.
 
-**Note on `conversation-hooks.ts` and `token-usage.service.ts`**: These define `source` on the `ConversationHookContext` and `token_usage_log` table respectively — they track **who triggered the LLM call** for billing/observability, not the chat session type. The values (`'chat'`, `'workflow'`, `'scope_generator'`) are intentionally different from `chat_sessions.source`. No change needed.
+| File | Field | Values |
+|---|---|---|
+| `services/conversation-hooks.ts:22` | `ConversationHookContext.source` | `'chat' \| 'workflow' \| 'scope_generator'` |
+| `services/token-usage.service.ts:16` | token usage input `.source` | `'chat' \| 'workflow' \| 'scope_generator'` |
+| `prisma/schema.prisma:1602` | `token_usage_log.source` | VarChar(30) — separate table |
 
 ---
 
 ## Data Migration
 
 ```sql
--- Remap old values to new enum
+-- 1. Remap old values to new enum
 UPDATE chat_sessions SET source = 'chat'      WHERE source = 'user';
 UPDATE chat_sessions SET source = 'execution'  WHERE source = 'workflow';
 UPDATE chat_sessions SET source = 'copilot'    WHERE source = 'workflow_copilot';
 UPDATE chat_sessions SET source = 'copilot'    WHERE source = 'scope_copilot';
 
--- Backfill: existing twin sessions created with source='user' (now 'chat')
+-- 2. Backfill: existing twin sessions (now 'chat' from step 1, override to twin_session)
 UPDATE chat_sessions SET source = 'twin_session'
 WHERE id IN (SELECT session_id FROM project_twin_sessions);
 
--- Backfill: existing project workspace sessions created with source='user' (now 'chat')
+-- 3. Backfill: existing project workspace sessions (now 'chat' from step 1, override to copilot)
 UPDATE chat_sessions SET source = 'copilot'
 WHERE id IN (SELECT workspace_session_id FROM projects WHERE workspace_session_id IS NOT NULL);
 
--- Update default
+-- 4. Update default
 ALTER TABLE chat_sessions ALTER COLUMN source SET DEFAULT 'chat';
 ```
 
-Migration order matters: run the general remaps first (user→chat), then the specific backfills (twin/project override the 'chat' they just got).
+Order matters: general remaps first (step 1), then specific backfills (steps 2-3) override.
 
 ---
 
@@ -159,3 +185,4 @@ Migration order matters: run the general remaps first (user→chat), then the sp
 | `schemas/chat.schema.ts` | Zod enum validation |
 | `frontend/.../SessionHistoryPanel.tsx` | `'workflow'` → `'execution'` in categorize + icon |
 | `frontend/pages/Projects.tsx` | AgentScopeSelector default → Claude Code Agent scope |
+| `frontend/pages/ProjectBoard.tsx` | Console panel: add input field + SSE send, reuse chat stream |
