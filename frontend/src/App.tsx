@@ -12,6 +12,7 @@ import { ChatRoomPage } from '@/pages/ChatRoomPage'
 import { DigitalTwinWizard } from '@/pages/DigitalTwinWizard'
 import { Projects } from '@/pages/Projects'
 import { ProjectBoard } from '@/pages/ProjectBoard'
+import { TwinSessionPage } from '@/pages/TwinSessionPage'
 import { AuthProvider } from '@/services/AuthContext'
 import { ThemeProvider } from '@/services/ThemeContext'
 import { useTranslation } from '@/i18n'
@@ -37,6 +38,7 @@ function AppContent() {
             <Route path="/agents/config/:agentId" element={<AgentConfigurator />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<ProjectBoard />} />
+            <Route path="/projects/:id/twin-session/:twinSessionId" element={<TwinSessionPage />} />
             <Route path="/tools" element={<Tools />} />
             <Route path="/tasks" element={<TaskAuditLog />} />
             <Route path="/task-monitoring" element={<TaskExecutionCenter />} />
