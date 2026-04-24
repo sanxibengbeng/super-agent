@@ -44,24 +44,49 @@
 └────────────────┘  └──────────────────────────────────────────┘
 ```
 
+## AgentCore 资源部署脚本
+
+`scripts/` 目录提供分步脚本，创建 AgentCore 所需的全部 AWS 资源：
+
+```bash
+cd docs/deployment/ec2-minimal/scripts
+
+# 1. 编辑配置（Region、已有 EKS pod role 名称）
+vim 00-config.sh
+
+# 2. 逐步执行
+./01-ecr.sh              # ECR 镜像仓库
+./02-s3.sh               # S3 Workspace bucket
+./03-iam.sh              # AgentCore 执行角色 + Pod invoke 权限
+./04-build-agentcore.sh  # 构建 ARM64 镜像并推送
+./05-verify.sh           # 验证资源 + 输出 .env 参考值
+
+# 销毁
+./teardown.sh
+```
+
+脚本创建的资源：
+
+| 资源 | 用途 |
+|------|------|
+| ECR Repository | AgentCore 容器镜像 |
+| S3 Bucket | Agent workspace 文件同步 |
+| IAM Role (AgentCore) | 容器执行角色：Bedrock + S3 + ECR + CloudWatch |
+| IAM Policy (Pod) | 追加到已有 EKS pod role：invoke AgentCore + S3 |
+
+**已有资源（不创建）：** EKS、RDS、Redis
+
+## 区域注意事项
+
+| 事项 | 说明 |
+|------|------|
+| **Bedrock 模型访问** | 需在 Bedrock Console → Model access 申请 Claude 权限 |
+| **AgentCore 可用性** | 目前 us-east-1、us-west-2 确认可用，其他 Region 需确认 |
+
 ## 前置条件
 
-- AWS CLI v2 + 已配置 credentials（`aws sts get-caller-identity` 能正常返回）
-- [Session Manager Plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-- 本地已安装 Node.js 22+（编译后端和前端用）
-
-## AWS 资源清单
-
-| 资源类型 | 名称/用途 |
-|---------|----------|
-| EC2 Instance | m7g.medium, Ubuntu 22.04 ARM64, 30GB gp3 |
-| Elastic IP | 固定公网 IP |
-| Security Group × 2 | EC2 (80/443 入站) + RDS (5432 仅 EC2 可连) |
-| RDS PostgreSQL | 16.6, db.t4g.micro, Secrets Manager 管理密码 |
-| S3 Bucket × 3 | Workspace、Skills、Avatars |
-| IAM Role (EC2) | SSM + Bedrock + S3 + SecretsManager + ECR + Logs |
-| IAM Role (AgentCore) | Bedrock + S3 + ECR + Logs |
-| ECR Repository | AgentCore 容器镜像仓库 |
+- AWS CLI v2 + credentials
+- Docker（ARM64 构建，需 `--platform linux/arm64`）
 
 ## 费用预估
 
@@ -82,11 +107,15 @@ Bedrock 按调用量另计。
 |------|------|
 | [README.md](README.md) | 本文档 |
 | [architecture.drawio](architecture.drawio) | 架构图 |
-| [ec2-trust-policy.json](ec2-trust-policy.json) | EC2 角色信任策略 |
-| [ec2-role-policy.json](ec2-role-policy.json) | EC2 角色权限策略 |
-| [agentcore-trust-policy.json](agentcore-trust-policy.json) | AgentCore 角色信任策略 |
-| [agentcore-role-policy.json](agentcore-role-policy.json) | AgentCore 角色权限策略 |
+| [ec2-trust-policy.json](ec2-trust-policy.json) | EC2 角色信任策略（模板） |
+| [ec2-role-policy.json](ec2-role-policy.json) | EC2 角色权限策略（模板） |
+| [agentcore-trust-policy.json](agentcore-trust-policy.json) | AgentCore 角色信任策略（模板） |
+| [agentcore-role-policy.json](agentcore-role-policy.json) | AgentCore 角色权限策略（模板） |
 | [user-ssm-policy.json](user-ssm-policy.json) | 开发者 SSM 连接权限 |
+| [scripts/](scripts/) | AgentCore 资源部署脚本 |
+| [scripts/00-config.sh](scripts/00-config.sh) | 部署配置（Region、EKS pod role） |
+| [scripts/01-ecr.sh](scripts/01-ecr.sh) ~ [05-verify.sh](scripts/05-verify.sh) | 分步部署脚本 |
+| [scripts/teardown.sh](scripts/teardown.sh) | 资源销毁 |
 
 ---
 

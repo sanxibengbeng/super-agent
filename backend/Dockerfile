@@ -8,7 +8,7 @@
 # Stage 1: Dependencies
 # Install all dependencies including devDependencies for building
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ RUN npm ci
 # Stage 2: Builder
 # Build the TypeScript application and generate Prisma client
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -50,7 +50,7 @@ RUN npm run build
 # Stage 3: Production
 # Minimal production image with only runtime dependencies
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 
 WORKDIR /app
 

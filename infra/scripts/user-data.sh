@@ -8,6 +8,11 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
+# Detect region from instance metadata (IMDS v2)
+IMDS_TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+DEPLOY_REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+echo ">>> Detected region: $DEPLOY_REGION"
+
 echo ">>> Updating system packages..."
 apt-get update -y
 apt-get upgrade -y
@@ -45,9 +50,9 @@ dpkg -i /tmp/cw-agent.deb
 rm -f /tmp/cw-agent.deb
 
 mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_CONFIG'
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << CW_CONFIG
 {
-  "agent": { "run_as_user": "root", "region": "us-west-2" },
+  "agent": { "run_as_user": "root", "region": "${DEPLOY_REGION}" },
   "logs": { "logs_collected": { "files": { "collect_list": [
     { "file_path": "/opt/super-agent/logs/backend.log", "log_group_name": "/super-agent/backend", "log_stream_name": "{instance_id}/backend", "retention_in_days": 30 },
     { "file_path": "/opt/super-agent/logs/backend-error.log", "log_group_name": "/super-agent/backend-errors", "log_stream_name": "{instance_id}/backend-errors", "retention_in_days": 30 },
@@ -210,7 +215,7 @@ systemctl daemon-reload
 cat > /opt/super-agent/fetch-db-url.sh << 'FETCHSCRIPT'
 #!/bin/bash
 SECRET_ARN="${1:?Usage: fetch-db-url.sh <SECRET_ARN>}"
-REGION="${AWS_REGION:-us-west-2}"
+REGION="${AWS_REGION:-ap-southeast-1}"
 SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --region "$REGION" --query SecretString --output text)
 DB_USER=$(echo "$SECRET_JSON" | jq -r '.username')
 DB_PASS=$(echo "$SECRET_JSON" | jq -r '.password')
@@ -225,7 +230,7 @@ chmod +x /opt/super-agent/fetch-db-url.sh
 chown ubuntu:ubuntu /opt/super-agent/fetch-db-url.sh
 
 # Placeholder .env
-cat > /opt/super-agent/.env << 'ENVFILE'
+cat > /opt/super-agent/.env << ENVFILE
 PORT=3000
 HOST=0.0.0.0
 NODE_ENV=production
@@ -236,9 +241,11 @@ REDIS_PORT=6379
 REDIS_PASSWORD=super-agent-redis-password
 AUTH_MODE=local
 JWT_SECRET=CHANGE_ME
-AWS_REGION=us-west-2
+AWS_REGION=${DEPLOY_REGION}
 S3_BUCKET_NAME=CHANGE_ME
+SKILLS_S3_BUCKET=CHANGE_ME
 CORS_ORIGIN=*
+APP_URL=CHANGE_ME
 CLAUDE_CODE_USE_BEDROCK=1
 CLAUDE_MODEL=claude-sonnet-4-6
 AGENT_WORKSPACE_BASE_DIR=/opt/super-agent/workspaces
