@@ -5,6 +5,7 @@ import { RestChatService } from './api/restChatService'
 import { shouldUseRestApi } from './api/index'
 import type { ChatStreamHandle } from './chatStreamService'
 import { sessionStreamManager } from './SessionStreamManager'
+import { restClient } from './api/restClient'
 
 // Storage keys
 const CHAT_SESSION_STORAGE_KEY = 'super-agent-chat-session'
@@ -448,6 +449,81 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
       setError(message)
     }
   }, [])
+
+  // Poll for new messages when viewing a session that is generating but has
+  // no active SSE stream (e.g. workflow executions).
+  useEffect(() => {
+    if (!backendSessionId) return
+    const state = sessionStreamManager.getSession(backendSessionId)
+    // If an SSE stream is already connected, skip polling
+    if (state.streamHandle) return
+
+    let cancelled = false
+    let intervalId: ReturnType<typeof setInterval> | null = null
+    let prevFingerprint = ''
+
+    function fingerprint(msgs: Message[]): string {
+      if (msgs.length === 0) return '0:'
+      const last = msgs[msgs.length - 1]
+      return `${msgs.length}:${last.content.length}`
+    }
+
+    async function poll() {
+      if (cancelled || !backendSessionId) return
+      try {
+        const statusResp = await restClient.get<{ status: string; streamAvailable: boolean }>(
+          `/api/chat/sessions/${backendSessionId}/status`
+        )
+        if (cancelled) return
+
+        const history = await RestChatService.getSessionHistory(backendSessionId)
+        if (cancelled) return
+
+        const fp = fingerprint(history)
+        if (fp !== prevFingerprint) {
+          sessionStreamManager.setMessages(backendSessionId, history)
+          prevFingerprint = fp
+        }
+
+        if (statusResp.status === 'generating') {
+          sessionStreamManager.setSending(backendSessionId, true)
+        } else {
+          sessionStreamManager.setSending(backendSessionId, false)
+          // Final reload to get the complete content
+          const final = await RestChatService.getSessionHistory(backendSessionId)
+          if (!cancelled) sessionStreamManager.setMessages(backendSessionId, final)
+          if (intervalId) {
+            clearInterval(intervalId)
+            intervalId = null
+          }
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }
+
+    // Check status once immediately
+    restClient.get<{ status: string; streamAvailable: boolean }>(
+      `/api/chat/sessions/${backendSessionId}/status`
+    ).then(resp => {
+      if (cancelled) return
+      if (resp.status === 'generating' && !resp.streamAvailable) {
+        sessionStreamManager.setSending(backendSessionId, true)
+        // Do an immediate poll, then start interval
+        void poll()
+        intervalId = setInterval(poll, 2000)
+      }
+    }).catch(() => {})
+
+    return () => {
+      cancelled = true
+      if (intervalId) clearInterval(intervalId)
+      // Clear sending state when leaving the session
+      if (backendSessionId) {
+        sessionStreamManager.setSending(backendSessionId, false)
+      }
+    }
+  }, [backendSessionId])
 
   const startNewSession = useCallback(() => {
     // Don't stop the old session's stream — let it keep running server-side.

@@ -73,6 +73,17 @@ class SessionStreamManager {
   }
 
   /**
+   * Mark a session as sending/not-sending without an SSE stream.
+   * Used for workflow polling where there's no stream handle.
+   */
+  setSending(sessionId: string, sending: boolean): void {
+    const state = this.getSession(sessionId)
+    if (state.isSending === sending) return
+    state.isSending = sending
+    this.notify()
+  }
+
+  /**
    * Update a specific message in a session by ID.
    */
   updateMessage(sessionId: string, messageId: string, content: string, speakerAgentName?: string, speakerAgentAvatar?: string | null): void {

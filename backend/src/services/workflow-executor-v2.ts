@@ -27,6 +27,7 @@ import { workspaceManager } from './workspace-manager.js';
 import { checkpointService, type CheckpointType } from './checkpoint.service.js';
 import { prisma } from '../config/database.js';
 import { recordTokenUsage } from './token-usage.service.js';
+import { streamRegistry } from './stream-registry.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -870,6 +871,16 @@ export class WorkflowExecutorV2 {
 
     let timedOut = false;
 
+    // Mark session as generating and register in stream registry so the
+    // chat UI can reconnect via SSE and show live events.
+    if (chatSessionId) {
+      streamRegistry.register(chatSessionId);
+      prisma.chat_sessions.update({
+        where: { id: chatSessionId },
+        data: { status: 'generating' },
+      }).catch(err => console.warn('[workflow-v2] Failed to set session status to generating:', err));
+    }
+
     try {
       const userMessage = supportsProgressTools
         ? `Please execute the following workflow. For each step: (1) call workflow_step_start, (2) do the work, (3) call workflow_step_complete or workflow_step_failed.\n\n${missionBrief}`
@@ -926,6 +937,11 @@ export class WorkflowExecutorV2 {
           }).catch(err => console.warn('[workflow-v2] Failed to store claude_session_id:', err));
         }
 
+        // Push every event to the stream registry so the chat UI gets live updates
+        if (chatSessionId) {
+          streamRegistry.push(chatSessionId, event);
+        }
+
         const textContent = this.extractText(event);
         if (textContent) {
           assistantTextParts.push(textContent);
@@ -953,7 +969,7 @@ export class WorkflowExecutorV2 {
         yield eventQueue.shift()!;
       }
 
-      // Persist assistant response to chat_messages
+      // Persist the complete AI response to chat_messages
       if (chatSessionId && assistantTextParts.length > 0) {
         await prisma.chat_messages.create({
           data: {
@@ -991,6 +1007,15 @@ export class WorkflowExecutorV2 {
           chatSessionId, organizationId, scopeId, executionId, plan,
           false, 0, '', msg,
         );
+      }
+    } finally {
+      // Complete the stream registry and mark session as idle
+      if (chatSessionId) {
+        streamRegistry.complete(chatSessionId);
+        prisma.chat_sessions.update({
+          where: { id: chatSessionId },
+          data: { status: 'idle' },
+        }).catch(err => console.warn('[workflow-v2] Failed to set session status to idle:', err));
       }
     }
   }
