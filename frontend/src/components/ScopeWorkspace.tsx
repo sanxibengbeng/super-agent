@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Pencil, Plus, Trash2, RefreshCw, ChevronDown, X, Clock } from 'lucide-react'
+import { Pencil, Plus, Trash2, RefreshCw, ChevronDown, X, Clock, Cloud } from 'lucide-react'
 import type { GeneratedScope } from '@/services/scopeGeneratorService'
 import type { AgentDraft, VersionSnapshot } from '@/hooks/useScopeDraft'
+import type { ServerVersion } from '@/pages/ScopeCopilotPage'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -13,6 +14,7 @@ interface ScopeWorkspaceProps {
   activeAgents: AgentDraft[]
   versions: VersionSnapshot[]
   currentVersion: VersionSnapshot | null
+  serverVersion: ServerVersion | null
   onUpdateScope: (fields: Partial<GeneratedScope>) => void
   onUpdateAgent: (localId: string, fields: Partial<AgentDraft>) => void
   onAddAgent: () => string
@@ -20,6 +22,7 @@ interface ScopeWorkspaceProps {
   onRestoreAgent: (localId: string) => void
   onEditComplete: () => void
   onLoadVersion: (version: number) => void
+  onLoadServerVersion: () => void
   onStartOver: () => void
 }
 
@@ -217,14 +220,17 @@ function AgentDetailPanel({
 }
 
 function VersionBar({
-  currentVersion, versions, onLoadVersion, onStartOver,
+  currentVersion, versions, serverVersion, onLoadVersion, onLoadServerVersion, onStartOver,
 }: {
   currentVersion: VersionSnapshot | null
   versions: VersionSnapshot[]
+  serverVersion: ServerVersion | null
   onLoadVersion: (version: number) => void
+  onLoadServerVersion: () => void
   onStartOver: () => void
 }) {
   const [showHistory, setShowHistory] = useState(false)
+  const [activeSource, setActiveSource] = useState<'local' | 'server'>('server')
 
   const timeAgo = (ts: number) => {
     const sec = Math.floor((Date.now() - ts) / 1000)
@@ -232,8 +238,19 @@ function VersionBar({
     const min = Math.floor(sec / 60)
     if (min < 60) return `${min}min ago`
     const hr = Math.floor(min / 60)
-    return `${hr}h ago`
+    if (hr < 24) return `${hr}h ago`
+    const day = Math.floor(hr / 24)
+    return `${day}d ago`
   }
+
+  const formatTime = (iso: string) => {
+    if (!iso) return ''
+    try {
+      return timeAgo(new Date(iso).getTime())
+    } catch { return '' }
+  }
+
+  const serverAgentCount = serverVersion?.draft.agents.filter(a => !a._deleted).length ?? 0
 
   return (
     <div className="relative">
@@ -244,28 +261,54 @@ function VersionBar({
             <div className="flex items-center gap-2">
               <Clock className="w-3.5 h-3.5 text-gray-400" />
               <span className="text-sm font-medium text-white">Version History</span>
-              <span className="text-xs text-gray-500">({versions.length})</span>
             </div>
             <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
           <div className="p-2 space-y-1">
+            {/* Server version */}
+            {serverVersion && (
+              <div
+                className={`px-3 py-2 rounded-md cursor-pointer transition-colors ${
+                  activeSource === 'server'
+                    ? 'bg-blue-500/15 border border-blue-500/30'
+                    : 'bg-gray-800/50 border border-gray-700 hover:bg-gray-800'
+                }`}
+                onClick={() => { onLoadServerVersion(); setActiveSource('server'); setShowHistory(false) }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Cloud className="w-3 h-3 text-blue-400" />
+                    <span className="text-xs font-bold text-blue-300">Server</span>
+                    <span className="text-xs text-gray-400">{serverAgentCount} agents</span>
+                  </div>
+                  {activeSource === 'server' && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">current</span>
+                  )}
+                </div>
+                {serverVersion.updatedAt && (
+                  <div className="text-[10px] text-gray-500 mt-1">{formatTime(serverVersion.updatedAt)}</div>
+                )}
+              </div>
+            )}
+
+            {/* Local versions */}
             {[...versions].reverse().map(v => (
               <div key={v.version}
                 className={`px-3 py-2 rounded-md cursor-pointer transition-colors ${
-                  v.version === currentVersion?.version
+                  activeSource === 'local' && v.version === currentVersion?.version
                     ? 'bg-indigo-500/15 border border-indigo-500/30'
                     : 'bg-gray-800/50 border border-gray-700 hover:bg-gray-800'
                 }`}
-                onClick={() => { onLoadVersion(v.version); setShowHistory(false) }}
+                onClick={() => { onLoadVersion(v.version); setActiveSource('local'); setShowHistory(false) }}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-gray-300">v{v.version}</span>
                     <span className="text-xs text-gray-400">{v.label}</span>
                   </div>
-                  {v.version === currentVersion?.version && (
+                  {activeSource === 'local' && v.version === currentVersion?.version && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">current</span>
                   )}
                 </div>
@@ -280,14 +323,26 @@ function VersionBar({
       <div className="px-4 py-3 border-t border-gray-700 flex items-center justify-between bg-gray-900/80">
         <button onClick={() => setShowHistory(!showHistory)}
           className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-gray-800 border border-gray-700 hover:border-gray-600 transition-colors">
-          <Clock className="w-3.5 h-3.5 text-gray-400" />
-          {currentVersion ? (
+          {activeSource === 'server' ? (
             <>
-              <span className="text-xs font-medium text-gray-300">v{currentVersion.version}</span>
-              <span className="text-xs text-gray-500">· {timeAgo(currentVersion.timestamp)}</span>
+              <Cloud className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-xs font-medium text-blue-300">Server</span>
+              {serverVersion?.updatedAt && (
+                <span className="text-xs text-gray-500">· {formatTime(serverVersion.updatedAt)}</span>
+              )}
             </>
           ) : (
-            <span className="text-xs text-gray-500">No versions</span>
+            <>
+              <Clock className="w-3.5 h-3.5 text-gray-400" />
+              {currentVersion ? (
+                <>
+                  <span className="text-xs font-medium text-gray-300">v{currentVersion.version}</span>
+                  <span className="text-xs text-gray-500">· {timeAgo(currentVersion.timestamp)}</span>
+                </>
+              ) : (
+                <span className="text-xs text-gray-500">No versions</span>
+              )}
+            </>
           )}
           <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
         </button>
@@ -305,9 +360,9 @@ function VersionBar({
 // ---------------------------------------------------------------------------
 
 export function ScopeWorkspace({
-  scope, agents, activeAgents, versions, currentVersion,
+  scope, agents, activeAgents, versions, currentVersion, serverVersion,
   onUpdateScope, onUpdateAgent, onAddAgent, onRemoveAgent, onRestoreAgent,
-  onEditComplete, onLoadVersion, onStartOver,
+  onEditComplete, onLoadVersion, onLoadServerVersion, onStartOver,
 }: ScopeWorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selectedAgent = agents.find(a => a._localId === selectedId) ?? null
@@ -367,7 +422,9 @@ export function ScopeWorkspace({
       <VersionBar
         currentVersion={currentVersion}
         versions={versions}
+        serverVersion={serverVersion}
         onLoadVersion={onLoadVersion}
+        onLoadServerVersion={onLoadServerVersion}
         onStartOver={onStartOver}
       />
     </div>

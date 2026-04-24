@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Sparkles, Save, Loader2 } from 'lucide-react'
 import { ScopeWorkspace } from '@/components/ScopeWorkspace'
@@ -6,8 +6,13 @@ import { ScopeCopilot } from '@/components/ScopeCopilot'
 import { useScopeDraft } from '@/hooks/useScopeDraft'
 import { useToast } from '@/components'
 import type { GeneratedScopeConfig } from '@/services/scopeGeneratorService'
-import type { AgentDraft } from '@/hooks/useScopeDraft'
+import type { AgentDraft, ScopeDraft } from '@/hooks/useScopeDraft'
 import { consumeSopFile } from '@/services/sopFileStore'
+
+export interface ServerVersion {
+  draft: ScopeDraft
+  updatedAt: string
+}
 
 export function ScopeCopilotPage() {
   const navigate = useNavigate()
@@ -20,6 +25,7 @@ export function ScopeCopilotPage() {
 
   const [sopFile] = useState<File | null>(() => consumeSopFile())
   const [isLoading, setIsLoading] = useState(true)
+  const [serverVersion, setServerVersion] = useState<ServerVersion | null>(null)
 
   const {
     draft, chatHistory, setChatHistory,
@@ -35,6 +41,11 @@ export function ScopeCopilotPage() {
       navigate('/create-business-scope')
     }
   }, [scopeId, navigate])
+
+  const loadServerVersion = useCallback(() => {
+    if (!serverVersion) return
+    initializeFromApi(serverVersion.draft.scope, serverVersion.draft.agents)
+  }, [serverVersion, initializeFromApi])
 
   // Fetch scope from API on mount
   useEffect(() => {
@@ -61,7 +72,6 @@ export function ScopeCopilotPage() {
         const data = await response.json()
         const scope = data.data ?? data
 
-        // Map existing agents from API into AgentDraft format
         const existingAgents: AgentDraft[] = (scope.agents ?? []).map((a: {
           id: string; name: string; display_name?: string; displayName?: string;
           role?: string; system_prompt?: string; systemPrompt?: string;
@@ -84,21 +94,14 @@ export function ScopeCopilotPage() {
           color: scope.color || '#6366f1',
         }
 
-        // Always set scope metadata from DB; use LS agents if they exist, otherwise DB agents
+        const apiDraft: ScopeDraft = { scope: scopeFields, agents: existingAgents }
+        const apiUpdatedAt = scope.updated_at ?? scope.updatedAt ?? ''
+        setServerVersion({ draft: apiDraft, updatedAt: apiUpdatedAt })
+
+        // Always default to server version
+        initializeFromApi(scopeFields, existingAgents)
         const lsDraft = localStorage.getItem(`scopeDraft:${scopeId}`)
-        if (lsDraft) {
-          try {
-            const parsed = JSON.parse(lsDraft) as { draft?: { agents?: unknown[] } }
-            if (parsed.draft?.agents && (parsed.draft.agents as unknown[]).length > 0) {
-              updateScope(scopeFields)
-            } else {
-              initializeFromApi(scopeFields, existingAgents)
-            }
-          } catch {
-            initializeFromApi(scopeFields, existingAgents)
-          }
-        } else {
-          initializeFromApi(scopeFields, existingAgents)
+        if (!lsDraft) {
           const label = existingAgents.length > 0 ? 'Loaded from database' : 'Empty scope created'
           createSnapshot(label, 'created')
         }
@@ -175,6 +178,7 @@ export function ScopeCopilotPage() {
             activeAgents={activeAgents}
             versions={versions}
             currentVersion={currentVersion}
+            serverVersion={serverVersion}
             onUpdateScope={updateScope}
             onUpdateAgent={updateAgent}
             onAddAgent={addAgent}
@@ -182,6 +186,7 @@ export function ScopeCopilotPage() {
             onRestoreAgent={restoreAgent}
             onEditComplete={() => createSnapshot('Manual edit', 'manual-edit')}
             onLoadVersion={loadVersion}
+            onLoadServerVersion={loadServerVersion}
             onStartOver={startOver}
           />
         </div>

@@ -100,10 +100,7 @@ export function useScopeDraft(scopeId: string | null) {
     const stored = loadDraft(scopeId)
     return stored ? stored.chatHistory : []
   })
-  const [isDirty, setIsDirty] = useState(() => {
-    if (!scopeId) return false
-    return !!loadDraft(scopeId)
-  })
+  const [isDirty, setIsDirty] = useState(false)
   const [versions, setVersions] = useState<VersionSnapshot[]>(() => scopeId ? loadVersions(scopeId) : [])
   const [isSaving, setIsSaving] = useState(false)
   const savedDraftRef = useRef<string>(
@@ -117,7 +114,7 @@ export function useScopeDraft(scopeId: string | null) {
     if (stored) {
       setDraft(stored.draft)
       setChatHistory(stored.chatHistory)
-      setIsDirty(true)
+      setIsDirty(false)
       savedDraftRef.current = JSON.stringify(stored.draft)
     }
     setVersions(loadVersions(scopeId))
