@@ -2715,8 +2715,8 @@ export const translations: TranslationData = {
     cn: '生成、修改或询问此工作流...'
   },
   'copilot.enterToSend': {
-    en: 'Enter to send',
-    cn: '回车发送'
+    en: '⌘+Enter to send',
+    cn: '⌘+Enter 发送'
   },
   'copilot.executionError': {
     en: 'Execution error',
@@ -4105,6 +4105,32 @@ export const translations: TranslationData = {
   'chat.creating': { en: 'Creating...', cn: '创建中...' },
   'chat.createFromScope': { en: 'Create from current scope (all agents)', cn: '从当前范围创建（所有智能体）' },
   'chat.selectScopeFirst': { en: 'Select a business scope first to create a group chat room.', cn: '请先选择业务范围以创建群聊房间。' },
+
+  // Session History Panel
+  'sessionPanel.title': { en: 'Sessions', cn: '会话' },
+  'sessionPanel.newChat': { en: 'New Chat', cn: '新对话' },
+  'sessionPanel.search': { en: 'Search sessions...', cn: '搜索会话...' },
+  'sessionPanel.selectScope': { en: 'Select a scope to see sessions', cn: '选择范围以查看会话' },
+  'sessionPanel.loading': { en: 'Loading...', cn: '加载中...' },
+  'sessionPanel.noSessions': { en: 'No sessions yet', cn: '暂无会话' },
+  'sessionPanel.noSearchResults': { en: 'No matching sessions', cn: '无匹配会话' },
+  'sessionPanel.sessions': { en: 'sessions', cn: '个会话' },
+  'sessionPanel.untitled': { en: 'Untitled chat', cn: '未命名对话' },
+  'sessionPanel.starred': { en: 'Starred', cn: '收藏' },
+  'sessionPanel.groupChats': { en: 'Group Chats', cn: '群聊' },
+  'sessionPanel.workflows': { en: 'Workflows', cn: '工作流' },
+  'sessionPanel.chats': { en: 'Chats', cn: '对话' },
+  'sessionPanel.rename': { en: 'Rename', cn: '重命名' },
+  'sessionPanel.star': { en: 'Star', cn: '收藏' },
+  'sessionPanel.unstar': { en: 'Unstar', cn: '取消收藏' },
+  'sessionPanel.delete': { en: 'Delete session', cn: '删除会话' },
+  'sessionPanel.expand': { en: 'Expand session history', cn: '展开会话列表' },
+  'sessionPanel.collapse': { en: 'Collapse panel', cn: '折叠面板' },
+  'sessionPanel.time.today': { en: 'Today', cn: '今天' },
+  'sessionPanel.time.yesterday': { en: 'Yesterday', cn: '昨天' },
+  'sessionPanel.time.thisWeek': { en: 'This Week', cn: '本周' },
+  'sessionPanel.time.thisMonth': { en: 'This Month', cn: '本月' },
+  'sessionPanel.time.older': { en: 'Older', cn: '更早' },
 
   // PublishToShowcaseModal
   'showcase.publishTitle': { en: 'Publish to Showcase', cn: '发布到明星案例' },

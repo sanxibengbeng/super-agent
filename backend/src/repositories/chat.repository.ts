@@ -142,7 +142,7 @@ export class ChatSessionRepository extends BaseRepository<ChatSessionEntity> {
     businessScopeId: string,
     userId?: string,
   ): Promise<ChatSessionEntity[]> {
-    const where: Record<string, unknown> = { business_scope_id: businessScopeId, source: { not: 'workflow' } };
+    const where: Record<string, unknown> = { business_scope_id: businessScopeId };
     if (userId) where.user_id = userId;
     return this.findAll(organizationId, {
       where: where as Partial<ChatSessionEntity>,

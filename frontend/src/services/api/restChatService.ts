@@ -14,17 +14,20 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000
 /**
  * API response type for chat sessions
  */
-interface ApiChatSession {
+export interface ApiChatSession {
   id: string;
   organization_id: string;
   user_id: string;
-  agent_id?: string;
+  agent_id?: string | null;
   business_scope_id?: string | null;
   claude_session_id?: string | null;
   title?: string | null;
   status?: string;
   sop_context: string | null;
   context: Record<string, unknown>;
+  source?: string;
+  room_mode?: string;
+  is_starred?: boolean;
   created_at: string;
   updated_at: string;
 }
