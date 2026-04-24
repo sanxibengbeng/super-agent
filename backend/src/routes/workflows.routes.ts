@@ -15,6 +15,7 @@ import { chatService } from '../services/chat.service.js';
 import { prisma } from '../config/database.js';
 import { computeWorkflowCopilotSessionId } from '../utils/deterministic-session.js';
 import { workspaceManager } from '../services/workspace-manager.js';
+import { businessScopeService } from '../services/businessScope.service.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import {
@@ -1057,7 +1058,7 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Workflow Copilot not configured for this organization' });
       }
 
-      // Write current workflow definition into workspace CLAUDE.md for copilot context
+      // Write current workflow definition + user's scope context into workspace CLAUDE.md
       const workflow = await prisma.workflows.findFirst({
         where: { id: workflow_id },
         select: { name: true, nodes: true, connections: true, version: true },
@@ -1065,7 +1066,7 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
       if (workflow) {
         const workspacePath = workspaceManager.getSessionWorkspacePath(orgId, copilotScope.id, sessionId);
         await mkdir(workspacePath, { recursive: true });
-        const claudeMd = [
+        const claudeMdLines = [
           `# Workflow: ${workflow.name}`,
           `Version: ${workflow.version}`,
           '',
@@ -1073,8 +1074,48 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
           '```json',
           JSON.stringify({ nodes: workflow.nodes, connections: workflow.connections }, null, 2),
           '```',
-        ].join('\n');
-        await writeFile(join(workspacePath, 'CLAUDE.md'), claudeMd);
+        ];
+
+        // Inject the user's business scope context so the copilot knows what agents/skills/tools are available
+        if (business_scope_id) {
+          try {
+            const [agentsWithSkills, mcpServers] = await Promise.all([
+              businessScopeService.getScopeAgentsWithSkills(business_scope_id, orgId),
+              prisma.$queryRaw<Array<{ name: string; status: string }>>`
+                SELECT ms.name, ms.status
+                FROM scope_mcp_servers sms
+                JOIN mcp_servers ms ON ms.id = sms.mcp_server_id
+                WHERE sms.business_scope_id = ${business_scope_id}::uuid
+                  AND ms.status = 'active'
+              `,
+            ]);
+
+            if (agentsWithSkills.length > 0) {
+              claudeMdLines.push('', '## Available Agents in This Scope', '');
+              claudeMdLines.push('When assigning agents to workflow tasks, use agent IDs from this list.');
+              claudeMdLines.push('Do NOT invent agent IDs.', '');
+              for (const agent of agentsWithSkills) {
+                const skillNames = agent.skills.map(s => s.name).join(', ');
+                claudeMdLines.push(`- **${agent.display_name || agent.name}** (agentId: \`${agent.id}\`): ${agent.role ?? 'General assistant'}`);
+                if (skillNames) {
+                  claudeMdLines.push(`  - Skills: ${skillNames}`);
+                }
+              }
+            }
+
+            if (mcpServers.length > 0) {
+              claudeMdLines.push('', '## Available MCP Servers (Integrations)', '');
+              claudeMdLines.push('These external tool integrations are configured in this scope.', '');
+              for (const server of mcpServers) {
+                claudeMdLines.push(`- ${server.name}`);
+              }
+            }
+          } catch (err) {
+            console.warn('[workflow-copilot] Failed to load scope context:', err instanceof Error ? err.message : err);
+          }
+        }
+
+        await writeFile(join(workspacePath, 'CLAUDE.md'), claudeMdLines.join('\n'));
       }
 
       await chatService.streamChat(reply, orgId, userId, {
