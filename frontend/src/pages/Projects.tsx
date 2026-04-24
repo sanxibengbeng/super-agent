@@ -113,6 +113,7 @@ export function Projects() {
                   selectedAgentId={selectedAgentId}
                   onSelectScope={(scopeId) => { setSelectedScopeId(scopeId); setSelectedAgentId('') }}
                   onSelectAgent={(agentId) => { setSelectedAgentId(agentId); setSelectedScopeId('') }}
+                  onDefaultScopeReady={(scopeId) => { if (!selectedScopeId && !selectedAgentId) setSelectedScopeId(scopeId) }}
                 />
               </div>
               <div className="flex justify-end gap-2">
@@ -136,9 +137,10 @@ interface AgentScopeSelectorProps {
   selectedAgentId: string
   onSelectScope: (scopeId: string) => void
   onSelectAgent: (agentId: string) => void
+  onDefaultScopeReady?: (scopeId: string) => void
 }
 
-function AgentScopeSelector({ selectedScopeId, selectedAgentId, onSelectScope, onSelectAgent }: AgentScopeSelectorProps) {
+function AgentScopeSelector({ selectedScopeId, selectedAgentId, onSelectScope, onSelectAgent, onDefaultScopeReady }: AgentScopeSelectorProps) {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -157,6 +159,8 @@ function AgentScopeSelector({ selectedScopeId, selectedAgentId, onSelectScope, o
         ])
         setScopes(scopeList)
         setIndependentAgents(allAgents.filter((a: Agent) => !a.businessScopeId))
+        const defaultScope = scopeList.find((s: BusinessScope) => s.name === 'Claude Code Agent' && s.scopeType === 'digital_twin')
+        if (defaultScope && onDefaultScopeReady) onDefaultScopeReady(defaultScope.id)
       } catch (err) {
         console.error('Failed to load scopes/agents:', err)
       } finally {
@@ -181,13 +185,17 @@ function AgentScopeSelector({ selectedScopeId, selectedAgentId, onSelectScope, o
   const businessScopes = scopes.filter(s => s.scopeType !== 'digital_twin')
   const digitalTwins = scopes.filter(s => s.scopeType === 'digital_twin')
 
+  // System seed: Claude Code Agent scope used as the default for projects
+  const claudeCodeScope = scopes.find(s => s.name === 'Claude Code Agent' && s.scopeType === 'digital_twin')
+
   // Determine display label
   const selectedScope = scopes.find(s => s.id === selectedScopeId)
   const selectedAgent = independentAgents.find(a => a.id === selectedAgentId)
 
+  const isDefaultScope = !selectedScopeId || selectedScopeId === claudeCodeScope?.id
   let displayLabel = t('project.defaultAgent')
   let displayIcon: React.ReactNode = <Bot className="w-4 h-4 text-gray-400" />
-  if (selectedScope) {
+  if (selectedScope && !isDefaultScope) {
     displayLabel = selectedScope.name
     displayIcon = selectedScope.scopeType === 'digital_twin'
       ? <Bot className="w-4 h-4 text-purple-400" />
@@ -251,13 +259,13 @@ function AgentScopeSelector({ selectedScopeId, selectedAgentId, onSelectScope, o
           </div>
 
           <div className="max-h-72 overflow-y-auto">
-            {/* Default option */}
+            {/* Default option — maps to Claude Code Agent system scope */}
             {(!search || 'default claude code agent'.includes(lowerSearch)) && (
               <button
                 type="button"
-                onClick={() => { onSelectScope(''); onSelectAgent(''); setIsOpen(false); setSearch('') }}
+                onClick={() => { onSelectScope(claudeCodeScope?.id ?? ''); onSelectAgent(''); setIsOpen(false); setSearch('') }}
                 className={`w-full px-3 py-2 text-left hover:bg-gray-700 transition-colors ${
-                  !selectedScopeId && !selectedAgentId ? 'bg-blue-600/20' : ''
+                  (!selectedScopeId && !selectedAgentId) || selectedScopeId === claudeCodeScope?.id ? 'bg-blue-600/20' : ''
                 }`}
               >
                 <div className="flex items-center gap-2">
@@ -265,7 +273,7 @@ function AgentScopeSelector({ selectedScopeId, selectedAgentId, onSelectScope, o
                     <Bot className="w-4 h-4 text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium truncate ${!selectedScopeId && !selectedAgentId ? 'text-blue-400' : 'text-white'}`}>
+                    <div className={`text-sm font-medium truncate ${isDefaultScope && !selectedAgentId ? 'text-blue-400' : 'text-white'}`}>
                       {t('project.defaultAgent')}
                     </div>
                     <div className="text-xs text-gray-400 truncate">{t('project.defaultScopeAgent')}</div>
