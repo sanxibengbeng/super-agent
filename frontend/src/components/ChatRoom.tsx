@@ -82,7 +82,7 @@ export function ChatRoom({ roomId }: ChatRoomProps) {
     }
   }, [pendingMessage, sendMessage]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
     setShowMentionPicker(val.endsWith('@'));
@@ -332,13 +332,14 @@ export function ChatRoom({ roomId }: ChatRoomProps) {
             </button>
           </span>
         )}
-        <input
+        <textarea
           value={input}
           onChange={handleInputChange}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } }}
           placeholder={t('chatRoom.placeholder')}
           disabled={isSending}
-          className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 disabled:opacity-50 transition-colors"
+          rows={1}
+          className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 disabled:opacity-50 transition-colors resize-none"
         />
         <button
           onClick={handleSend}

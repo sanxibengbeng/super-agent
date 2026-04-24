@@ -269,7 +269,7 @@ export function ScopeCopilot({
   }, [input, isProcessing, scopeId, hasAgents, chatHistory, sopFile, language, onChatHistoryChange, onApplyFullConfig, onApplyPatches, onCreateSnapshot])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       void handleSend()
     }

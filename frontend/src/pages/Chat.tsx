@@ -1479,7 +1479,7 @@ function MessageInput({ onSend, onStop, onUpload, sessionId, businessScopeId, di
         return
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       handleSubmit()
     }

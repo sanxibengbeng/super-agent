@@ -148,7 +148,7 @@ export function SkillWorkshop() {
   const [isSending, setIsSending] = useState(false);
   const chatSessionIdRef = useRef<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Right panel state
   const [rightView, setRightView] = useState<RightPanelView>('equipped');
@@ -537,14 +537,15 @@ export function SkillWorkshop() {
                   {t('workshop.consolidate')}
                 </button>
               )}
-              <input
+              <textarea
                 ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } }}
                 placeholder="Use skill-creator to create a skill. I need this skill to..."
                 disabled={isSending}
-                className="flex-1 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                rows={1}
+                className="flex-1 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors text-sm resize-none"
               />
               <button onClick={handleSend} disabled={isSending || !input.trim()}
                 className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors">
