@@ -1,5 +1,6 @@
 import { buildApp } from './app.js';
 import { config } from './config/index.js';
+import { prisma } from './config/database.js';
 import { seedCopilotService } from './services/seed-copilot.service.js';
 
 // Prevent unhandled rejections from crashing the process
@@ -24,6 +25,16 @@ async function main(): Promise<void> {
     await app.listen({ port: config.port, host: config.host });
     app.log.info(`Server running at http://${config.host}:${config.port}`);
     app.log.info(`API documentation available at http://${config.host}:${config.port}/docs`);
+
+    // Reset sessions stuck in 'generating' from before this restart
+    prisma.chat_sessions.updateMany({
+      where: { status: 'generating' },
+      data: { status: 'idle' },
+    }).then((result) => {
+      if (result.count > 0) app.log.info(`[startup] Reset ${result.count} stale generating sessions to idle`);
+    }).catch((err) => {
+      app.log.error('[startup] Failed to reset stale sessions:', err);
+    });
 
     // Ensure system copilots exist for all orgs (non-blocking)
     seedCopilotService.ensureAllOrgs().catch((err) => {
