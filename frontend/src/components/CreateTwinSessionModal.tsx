@@ -39,8 +39,8 @@ export function CreateTwinSessionModal({
     async function loadAgents() {
       setIsLoading(true);
       try {
-        const res = await restClient.get<Agent[]>('/api/agents');
-        setAgents(res);
+        const res = await restClient.get<{ data: Agent[] }>('/api/agents');
+        setAgents(res.data ?? []);
       } catch {
         setAgents([]);
       } finally {
