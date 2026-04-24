@@ -156,7 +156,7 @@ When the user asks you to make changes to the board, use the suggest_action tool
         agent: { select: { id: true, name: true, display_name: true, avatar: true, role: true } },
         creator: { select: { id: true, username: true, full_name: true, avatar_url: true } },
         issue: { select: { id: true, issue_number: true, title: true, description: true, status: true, priority: true } },
-        session: { select: { id: true, status: true, claude_session_id: true } },
+        session: { select: { id: true, status: true, claude_session_id: true, business_scope_id: true } },
       },
     });
     if (!ts) throw AppError.notFound('Twin session not found');

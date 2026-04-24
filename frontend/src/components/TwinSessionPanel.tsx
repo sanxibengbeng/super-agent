@@ -100,6 +100,7 @@ export function TwinSessionPanel({ projectId, twinSessionId, isFullPage, onClose
         },
         body: JSON.stringify({
           session_id: detail.session.id,
+          business_scope_id: detail.session.business_scope_id,
           message: content,
         }),
       });

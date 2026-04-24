@@ -18,7 +18,7 @@ export interface TwinSessionSummary {
 export interface TwinSessionDetail extends TwinSessionSummary {
   agent: TwinSessionSummary['agent'] & { role: string | null };
   issue: (TwinSessionSummary['issue'] & { description: string | null; status: string; priority: string }) | null;
-  session: TwinSessionSummary['session'] & { claude_session_id: string | null };
+  session: TwinSessionSummary['session'] & { claude_session_id: string | null; business_scope_id: string | null };
 }
 
 export interface ActionEntry {
