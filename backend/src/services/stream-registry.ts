@@ -17,6 +17,8 @@ interface ActiveStream {
   emitter: EventEmitter;
 }
 
+const MAX_BUFFER_SIZE = 500;
+
 class StreamRegistry {
   private streams = new Map<string, ActiveStream>();
 
@@ -38,6 +40,9 @@ class StreamRegistry {
     const stream = this.streams.get(sessionId);
     if (!stream) return;
     stream.buffer.push(event);
+    if (stream.buffer.length > MAX_BUFFER_SIZE) {
+      stream.buffer = stream.buffer.slice(-MAX_BUFFER_SIZE);
+    }
     stream.emitter.emit('event', event);
   }
 

@@ -525,6 +525,18 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     }
   }, [backendSessionId])
 
+  // Auto-reconnect when network comes back online
+  useEffect(() => {
+    const handler = () => {
+      if (backendSessionId) {
+        console.log('[ChatContext] Network restored — attempting reconnect for', backendSessionId)
+        sessionStreamManager.reconnectStream(backendSessionId)
+      }
+    }
+    window.addEventListener('online', handler)
+    return () => window.removeEventListener('online', handler)
+  }, [backendSessionId])
+
   const startNewSession = useCallback(() => {
     // Don't stop the old session's stream — let it keep running server-side.
     // Just detach the UI from it so the user sees a fresh chat.

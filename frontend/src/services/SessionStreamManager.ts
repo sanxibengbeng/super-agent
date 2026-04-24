@@ -309,6 +309,20 @@ class SessionStreamManager {
             s.streamHandle = null
             this.notify()
           }
+
+          // Auto-reconnect: if the session is still generating server-side,
+          // the SSE connection was dropped (network glitch, proxy timeout).
+          // Wait briefly then retry.
+          try {
+            const statusResp = await fetch(`${baseUrl}/api/chat/sessions/${sessionId}/status`, { headers })
+            if (statusResp.ok) {
+              const { status } = await statusResp.json() as { status: string }
+              if (status === 'generating') {
+                console.log(`[SSM] SSE dropped for ${sessionId} but still generating — reconnecting in 2s`)
+                setTimeout(() => this.reconnectStream(sessionId), 2000)
+              }
+            }
+          } catch { /* offline or server down — online handler will retry */ }
         }
       }
 
