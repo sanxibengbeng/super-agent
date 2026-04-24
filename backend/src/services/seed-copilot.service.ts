@@ -30,7 +30,7 @@ function loadTemplate(filename: string): SeedTemplate {
   return JSON.parse(raw);
 }
 
-const SEED_FILES = ['workflow-copilot.json', 'scope-copilot.json'];
+const SEED_FILES = ['workflow-copilot.json', 'scope-copilot.json', 'claude-code-agent.json'];
 
 export class SeedCopilotService {
   async ensureSeedCopilots(organizationId: string): Promise<void> {
