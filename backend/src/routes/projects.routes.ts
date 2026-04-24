@@ -7,8 +7,15 @@ import { FastifyInstance } from 'fastify';
 import { authenticate, requireModifyAccess } from '../middleware/auth.js';
 import { projectService } from '../services/project.service.js';
 import { governanceService } from '../services/project-governance.service.js';
+import { projectTwinSessionRoutes } from './project-twin-sessions.routes.js';
 
 export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
+
+  // ==========================================================================
+  // Sub-routes
+  // ==========================================================================
+
+  fastify.register(projectTwinSessionRoutes, { prefix: '/:id/twin-sessions' });
 
   // ==========================================================================
   // Projects
