@@ -4246,6 +4246,28 @@ export const translations: TranslationData = {
   'project.issueWorking': { en: 'Working...', cn: '处理中...' },
   'project.issueAnalyzing': { en: 'Analyzing...', cn: '分析中...' },
 
+  // Twin Session
+  'twinSession.title': { en: 'Twin Sessions', cn: '分身会话' },
+  'twinSession.new': { en: 'New Twin Session', cn: '新建分身会话' },
+  'twinSession.selectAgent': { en: 'Select Agent', cn: '选择智能体' },
+  'twinSession.bindIssue': { en: 'Bind to Issue (optional)', cn: '绑定 Issue（可选）' },
+  'twinSession.bindIssue.none': { en: 'Project-level (no specific issue)', cn: '项目级别（不绑定 Issue）' },
+  'twinSession.visibility': { en: 'Visibility', cn: '可见性' },
+  'twinSession.visibility.private': { en: 'Private', cn: '私密' },
+  'twinSession.visibility.public': { en: 'Public', cn: '公开' },
+  'twinSession.emptyState': { en: 'Start a conversation with your twin', cn: '开始与分身对话' },
+  'twinSession.noSessions': { en: 'No twin sessions yet', cn: '暂无分身会话' },
+  'twinSession.discussIssue': { en: 'Discuss with Twin', cn: '与分身讨论' },
+  'twinSession.popOut': { en: 'Open in full page', cn: '全页面打开' },
+  'twinSession.privateNotice': { en: 'This session is private and cannot be viewed', cn: '该会话为私密，无法查看' },
+  'twinSession.active': { en: 'Active', cn: '进行中' },
+  'twinSession.suggestion': { en: 'Suggestion', cn: '操作建议' },
+  'twinSession.suggestion.confirm': { en: 'Confirm', cn: '确认执行' },
+  'twinSession.suggestion.reject': { en: 'Reject', cn: '拒绝' },
+  'twinSession.suggestion.confirmed': { en: 'Confirmed', cn: '已确认' },
+  'twinSession.suggestion.rejected': { en: 'Rejected', cn: '已拒绝' },
+  'twinSession.suggestion.pending': { en: 'Pending', cn: '待确认' },
+
   // DigitalTwinWizard UI
   'twin.identitySubtitle': { en: 'Upload your photo and describe yourself', cn: '上传照片并描述自己' },
   'twin.photoLabel': { en: 'Photo', cn: '照片' },
