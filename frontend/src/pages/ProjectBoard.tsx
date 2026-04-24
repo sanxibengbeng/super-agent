@@ -9,6 +9,9 @@ import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, Me
 import { RestProjectService, type Project, type ProjectIssue, type IssueComment, type IssueRelation, type TriageReport } from '@/services/api/restProjectService'
 import { useTranslation } from '@/i18n'
 import { WorkspaceExplorer } from '@/components'
+import { TwinSessionPanel } from '@/components/TwinSessionPanel'
+import { CreateTwinSessionModal } from '@/components/CreateTwinSessionModal'
+import { RestTwinSessionService, type TwinSessionSummary } from '@/services/api/restTwinSessionService'
 
 const LANES = [
   { id: 'backlog', labelKey: 'project.backlog', color: 'border-gray-600' },
@@ -99,6 +102,13 @@ export function ProjectBoard() {
   const [consoleMessages, setConsoleMessages] = useState<Array<{ id: string; type: string; content: string; created_at: string }>>([])
   const consoleEndRef = useRef<HTMLDivElement>(null)
 
+  // Twin sessions
+  const [twinSessions, setTwinSessions] = useState<TwinSessionSummary[]>([])
+  const [activeTwinSessionId, setActiveTwinSessionId] = useState<string | null>(null)
+  const [showTwinPanel, setShowTwinPanel] = useState(false)
+  const [showCreateTwinModal, setShowCreateTwinModal] = useState(false)
+  const [createTwinPreselectedIssueId, setCreateTwinPreselectedIssueId] = useState<string | undefined>()
+
   const loadData = useCallback(async () => {
     if (!projectId) return
     try {
@@ -159,6 +169,20 @@ export function ProjectBoard() {
     const interval = setInterval(loadMessages, 3000)
     return () => clearInterval(interval)
   }, [showConsole, project?.workspace_session_id])
+
+  const loadTwinSessions = useCallback(async () => {
+    if (!projectId) return
+    try {
+      const sessions = await RestTwinSessionService.getActiveSessions(projectId)
+      setTwinSessions(sessions)
+    } catch {
+      // silent
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    loadTwinSessions()
+  }, [loadTwinSessions])
 
   // Auto-process polling: when enabled, check every 10s if there's a todo to pick up
   // Also refresh the board periodically to pick up status changes from backend auto-processor
@@ -471,6 +495,17 @@ export function ProjectBoard() {
             <RefreshCw size={18} />
           </button>
           <button
+            onClick={() => setShowTwinPanel(!showTwinPanel)}
+            className={`p-1.5 rounded-lg transition-colors ${
+              showTwinPanel
+                ? 'text-purple-400 bg-purple-600/20'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            }`}
+            title={t('twinSession.title')}
+          >
+            <MessageSquare size={18} />
+          </button>
+          <button
             onClick={() => setShowConsole(!showConsole)}
             className={`p-1.5 rounded-lg transition-colors ${showConsole ? 'text-green-400 bg-green-600/20' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
             title={t('project.agentConsole')}
@@ -499,7 +534,7 @@ export function ProjectBoard() {
                 </div>
                 <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
                   {laneIssues.map(issue => (
-                    <IssueCard key={issue.id} issue={issue} relations={getIssueRelationsFromCache(issue.id)} onDragStart={() => setDragIssueId(issue.id)} onClick={() => handleOpenIssueWithRelations(issue)} />
+                    <IssueCard key={issue.id} issue={issue} relations={getIssueRelationsFromCache(issue.id)} onDragStart={() => setDragIssueId(issue.id)} onClick={() => handleOpenIssueWithRelations(issue)} activeTwinSessions={twinSessions.filter(ts => ts.issue?.id === issue.id)} onTwinSessionClick={(tsId) => { setActiveTwinSessionId(tsId); setShowTwinPanel(true) }} />
                   ))}
                 </div>
               </div>
@@ -514,6 +549,69 @@ export function ProjectBoard() {
             width={wsPanelWidth}
             onWidthChange={setWsPanelWidth}
           />
+
+          {/* Twin Session Sidebar */}
+          {showTwinPanel && (
+            <div className="border-l border-gray-800 flex flex-col flex-shrink-0" style={{ width: 360 }}>
+              {activeTwinSessionId ? (
+                <TwinSessionPanel
+                  projectId={projectId!}
+                  twinSessionId={activeTwinSessionId}
+                  onClose={() => setActiveTwinSessionId(null)}
+                />
+              ) : (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                    <span className="text-xs font-medium text-gray-300">{t('twinSession.title')}</span>
+                    <button
+                      onClick={() => {
+                        setCreateTwinPreselectedIssueId(undefined)
+                        setShowCreateTwinModal(true)
+                      }}
+                      className="text-[10px] px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+                    >
+                      + {t('twinSession.new')}
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+                    {twinSessions.length === 0 ? (
+                      <p className="text-xs text-gray-600 py-4 text-center">{t('twinSession.noSessions')}</p>
+                    ) : (
+                      twinSessions.map((ts) => (
+                        <button
+                          key={ts.id}
+                          onClick={() => setActiveTwinSessionId(ts.id)}
+                          className="w-full px-2 py-2 rounded-lg text-left hover:bg-gray-800 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            {ts.agent.avatar ? (
+                              <img src={ts.agent.avatar} alt="" className="w-5 h-5 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px] text-white">
+                                {(ts.agent.display_name ?? ts.agent.name)[0]}
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-white truncate">{ts.agent.display_name ?? ts.agent.name}</p>
+                              <p className="text-[10px] text-gray-500 truncate">
+                                {ts.creator.full_name ?? ts.creator.username}
+                                {ts.issue ? ` · #${ts.issue.issue_number}` : ''}
+                              </p>
+                            </div>
+                            <span className={`text-[10px] px-1 py-0.5 rounded ${
+                              ts.visibility === 'public' ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
+                            }`}>
+                              {ts.visibility === 'public' ? '🟢' : '🔒'}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-1 overflow-hidden">
@@ -546,6 +644,69 @@ export function ProjectBoard() {
             width={wsPanelWidth}
             onWidthChange={setWsPanelWidth}
           />
+
+          {/* Twin Session Sidebar */}
+          {showTwinPanel && (
+            <div className="border-l border-gray-800 flex flex-col flex-shrink-0" style={{ width: 360 }}>
+              {activeTwinSessionId ? (
+                <TwinSessionPanel
+                  projectId={projectId!}
+                  twinSessionId={activeTwinSessionId}
+                  onClose={() => setActiveTwinSessionId(null)}
+                />
+              ) : (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                    <span className="text-xs font-medium text-gray-300">{t('twinSession.title')}</span>
+                    <button
+                      onClick={() => {
+                        setCreateTwinPreselectedIssueId(undefined)
+                        setShowCreateTwinModal(true)
+                      }}
+                      className="text-[10px] px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+                    >
+                      + {t('twinSession.new')}
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+                    {twinSessions.length === 0 ? (
+                      <p className="text-xs text-gray-600 py-4 text-center">{t('twinSession.noSessions')}</p>
+                    ) : (
+                      twinSessions.map((ts) => (
+                        <button
+                          key={ts.id}
+                          onClick={() => setActiveTwinSessionId(ts.id)}
+                          className="w-full px-2 py-2 rounded-lg text-left hover:bg-gray-800 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            {ts.agent.avatar ? (
+                              <img src={ts.agent.avatar} alt="" className="w-5 h-5 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px] text-white">
+                                {(ts.agent.display_name ?? ts.agent.name)[0]}
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-white truncate">{ts.agent.display_name ?? ts.agent.name}</p>
+                              <p className="text-[10px] text-gray-500 truncate">
+                                {ts.creator.full_name ?? ts.creator.username}
+                                {ts.issue ? ` · #${ts.issue.issue_number}` : ''}
+                              </p>
+                            </div>
+                            <span className={`text-[10px] px-1 py-0.5 rounded ${
+                              ts.visibility === 'public' ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
+                            }`}>
+                              {ts.visibility === 'public' ? '🟢' : '🔒'}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1077,6 +1238,20 @@ export function ProjectBoard() {
                 </div>
               </div>
 
+              {/* Discuss with Twin */}
+              <div className="mt-1">
+                <button
+                  onClick={() => {
+                    setCreateTwinPreselectedIssueId(selectedIssue?.id)
+                    setShowCreateTwinModal(true)
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded-lg transition-colors"
+                >
+                  <MessageSquare size={12} />
+                  {t('twinSession.discussIssue')}
+                </button>
+              </div>
+
               {/* Comments */}
               <div>
                 <div className="flex items-center gap-1.5 mb-2">
@@ -1250,6 +1425,22 @@ export function ProjectBoard() {
           onProjectUpdated={(updated) => { setProject(updated); loadData() }}
         />
       )}
+
+      {/* Create Twin Session Modal */}
+      {showCreateTwinModal && (
+        <CreateTwinSessionModal
+          scopeId={project?.business_scope_id ?? null}
+          issues={issues}
+          preSelectedIssueId={createTwinPreselectedIssueId}
+          onClose={() => setShowCreateTwinModal(false)}
+          onCreate={async (input) => {
+            const ts = await RestTwinSessionService.create(projectId!, input)
+            await loadTwinSessions()
+            setActiveTwinSessionId(ts.id)
+            setShowTwinPanel(true)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -1415,7 +1606,7 @@ function ReadinessRing({ score, size = 28 }: { score: number; size?: number }) {
   )
 }
 
-function IssueCard({ issue, relations, onDragStart, onClick }: { issue: ProjectIssue; relations?: IssueRelation[]; onDragStart: () => void; onClick: () => void }) {
+function IssueCard({ issue, relations, onDragStart, onClick, activeTwinSessions, onTwinSessionClick }: { issue: ProjectIssue; relations?: IssueRelation[]; onDragStart: () => void; onClick: () => void; activeTwinSessions?: TwinSessionSummary[]; onTwinSessionClick?: (tsId: string) => void }) {
   const { t } = useTranslation()
   const priority = PRIORITY_BADGES[issue.priority]
   const isWorking = issue.status === 'in_progress' && issue.workspace_session_id
@@ -1499,6 +1690,22 @@ function IssueCard({ issue, relations, onDragStart, onClick }: { issue: ProjectI
           </div>
         </div>
       </div>
+      {activeTwinSessions && activeTwinSessions.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {activeTwinSessions.map((ts) => (
+            <span
+              key={ts.id}
+              className="inline-flex items-center gap-0.5 px-1 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded text-[10px] text-purple-300 cursor-pointer hover:bg-purple-500/20 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation()
+                onTwinSessionClick?.(ts.id)
+              }}
+            >
+              🟢 {ts.creator.full_name ?? ts.creator.username}·{ts.agent.display_name ?? ts.agent.name}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
