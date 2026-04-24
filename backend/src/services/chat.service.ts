@@ -638,6 +638,26 @@ export class ChatService {
 
     const allContentBlocks: ContentBlock[] = [];
 
+    // Pre-create an AI message row so incremental content is persisted to DB
+    // even if the frontend disconnects during generation.
+    let aiMessageId: string | null = null;
+    try {
+      const aiMsg = await chatMessageRepository.create({
+        session_id: sessionId,
+        type: 'ai',
+        content: '',
+        agent_id: null,
+        mention_agent_id: null,
+        metadata: { streaming: true },
+      }, organizationId);
+      aiMessageId = aiMsg.id;
+    } catch (err) {
+      console.warn('[chat] Failed to pre-create AI message row:', err);
+    }
+    let lastFlushTime = Date.now();
+    let lastFlushedBlockCount = 0;
+    const DB_FLUSH_INTERVAL_MS = 5_000;
+
     // Listen for external events pushed to the registry by other routes (e.g. preview_ready)
     const registrySub = streamRegistry.subscribe(sessionId);
     const onExternalEvent = (event: ConversationEvent) => {
@@ -749,6 +769,17 @@ export class ChatService {
           // Push to stream registry for reconnecting clients
           streamRegistry.push(sessionId, event);
 
+          // Periodically flush accumulated content to DB
+          const now = Date.now();
+          if (aiMessageId && allContentBlocks.length > lastFlushedBlockCount && now - lastFlushTime >= DB_FLUSH_INTERVAL_MS) {
+            lastFlushTime = now;
+            lastFlushedBlockCount = allContentBlocks.length;
+            prisma.chat_messages.update({
+              where: { id: aiMessageId },
+              data: { content: JSON.stringify(allContentBlocks) },
+            }).catch(err => console.warn('[chat] Failed to flush AI message:', err));
+          }
+
           // Only write to SSE if client is still connected
           if (!clientDisconnected) {
             this.writeConversationEventSSE(reply, event);
@@ -801,17 +832,25 @@ export class ChatService {
 
       // --- Non-blocking cleanup below (client already received [DONE]) ---
 
-      // Mark agent as active + session as idle + persist AI response (in parallel)
+      // Mark agent as active + session as idle + finalize AI message (in parallel)
+      const finalContent = allContentBlocks.length > 0 ? JSON.stringify(allContentBlocks) : '';
+      const persistAiMessage = aiMessageId
+        ? prisma.chat_messages.update({
+            where: { id: aiMessageId },
+            data: { content: finalContent || 'No response received', metadata: {} },
+          }).catch((err) => { console.error('Failed to finalize AI message:', err); })
+        : allContentBlocks.length > 0
+          ? this.addMessage(organizationId, sessionId, 'ai', finalContent).catch((err) => {
+              console.error('Failed to persist assistant response:', err);
+            })
+          : Promise.resolve();
+
       await Promise.all([
         agentStatusService.setActive(resolvedAgentId, organizationId),
         chatSessionRepository.updateStatus(sessionId, organizationId, 'idle').catch((err) => {
           console.error('Failed to set session status to idle:', err);
         }),
-        allContentBlocks.length > 0
-          ? this.addMessage(organizationId, sessionId, 'ai', JSON.stringify(allContentBlocks)).catch((err) => {
-              console.error('Failed to persist assistant response:', err);
-            })
-          : Promise.resolve(),
+        persistAiMessage,
       ]);
 
       // Finalize Langfuse trace

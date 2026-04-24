@@ -918,6 +918,30 @@ export class WorkflowExecutorV2 {
       const startTime = Date.now();
       const assistantTextParts: string[] = [];
 
+      // Pre-create an AI message row so incremental content is visible even
+      // if the frontend is closed and reopened during execution.
+      let aiMessageId: string | null = null;
+      if (chatSessionId) {
+        try {
+          const msg = await prisma.chat_messages.create({
+            data: {
+              session_id: chatSessionId,
+              organization_id: organizationId,
+              type: 'ai',
+              content: '',
+              metadata: { source: 'workflow', executionId, streaming: true },
+            },
+          });
+          aiMessageId = msg.id;
+        } catch (err) {
+          console.warn('[workflow-v2] Failed to pre-create AI message:', err);
+        }
+      }
+
+      let lastFlushTime = Date.now();
+      let lastFlushedLength = 0;
+      const DB_FLUSH_INTERVAL_MS = 5_000;
+
       for await (const event of generator) {
         if (Date.now() - startTime > timeoutMs) {
           timedOut = true;
@@ -948,6 +972,18 @@ export class WorkflowExecutorV2 {
           yield { type: 'log', content: textContent };
         }
 
+        // Periodically flush accumulated content to DB so it survives frontend disconnects
+        const now = Date.now();
+        if (aiMessageId && assistantTextParts.length > lastFlushedLength && now - lastFlushTime >= DB_FLUSH_INTERVAL_MS) {
+          const content = assistantTextParts.join('');
+          lastFlushTime = now;
+          lastFlushedLength = assistantTextParts.length;
+          prisma.chat_messages.update({
+            where: { id: aiMessageId },
+            data: { content },
+          }).catch(err => console.warn('[workflow-v2] Failed to flush AI message:', err));
+        }
+
         // Record token usage from result events
         if (event.type === 'result' && event.tokenUsage) {
           recordTokenUsage({
@@ -969,8 +1005,15 @@ export class WorkflowExecutorV2 {
         yield eventQueue.shift()!;
       }
 
-      // Persist the complete AI response to chat_messages
-      if (chatSessionId && assistantTextParts.length > 0) {
+      // Final update: write the complete AI response and clear the streaming flag
+      if (aiMessageId) {
+        const finalContent = assistantTextParts.join('') || 'No response received';
+        await prisma.chat_messages.update({
+          where: { id: aiMessageId },
+          data: { content: finalContent, metadata: { source: 'workflow', executionId } },
+        }).catch(err => console.warn('[workflow-v2] Failed to finalize AI message:', err));
+      } else if (chatSessionId && assistantTextParts.length > 0) {
+        // Fallback: pre-create failed, create the message now
         await prisma.chat_messages.create({
           data: {
             session_id: chatSessionId,
