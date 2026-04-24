@@ -16,3 +16,4 @@ export * from './workflow.schema.js';
 export * from './document.schema.js';
 export * from './chat.schema.js';
 export * from './mcp.schema.js';
+export * from './project-twin-session.schema.js';
