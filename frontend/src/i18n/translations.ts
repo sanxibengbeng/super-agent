@@ -4248,6 +4248,7 @@ export const translations: TranslationData = {
 
   // Project Copilot
   'projectCopilot.openBoard': { en: 'Open Board', cn: '打开看板' },
+  'projectCopilot.fullBoard': { en: 'Full Board', cn: '完整看板' },
 
   // Twin Session
   'twinSession.title': { en: 'Twin Sessions', cn: '分身会话' },
