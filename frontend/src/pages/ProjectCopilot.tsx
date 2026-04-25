@@ -13,6 +13,7 @@ import { CreateTwinSessionModal } from '@/components/CreateTwinSessionModal'
 
 export function ProjectCopilot() {
   const { id: projectId } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { t } = useTranslation()
   const [project, setProject] = useState<Project | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -43,6 +44,19 @@ export function ProjectCopilot() {
   }
   if (!project || !workspaceSessionId) {
     return <div className="flex items-center justify-center h-full text-gray-400">{t('project.notFound')}</div>
+  }
+  if (!project.business_scope_id) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <p className="text-sm text-gray-400">{t('project.noScopeConfigured')}</p>
+        <button
+          onClick={() => navigate('/projects')}
+          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg"
+        >
+          {t('project.goToSettings')}
+        </button>
+      </div>
+    )
   }
 
   return (

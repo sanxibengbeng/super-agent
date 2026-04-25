@@ -55,14 +55,18 @@ export function BoardStatusBar({
       >
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500 font-medium">Board</span>
-          <div className="flex items-center gap-2">
-            {laneCounts.map(lane => (
-              <div key={lane.id} className="flex items-center gap-1">
-                <div className={`w-2 h-2 rounded-sm ${lane.color}`} />
-                <span className="text-xs text-gray-400">{lane.count}</span>
-              </div>
-            ))}
-          </div>
+          {issues.length === 0 ? (
+            <span className="text-xs text-gray-600">{t('projectCopilot.noIssues')}</span>
+          ) : (
+            <div className="flex items-center gap-2">
+              {laneCounts.map(lane => (
+                <div key={lane.id} className="flex items-center gap-1">
+                  <div className={`w-2 h-2 rounded-sm ${lane.color}`} />
+                  <span className="text-xs text-gray-400">{lane.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {executingIssueNumber && (
             <>
               <div className="w-px h-3 bg-gray-700" />

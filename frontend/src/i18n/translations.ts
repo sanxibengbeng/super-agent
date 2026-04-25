@@ -4245,6 +4245,8 @@ export const translations: TranslationData = {
   'project.relatedTo': { en: 'Related to', cn: '相关' },
   'project.issueWorking': { en: 'Working...', cn: '处理中...' },
   'project.issueAnalyzing': { en: 'Analyzing...', cn: '分析中...' },
+  'project.noScopeConfigured': { en: 'This project needs a Business Scope before the copilot can work.', cn: '此项目需要配置 Business Scope 才能使用副驾。' },
+  'project.goToSettings': { en: 'Go to Projects', cn: '前往项目设置' },
 
   // Project Copilot
   'projectCopilot.openBoard': { en: 'Open Board', cn: '打开看板' },
@@ -4257,6 +4259,7 @@ export const translations: TranslationData = {
   'projectCopilot.quickStatus': { en: 'Status summary', cn: '状态概览' },
   'projectCopilot.quickExecute': { en: 'Execute next', cn: '执行下一个' },
   'projectCopilot.inputPlaceholder': { en: 'Ask about your project...', cn: '关于项目的任何问题...' },
+  'projectCopilot.noIssues': { en: 'No issues yet', cn: '暂无任务' },
 
   // Twin Session
   'twinSession.title': { en: 'Twin Sessions', cn: '分身会话' },
