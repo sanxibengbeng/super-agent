@@ -200,7 +200,7 @@ export function TwinSessionPanel({ projectId, twinSessionId, isFullPage, onClose
           </button>
           {!isFullPage && (
             <button
-              onClick={() => navigate(`/projects/${projectId}/twin-session/${twinSessionId}`)}
+              onClick={() => navigate(`/chat?session=${detail?.session?.id ?? twinSessionId}`)}
               className="p-1 text-gray-500 hover:text-white rounded transition-colors"
               title={t('twinSession.popOut')}
             >
