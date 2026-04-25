@@ -4246,6 +4246,9 @@ export const translations: TranslationData = {
   'project.issueWorking': { en: 'Working...', cn: '处理中...' },
   'project.issueAnalyzing': { en: 'Analyzing...', cn: '分析中...' },
 
+  // Project Copilot
+  'projectCopilot.openBoard': { en: 'Open Board', cn: '打开看板' },
+
   // Twin Session
   'twinSession.title': { en: 'Twin Sessions', cn: '分身会话' },
   'twinSession.new': { en: 'New Twin Session', cn: '新建分身会话' },
