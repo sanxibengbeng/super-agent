@@ -4249,6 +4249,14 @@ export const translations: TranslationData = {
   // Project Copilot
   'projectCopilot.openBoard': { en: 'Open Board', cn: '打开看板' },
   'projectCopilot.fullBoard': { en: 'Full Board', cn: '完整看板' },
+  'projectCopilot.welcome': { en: 'Project Copilot', cn: '项目副驾' },
+  'projectCopilot.welcomeWithIssues': { en: 'Your board has issues ready. Ask me to triage, execute, or discuss them.', cn: '看板中已有 Issue，可以让我进行分流、执行或讨论。' },
+  'projectCopilot.welcomeEmpty': { en: 'No issues yet. Tell me what you want to build and I\'ll create the backlog.', cn: '暂无 Issue。告诉我你想构建什么，我来创建待办事项。' },
+  'projectCopilot.quickTriage': { en: 'Triage backlog', cn: '分流待办' },
+  'projectCopilot.quickCreate': { en: 'Create issue', cn: '创建 Issue' },
+  'projectCopilot.quickStatus': { en: 'Status summary', cn: '状态概览' },
+  'projectCopilot.quickExecute': { en: 'Execute next', cn: '执行下一个' },
+  'projectCopilot.inputPlaceholder': { en: 'Ask about your project...', cn: '关于项目的任何问题...' },
 
   // Twin Session
   'twinSession.title': { en: 'Twin Sessions', cn: '分身会话' },
