@@ -107,7 +107,7 @@ export function TwinSessionsDrawer({
 }
 
 function SessionRow({ session, onClick }: { session: TwinSessionSummary; onClick: () => void }) {
-  const isActive = session.session.status === 'active'
+  const isActive = session.session?.status === 'active'
 
   return (
     <div
