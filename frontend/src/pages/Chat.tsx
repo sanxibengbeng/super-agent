@@ -24,7 +24,7 @@ import { AgentMentionPopup, type AgentMentionPopupHandle, type MentionAgent } fr
 // File Tab types & viewer
 // ============================================================================
 
-interface FileTab {
+export interface FileTab {
   id: string       // unique key (path)
   name: string     // display name
   path: string     // workspace-relative path or published app URL
@@ -125,7 +125,7 @@ function HtmlPreview({ content }: { content: string }) {
   )
 }
 
-function FileViewerTab({ path, sessionId }: { path: string; sessionId: string }) {
+export function FileViewerTab({ path, sessionId }: { path: string; sessionId: string }) {
   const { t } = useTranslation()
   const [content, setContent] = useState<string | null>(null)
   const [editContent, setEditContent] = useState<string>('')
@@ -473,7 +473,7 @@ function FileViewerTab({ path, sessionId }: { path: string; sessionId: string })
 
 const PREVIEWABLE_APP_FILES = new Set(['index.html', 'index.htm', 'app.html'])
 
-function isPreviewableFile(name: string): boolean {
+export function isPreviewableFile(name: string): boolean {
   const lower = name.toLowerCase()
   return PREVIEWABLE_APP_FILES.has(lower) || lower.endsWith('.html') || lower.endsWith('.htm')
 }

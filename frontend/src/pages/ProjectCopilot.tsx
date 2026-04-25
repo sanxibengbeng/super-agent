@@ -1,7 +1,7 @@
 // frontend/src/pages/ProjectCopilot.tsx
 import { useState, useEffect, useCallback, useContext } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, Settings } from 'lucide-react'
+import { ArrowLeft, Loader2, Settings, MessageSquare, File as FileIcon, X } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { RestProjectService, type Project, type ProjectIssue, type IssueRelation } from '@/services/api/restProjectService'
 import { RestTwinSessionService, type TwinSessionSummary } from '@/services/api/restTwinSessionService'
@@ -10,6 +10,7 @@ import { MessageList, WorkspaceExplorer } from '@/components'
 import { BoardStatusBar } from '@/components/BoardStatusBar'
 import { BoardKanbanModal } from '@/components/BoardKanbanModal'
 import { CreateTwinSessionModal } from '@/components/CreateTwinSessionModal'
+import { FileViewerTab, isPreviewableFile, type FileTab } from '@/pages/Chat'
 
 export function ProjectCopilot() {
   const { id: projectId } = useParams<{ id: string }>()
@@ -104,6 +105,10 @@ function ProjectCopilotContent({
   const [wsRefreshKey, setWsRefreshKey] = useState(0)
   const [panelWidth, setPanelWidth] = useState(288)
 
+  // File tabs (same pattern as Chat page)
+  const [fileTabs, setFileTabs] = useState<FileTab[]>([])
+  const [activeTab, setActiveTab] = useState<string>('chat')
+
   const loadBoardData = useCallback(async () => {
     if (!projectId) return
     try {
@@ -168,6 +173,23 @@ function ProjectCopilotContent({
     setShowCreateTwin(true)
   }
 
+  const handleFileOpen = useCallback((path: string, name: string) => {
+    const preview = isPreviewableFile(name)
+    const tabId = preview ? `preview:${path}` : path
+    if (fileTabs.some(tab => tab.id === tabId)) {
+      setActiveTab(tabId)
+      return
+    }
+    setFileTabs(prev => [...prev, { id: tabId, name, path, kind: preview ? 'preview' : 'file' }])
+    setActiveTab(tabId)
+  }, [fileTabs])
+
+  const handleCloseTab = useCallback((tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setFileTabs(prev => prev.filter(tab => tab.id !== tabId))
+    if (activeTab === tabId) setActiveTab('chat')
+  }, [activeTab])
+
   return (
     <div className="flex h-full">
       {/* Main content area */}
@@ -204,20 +226,69 @@ function ProjectCopilotContent({
           onCreateTwin={handleOpenCreateTwin}
         />
 
-        {/* Chat area */}
-        {messages.length === 0 && !isSending ? (
-          <ProjectQuickStart onSend={handleSendMessage} issueCount={issues.length} />
-        ) : (
-          <MessageList messages={messages} isTyping={isSending} />
+        {/* Tab bar — only when file tabs are open */}
+        {fileTabs.length > 0 && (
+          <div className="flex items-center border-b border-gray-800 bg-gray-900/50 overflow-x-auto">
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm border-r border-gray-800 flex-shrink-0 transition-colors ${
+                activeTab === 'chat'
+                  ? 'bg-gray-800 text-white border-b-2 border-b-blue-500'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              Chat
+            </button>
+            {fileTabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm border-r border-gray-800 flex-shrink-0 transition-colors group ${
+                  activeTab === tab.id
+                    ? 'bg-gray-800 text-white border-b-2 border-b-blue-500'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+                }`}
+              >
+                <FileIcon className="w-3.5 h-3.5 text-blue-400" />
+                <span className="max-w-[120px] truncate">{tab.name}</span>
+                <span
+                  role="button"
+                  onClick={(e) => handleCloseTab(tab.id, e)}
+                  className="ml-1 rounded hover:bg-gray-600 p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </span>
+              </button>
+            ))}
+          </div>
         )}
 
-        {/* Message input */}
-        <ProjectMessageInput
-          onSend={handleSendMessage}
-          onStop={stopGeneration}
-          disabled={isSending}
-          isSending={isSending}
-        />
+        {/* Tab content */}
+        {activeTab === 'chat' ? (
+          <>
+            {/* Chat area */}
+            {messages.length === 0 && !isSending ? (
+              <ProjectQuickStart onSend={handleSendMessage} issueCount={issues.length} />
+            ) : (
+              <MessageList messages={messages} isTyping={isSending} />
+            )}
+
+            {/* Message input */}
+            <ProjectMessageInput
+              onSend={handleSendMessage}
+              onStop={stopGeneration}
+              disabled={isSending}
+              isSending={isSending}
+            />
+          </>
+        ) : (
+          backendSessionId ? (() => {
+            const tab = fileTabs.find(t => t.id === activeTab)
+            if (!tab) return null
+            return <FileViewerTab path={tab.path} sessionId={backendSessionId} />
+          })() : null
+        )}
       </div>
 
       {/* Workspace sidebar */}
@@ -225,6 +296,7 @@ function ProjectCopilotContent({
         sessionId={backendSessionId}
         businessScopeId={selectedBusinessScopeId}
         refreshKey={wsRefreshKey}
+        onFileOpen={handleFileOpen}
         width={panelWidth}
         onWidthChange={setPanelWidth}
       />
