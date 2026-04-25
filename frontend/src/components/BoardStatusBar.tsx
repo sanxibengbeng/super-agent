@@ -26,6 +26,7 @@ interface BoardStatusBarProps {
   onIssueClick: (issue: ProjectIssue) => void
   onOpenBoard: () => void
   onCreateTwin: (issueId?: string) => void
+  onTwinBadgeClick?: () => void
 }
 
 export function BoardStatusBar({
@@ -35,6 +36,7 @@ export function BoardStatusBar({
   onIssueClick,
   onOpenBoard,
   onCreateTwin,
+  onTwinBadgeClick,
 }: BoardStatusBarProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
@@ -76,15 +78,15 @@ export function BoardStatusBar({
               </div>
             </>
           )}
-          {activeTwinCount > 0 && (
-            <>
-              <div className="w-px h-3 bg-gray-700" />
-              <div className="flex items-center gap-1">
-                <Users size={12} className="text-cyan-400" />
-                <span className="text-xs text-cyan-400">{activeTwinCount}</span>
-              </div>
-            </>
-          )}
+          <div className="w-px h-3 bg-gray-700" />
+          <button
+            onClick={(e) => { e.stopPropagation(); onTwinBadgeClick?.() }}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-700 transition-colors"
+            title={t('twinSession.title')}
+          >
+            <Users size={12} className="text-cyan-400" />
+            <span className="text-xs text-cyan-400">{activeTwinCount || '+'}</span>
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button

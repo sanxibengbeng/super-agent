@@ -4282,6 +4282,10 @@ export const translations: TranslationData = {
   'twinSession.suggestion.confirmed': { en: 'Confirmed', cn: '已确认' },
   'twinSession.suggestion.rejected': { en: 'Rejected', cn: '已拒绝' },
   'twinSession.suggestion.pending': { en: 'Pending', cn: '待确认' },
+  'twinSession.empty': { en: 'No twin sessions yet', cn: '暂无分身会话' },
+  'twinSession.createFirst': { en: 'Create your first twin session', cn: '创建第一个分身会话' },
+  'twinSession.projectLevel': { en: 'Project', cn: '项目级' },
+  'twinSession.issueLevel': { en: 'Issue', cn: 'Issue 级' },
 
   // CreateBusinessScope
   'scope.importTitle': { en: 'Import & Generate SOP', cn: '导入并生成 SOP' },

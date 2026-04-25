@@ -1,7 +1,7 @@
 // frontend/src/pages/ProjectCopilot.tsx
 import { useState, useEffect, useCallback, useContext } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, Settings, MessageSquare, File as FileIcon, X } from 'lucide-react'
+import { ArrowLeft, Loader2, Settings, MessageSquare, File as FileIcon, Users, X } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { RestProjectService, type Project, type ProjectIssue, type IssueRelation } from '@/services/api/restProjectService'
 import { RestTwinSessionService, type TwinSessionSummary } from '@/services/api/restTwinSessionService'
@@ -10,6 +10,8 @@ import { MessageList, WorkspaceExplorer } from '@/components'
 import { BoardStatusBar } from '@/components/BoardStatusBar'
 import { BoardKanbanModal } from '@/components/BoardKanbanModal'
 import { CreateTwinSessionModal } from '@/components/CreateTwinSessionModal'
+import { TwinSessionsDrawer } from '@/components/TwinSessionsDrawer'
+import { TwinSessionPanel } from '@/components/TwinSessionPanel'
 import { FileViewerTab, isPreviewableFile, type FileTab } from '@/pages/Chat'
 
 export function ProjectCopilot() {
@@ -105,9 +107,10 @@ function ProjectCopilotContent({
   const [wsRefreshKey, setWsRefreshKey] = useState(0)
   const [panelWidth, setPanelWidth] = useState(288)
 
-  // File tabs (same pattern as Chat page)
+  // File and twin session tabs
   const [fileTabs, setFileTabs] = useState<FileTab[]>([])
   const [activeTab, setActiveTab] = useState<string>('chat')
+  const [showTwinDrawer, setShowTwinDrawer] = useState(false)
 
   const loadBoardData = useCallback(async () => {
     if (!projectId) return
@@ -190,6 +193,19 @@ function ProjectCopilotContent({
     if (activeTab === tabId) setActiveTab('chat')
   }, [activeTab])
 
+  const handleTwinSessionClick = useCallback((session: TwinSessionSummary) => {
+    const tabId = `twin:${session.id}`
+    const label = session.agent.display_name ?? session.agent.name
+    const name = session.issue ? `${label} #${session.issue.issue_number}` : label
+    if (fileTabs.some(tab => tab.id === tabId)) {
+      setActiveTab(tabId)
+    } else {
+      setFileTabs(prev => [...prev, { id: tabId, name, path: session.id, kind: 'file' }])
+      setActiveTab(tabId)
+    }
+    setShowTwinDrawer(false)
+  }, [fileTabs])
+
   return (
     <div className="flex h-full">
       {/* Main content area */}
@@ -224,7 +240,19 @@ function ProjectCopilotContent({
           onIssueClick={handleIssueClick}
           onOpenBoard={() => setShowKanban(true)}
           onCreateTwin={handleOpenCreateTwin}
+          onTwinBadgeClick={() => setShowTwinDrawer(prev => !prev)}
         />
+
+        {/* Twin Sessions Drawer */}
+        {showTwinDrawer && (
+          <TwinSessionsDrawer
+            projectId={projectId!}
+            twinSessions={twinSessions}
+            onClose={() => setShowTwinDrawer(false)}
+            onSessionClick={handleTwinSessionClick}
+            onCreateNew={() => { setShowTwinDrawer(false); handleOpenCreateTwin() }}
+          />
+        )}
 
         {/* Tab bar — only when file tabs are open */}
         {fileTabs.length > 0 && (
@@ -250,7 +278,7 @@ function ProjectCopilotContent({
                     : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
                 }`}
               >
-                <FileIcon className="w-3.5 h-3.5 text-blue-400" />
+                {tab.id.startsWith('twin:') ? <Users className="w-3.5 h-3.5 text-cyan-400" /> : <FileIcon className="w-3.5 h-3.5 text-blue-400" />}
                 <span className="max-w-[120px] truncate">{tab.name}</span>
                 <span
                   role="button"
@@ -283,11 +311,20 @@ function ProjectCopilotContent({
             />
           </>
         ) : (
-          backendSessionId ? (() => {
+          (() => {
             const tab = fileTabs.find(t => t.id === activeTab)
             if (!tab) return null
-            return <FileViewerTab path={tab.path} sessionId={backendSessionId} />
-          })() : null
+            if (tab.id.startsWith('twin:')) {
+              return (
+                <TwinSessionPanel
+                  projectId={projectId!}
+                  twinSessionId={tab.path}
+                  onClose={() => handleCloseTab(tab.id, { stopPropagation: () => {} } as React.MouseEvent)}
+                />
+              )
+            }
+            return backendSessionId ? <FileViewerTab path={tab.path} sessionId={backendSessionId} /> : null
+          })()
         )}
       </div>
 
