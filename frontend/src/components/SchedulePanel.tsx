@@ -21,9 +21,11 @@ import { useSchedules } from '@/services/useSchedules';
 import type { Schedule, ScheduleRecord } from '@/services/useSchedules';
 import type { ScheduleExecutionLog } from '@/services/api/restScheduleService';
 import { useTranslation } from '@/i18n';
+import type { WorkflowVariableDefinition } from '@/types/canvas/metadata';
 
 interface SchedulePanelProps {
   workflowId: string;
+  getStartNodeVariables?: () => WorkflowVariableDefinition[];
   onClose: () => void;
 }
 
@@ -38,7 +40,7 @@ const CRON_PRESETS = [
   { label: 'First of month at midnight', value: '0 0 1 * *' },
 ];
 
-export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
+export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: SchedulePanelProps) {
   const {
     schedules,
     isLoading,
@@ -67,6 +69,7 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
   const [newTimezone, setNewTimezone] = useState('UTC');
   const [newTimeoutMinutes, setNewTimeoutMinutes] = useState(10);
   const [newUseSharedSession, setNewUseSharedSession] = useState(true);
+  const [newVariables, setNewVariables] = useState<Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>>([]);
 
   useEffect(() => {
     loadSchedules(workflowId);
@@ -119,6 +122,7 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
       timezone: newTimezone,
       timeoutMinutes: newTimeoutMinutes,
       useSharedSession: newUseSharedSession,
+      variables: newVariables.length > 0 ? newVariables : undefined,
       isEnabled: true,
     });
     setIsCreating(false);
@@ -128,6 +132,7 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
       setNewName('');
       setNewCron('0 9 * * *');
       setNewUseSharedSession(true);
+      setNewVariables([]);
     }
   };
 
@@ -298,6 +303,36 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
               </button>
             </div>
 
+            {newVariables.length > 0 && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-2">{t('schedule.variables')}</label>
+                <div className="space-y-2">
+                  {newVariables.map((v, i) => (
+                    <div key={v.variableId}>
+                      <div className="flex items-center gap-1 mb-1">
+                        <span className="text-xs text-gray-300">{v.name}</span>
+                        {v.required && <span className="text-red-400 text-[10px]">*</span>}
+                        {v.description && (
+                          <span className="text-[10px] text-gray-500 ml-1">{v.description}</span>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        value={v.value}
+                        onChange={(e) => {
+                          setNewVariables(prev => prev.map((pv, pi) =>
+                            pi === i ? { ...pv, value: e.target.value } : pv
+                          ));
+                        }}
+                        placeholder={`Enter ${v.name}...`}
+                        className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white focus:border-blue-500 outline-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setShowCreateForm(false)}
@@ -329,7 +364,21 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
             <Calendar className="w-12 h-12 text-gray-600 mx-auto mb-3" />
             <p className="text-sm text-gray-500 mb-4">{t('schedule.noSchedules')}</p>
             <button
-              onClick={() => setShowCreateForm(true)}
+              onClick={() => {
+                setShowCreateForm(true);
+                if (getStartNodeVariables) {
+                  const vars = getStartNodeVariables();
+                  setNewVariables(vars.map(v => ({
+                    variableId: v.variableId,
+                    name: v.name,
+                    value: Array.isArray(v.value)
+                      ? v.value.map(val => typeof val === 'string' ? val : val?.text || '').join('')
+                      : '',
+                    description: v.description,
+                    required: v.required,
+                  })));
+                }
+              }}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm flex items-center gap-2 mx-auto"
             >
               <Plus className="w-4 h-4" />
@@ -455,12 +504,33 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
                     {t('schedule.viewHistory')}
                   </button>
                 </div>
+
+                {Array.isArray(schedule.variables) && schedule.variables.length > 0 && (
+                  <ScheduleVariablesEditor
+                    variables={schedule.variables as Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>}
+                    onSave={(vars) => updateSchedule(schedule.id, { variables: vars })}
+                  />
+                )}
               </div>
             ))}
 
             {!showCreateForm && (
               <button
-                onClick={() => setShowCreateForm(true)}
+                onClick={() => {
+                  setShowCreateForm(true);
+                  if (getStartNodeVariables) {
+                    const vars = getStartNodeVariables();
+                    setNewVariables(vars.map(v => ({
+                      variableId: v.variableId,
+                      name: v.name,
+                      value: Array.isArray(v.value)
+                        ? v.value.map(val => typeof val === 'string' ? val : val?.text || '').join('')
+                        : '',
+                      description: v.description,
+                      required: v.required,
+                    })));
+                  }
+                }}
                 className="w-full px-4 py-2 border border-dashed border-gray-700 hover:border-gray-600 text-gray-400 hover:text-gray-300 rounded-lg text-sm flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
@@ -560,6 +630,78 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
           record={viewingRecord}
           onClose={() => setViewingRecord(null)}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline variables editor for schedule cards
+ */
+function ScheduleVariablesEditor({
+  variables,
+  onSave,
+}: {
+  variables: Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>;
+  onSave: (vars: Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [values, setValues] = useState(variables);
+  const { t } = useTranslation();
+
+  const handleSave = () => {
+    onSave(values);
+    setEditing(false);
+  };
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-[10px] text-gray-400 hover:text-gray-300 flex items-center gap-1"
+      >
+        {expanded ? '▾' : '▸'} {t('schedule.variables')} ({variables.length})
+      </button>
+      {expanded && (
+        <div className="mt-1 space-y-1.5">
+          {values.map((v, i) => (
+            <div key={v.variableId} className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-400 w-20 truncate" title={v.name}>
+                {v.name}
+                {v.required && <span className="text-red-400 ml-0.5">*</span>}
+              </span>
+              {editing ? (
+                <input
+                  type="text"
+                  value={v.value}
+                  onChange={(e) => setValues(prev => prev.map((pv, pi) =>
+                    pi === i ? { ...pv, value: e.target.value } : pv
+                  ))}
+                  className="flex-1 px-2 py-0.5 bg-gray-900 border border-gray-600 rounded text-[10px] text-white focus:border-blue-500 outline-none"
+                />
+              ) : (
+                <span className="flex-1 text-[10px] text-gray-300 truncate">{v.value || '(empty)'}</span>
+              )}
+            </div>
+          ))}
+          <div className="flex gap-1 pt-1">
+            {editing ? (
+              <>
+                <button onClick={handleSave} className="text-[10px] text-green-400 hover:text-green-300">
+                  {t('common.save')}
+                </button>
+                <button onClick={() => { setEditing(false); setValues(variables); }} className="text-[10px] text-gray-400 hover:text-gray-300">
+                  {t('common.cancel')}
+                </button>
+              </>
+            ) : (
+              <button onClick={() => setEditing(true)} className="text-[10px] text-blue-400 hover:text-blue-300">
+                {t('common.edit')}
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
