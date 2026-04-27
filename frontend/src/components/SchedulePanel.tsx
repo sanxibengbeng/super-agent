@@ -60,7 +60,7 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [viewingRecord, setViewingRecord] = useState<ScheduleRecord | null>(null);
 
   // Create form state
@@ -70,6 +70,14 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
   const [newTimeoutMinutes, setNewTimeoutMinutes] = useState(10);
   const [newUseSharedSession, setNewUseSharedSession] = useState(true);
   const [newVariables, setNewVariables] = useState<Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>>([]);
+
+  // Edit form state
+  const [editName, setEditName] = useState('');
+  const [editCron, setEditCron] = useState('');
+  const [editTimezone, setEditTimezone] = useState('UTC');
+  const [editTimeoutMinutes, setEditTimeoutMinutes] = useState(10);
+  const [editUseSharedSession, setEditUseSharedSession] = useState(true);
+  const [editVariables, setEditVariables] = useState<Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>>([]);
 
   useEffect(() => {
     loadSchedules(workflowId);
@@ -176,9 +184,29 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
     setIsLoadingRecords(false);
   };
 
-  const handleUpdateCron = async (schedule: Schedule, newCronValue: string) => {
-    await updateSchedule(schedule.id, { cronExpression: newCronValue });
-    setEditingId(null);
+  const startEditing = (schedule: Schedule) => {
+    setEditingSchedule(schedule);
+    setEditName(schedule.name);
+    setEditCron(schedule.cronExpression);
+    setEditTimezone(schedule.timezone);
+    setEditTimeoutMinutes(schedule.timeoutMinutes ?? 10);
+    setEditUseSharedSession(schedule.useSharedSession ?? true);
+    setEditVariables(
+      (schedule.variables as Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>) || []
+    );
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingSchedule || !editName.trim() || !editCron.trim()) return;
+    await updateSchedule(editingSchedule.id, {
+      name: editName.trim(),
+      cronExpression: editCron.trim(),
+      timezone: editTimezone,
+      timeoutMinutes: editTimeoutMinutes,
+      useSharedSession: editUseSharedSession,
+      variables: editVariables.length > 0 ? editVariables : undefined,
+    });
+    setEditingSchedule(null);
   };
 
   const formatNextRun = (nextRunAt: string | null) => {
@@ -398,120 +426,217 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
                     : 'border-gray-700 bg-gray-800/50'
                 }`}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-white">
-                    {schedule.name}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleTrigger(schedule)}
-                      className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-green-400"
-                      title="Run Now"
-                    >
-                      <Play className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleToggle(schedule)}
-                      className="p-1 hover:bg-gray-700 rounded"
-                      title={schedule.isEnabled ? 'Disable' : 'Enable'}
-                    >
-                      {schedule.isEnabled ? (
-                        <ToggleRight className="w-5 h-5 text-green-400" />
-                      ) : (
-                        <ToggleLeft className="w-5 h-5 text-gray-500" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(schedule)}
-                      className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                {editingSchedule?.id === schedule.id ? (
+                  /* ---- Full Edit Form ---- */
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">{t('schedule.name')}</label>
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white focus:border-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">{t('schedule.cronExpression')}</label>
+                      <input
+                        type="text"
+                        value={editCron}
+                        onChange={(e) => setEditCron(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white font-mono focus:border-blue-500 outline-none"
+                      />
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {CRON_PRESETS.slice(0, 4).map((preset) => (
+                          <button
+                            key={preset.value}
+                            onClick={() => setEditCron(preset.value)}
+                            className="text-[10px] px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+                          >
+                            {t(preset.label)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-400 mb-1">{t('schedule.timezone')}</label>
+                        <select
+                          value={editTimezone}
+                          onChange={(e) => setEditTimezone(e.target.value)}
+                          className="w-full px-2 py-1.5 bg-gray-900 border border-gray-700 rounded text-xs text-white focus:border-blue-500 outline-none"
+                        >
+                          <option value="UTC">UTC</option>
+                          <option value="America/New_York">America/New_York</option>
+                          <option value="America/Los_Angeles">America/Los_Angeles</option>
+                          <option value="Europe/London">Europe/London</option>
+                          <option value="Europe/Paris">Europe/Paris</option>
+                          <option value="Asia/Tokyo">Asia/Tokyo</option>
+                          <option value="Asia/Shanghai">Asia/Shanghai</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">{t('schedule.timeout')}</label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={1440}
+                            value={editTimeoutMinutes}
+                            onChange={(e) => setEditTimeoutMinutes(Math.max(1, Math.min(1440, Number(e.target.value))))}
+                            className="w-16 px-2 py-1.5 bg-gray-900 border border-gray-700 rounded text-xs text-white focus:border-blue-500 outline-none"
+                          />
+                          <span className="text-[10px] text-gray-400">{t('schedule.minutes')}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="block text-xs text-gray-400">{t('schedule.sharedSession')}</label>
+                        <span className="text-[10px] text-gray-500">{t('schedule.sharedSessionHint')}</span>
+                      </div>
+                      <button onClick={() => setEditUseSharedSession(!editUseSharedSession)} className="p-1">
+                        {editUseSharedSession ? (
+                          <ToggleRight className="w-6 h-6 text-green-400" />
+                        ) : (
+                          <ToggleLeft className="w-6 h-6 text-gray-500" />
+                        )}
+                      </button>
+                    </div>
+                    {editVariables.length > 0 && (
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-2">{t('schedule.variables')}</label>
+                        <div className="space-y-2">
+                          {editVariables.map((v, i) => (
+                            <div key={v.variableId}>
+                              <div className="flex items-center gap-1 mb-1">
+                                <span className="text-xs text-gray-300">{v.name}</span>
+                                {v.required && <span className="text-red-400 text-[10px]">*</span>}
+                              </div>
+                              <input
+                                type="text"
+                                value={v.value}
+                                onChange={(e) => {
+                                  setEditVariables(prev => prev.map((pv, pi) =>
+                                    pi === i ? { ...pv, value: e.target.value } : pv
+                                  ));
+                                }}
+                                className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded text-sm text-white focus:border-blue-500 outline-none"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => setEditingSchedule(null)}
+                        className="flex-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                      <button
+                        onClick={handleSaveEdit}
+                        disabled={!editName.trim() || !editCron.trim()}
+                        className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-sm"
+                      >
+                        {t('common.save')}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  /* ---- Normal Card View ---- */
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-white">
+                        {schedule.name}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleTrigger(schedule)}
+                          className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-green-400"
+                          title="Run Now"
+                        >
+                          <Play className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => startEditing(schedule)}
+                          className="p-1 hover:bg-gray-700 rounded text-gray-400"
+                          title="Edit"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleToggle(schedule)}
+                          className="p-1 hover:bg-gray-700 rounded"
+                          title={schedule.isEnabled ? 'Disable' : 'Enable'}
+                        >
+                          {schedule.isEnabled ? (
+                            <ToggleRight className="w-5 h-5 text-green-400" />
+                          ) : (
+                            <ToggleLeft className="w-5 h-5 text-gray-500" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(schedule)}
+                          className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
 
-                {/* Cron Expression */}
-                <div className="flex items-center gap-2 mb-2">
-                  {editingId === schedule.id ? (
-                    <input
-                      type="text"
-                      defaultValue={schedule.cronExpression}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleUpdateCron(schedule, e.currentTarget.value);
-                        } else if (e.key === 'Escape') {
-                          setEditingId(null);
-                        }
-                      }}
-                      className="flex-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-xs text-white font-mono focus:border-blue-500 outline-none"
-                      autoFocus
-                    />
-                  ) : (
-                    <code className="flex-1 text-xs text-gray-400 bg-gray-900 px-2 py-1 rounded font-mono">
+                    <code className="block text-xs text-gray-400 bg-gray-900 px-2 py-1 rounded font-mono mb-2">
                       {schedule.cronExpression}
                     </code>
-                  )}
-                  <button
-                    onClick={() => setEditingId(editingId === schedule.id ? null : schedule.id)}
-                    className="p-1 hover:bg-gray-700 rounded text-gray-400"
-                    title="Edit"
-                  >
-                    {editingId === schedule.id ? (
-                      <Check className="w-3 h-3" />
-                    ) : (
-                      <Edit2 className="w-3 h-3" />
-                    )}
-                  </button>
-                </div>
 
-                {/* Status & Next Run */}
-                <div className="flex items-center justify-between text-xs">
-                  <span className={`px-2 py-0.5 rounded ${
-                    schedule.isEnabled
-                      ? 'bg-green-500/20 text-green-400'
-                      : 'bg-gray-500/20 text-gray-400'
-                  }`}>
-                    {schedule.isEnabled ? t('schedule.active') : t('schedule.disabled')}
-                  </span>
-                  <div className="flex items-center gap-2 text-gray-500">
-                    {schedule.useSharedSession && (
-                      <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 text-[10px]">
-                        {t('schedule.shared')}
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={`px-2 py-0.5 rounded ${
+                        schedule.isEnabled
+                          ? 'bg-green-500/20 text-green-400'
+                          : 'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {schedule.isEnabled ? t('schedule.active') : t('schedule.disabled')}
                       </span>
+                      <div className="flex items-center gap-2 text-gray-500">
+                        {schedule.useSharedSession && (
+                          <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 text-[10px]">
+                            {t('schedule.shared')}
+                          </span>
+                        )}
+                        <span>{schedule.timeoutMinutes ?? 10}min</span>
+                        <span>{schedule.timezone}</span>
+                      </div>
+                    </div>
+
+                    {schedule.isEnabled && (
+                      <div className="mt-2 flex items-center gap-1 text-xs text-gray-400">
+                        <Clock className="w-3 h-3" />
+                        Next: {formatNextRun(schedule.nextRunAt)}
+                      </div>
                     )}
-                    <span>{schedule.timeoutMinutes ?? 10}min</span>
-                    <span>{schedule.timezone}</span>
-                  </div>
-                </div>
 
-                {/* Next Run */}
-                {schedule.isEnabled && (
-                  <div className="mt-2 flex items-center gap-1 text-xs text-gray-400">
-                    <Clock className="w-3 h-3" />
-                    Next: {formatNextRun(schedule.nextRunAt)}
-                  </div>
-                )}
+                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
+                      <span>{t('schedule.runs').replace('{n}', String(schedule.runCount))}</span>
+                      {schedule.failureCount > 0 && (
+                        <span className="text-red-400">{t('schedule.failures').replace('{n}', String(schedule.failureCount))}</span>
+                      )}
+                      <button
+                        onClick={() => handleViewRecords(schedule)}
+                        className="text-blue-400 hover:text-blue-300 ml-auto"
+                      >
+                        {t('schedule.viewHistory')}
+                      </button>
+                    </div>
 
-                {/* Stats */}
-                <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
-                  <span>{t('schedule.runs').replace('{n}', String(schedule.runCount))}</span>
-                  {schedule.failureCount > 0 && (
-                    <span className="text-red-400">{t('schedule.failures').replace('{n}', String(schedule.failureCount))}</span>
-                  )}
-                  <button
-                    onClick={() => handleViewRecords(schedule)}
-                    className="text-blue-400 hover:text-blue-300 ml-auto"
-                  >
-                    {t('schedule.viewHistory')}
-                  </button>
-                </div>
-
-                {Array.isArray(schedule.variables) && schedule.variables.length > 0 && (
-                  <ScheduleVariablesEditor
-                    variables={schedule.variables as Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>}
-                    onSave={(vars) => updateSchedule(schedule.id, { variables: vars })}
-                  />
+                    {Array.isArray(schedule.variables) && schedule.variables.length > 0 && (
+                      <ScheduleVariablesEditor
+                        variables={schedule.variables as Array<{ variableId: string; name: string; value: string; description?: string; required?: boolean }>}
+                        onSave={(vars) => updateSchedule(schedule.id, { variables: vars })}
+                      />
+                    )}
+                  </>
                 )}
               </div>
             ))}
