@@ -567,6 +567,7 @@ export class WorkflowExecutorV2 {
       workflowId?: string;
       timeoutMs?: number;
       triggerType?: string;
+      chatSessionId?: string;
     },
   ): AsyncGenerator<WorkflowProgressEvent> {
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -577,21 +578,47 @@ export class WorkflowExecutorV2 {
     // Create a chat session for this workflow execution so the conversation
     // is persisted and can be resumed later via the chat interface.
     let chatSessionId: string | undefined;
+    let claudeSessionId: string | undefined;
     try {
-      const chatSession = await prisma.chat_sessions.create({
-        data: {
-          organization_id: organizationId,
-          user_id: userId,
-          business_scope_id: scopeId,
-          source: 'workflow',
-          title: `Workflow: ${plan.title}`,
-          status: 'idle',
-        },
-      });
-      chatSessionId = chatSession.id;
-      console.log(`[workflow-v2] Created chat session ${chatSessionId} for workflow "${plan.title}"`);
+      if (options?.chatSessionId) {
+        const existing = await prisma.chat_sessions.findUnique({
+          where: { id: options.chatSessionId },
+        });
+        if (existing) {
+          chatSessionId = existing.id;
+          claudeSessionId = existing.claude_session_id ?? undefined;
+          console.log(`[workflow-v2] Reusing chat session ${chatSessionId} (claude_session=${claudeSessionId ?? 'none'}) for workflow "${plan.title}"`);
+        } else {
+          const chatSession = await prisma.chat_sessions.create({
+            data: {
+              id: options.chatSessionId,
+              organization_id: organizationId,
+              user_id: userId,
+              business_scope_id: scopeId,
+              source: 'workflow',
+              title: `Workflow: ${plan.title}`,
+              status: 'idle',
+            },
+          });
+          chatSessionId = chatSession.id;
+          console.log(`[workflow-v2] Created chat session ${chatSessionId} for workflow "${plan.title}"`);
+        }
+      } else {
+        const chatSession = await prisma.chat_sessions.create({
+          data: {
+            organization_id: organizationId,
+            user_id: userId,
+            business_scope_id: scopeId,
+            source: 'workflow',
+            title: `Workflow: ${plan.title}`,
+            status: 'idle',
+          },
+        });
+        chatSessionId = chatSession.id;
+        console.log(`[workflow-v2] Created chat session ${chatSessionId} for workflow "${plan.title}"`);
+      }
     } catch (err) {
-      console.warn('[workflow-v2] Failed to create chat session:', err);
+      console.warn('[workflow-v2] Failed to create/find chat session:', err);
     }
 
     // Create execution record
@@ -611,7 +638,7 @@ export class WorkflowExecutorV2 {
 
     // If no checkpoint nodes, execute the whole plan as one segment
     if (segments.length === 1 && !segments[0]!.checkpointNodeId) {
-      yield* this.executeSegment(plan, segments[0]!, organizationId, scopeId, userId, executionId, timeoutMs, undefined, undefined, chatSessionId);
+      yield* this.executeSegment(plan, segments[0]!, organizationId, scopeId, userId, executionId, timeoutMs, undefined, undefined, chatSessionId, claudeSessionId);
       if (executionId) await completeExecution(executionId, true);
       yield { type: 'done', chatSessionId, executionId };
       return;
@@ -622,7 +649,7 @@ export class WorkflowExecutorV2 {
     if (!firstSegment || firstSegment.nodes.length === 0) {
       // First node is a checkpoint — skip straight to creating the checkpoint
     } else {
-      yield* this.executeSegment(plan, firstSegment, organizationId, scopeId, userId, executionId, timeoutMs, undefined, undefined, chatSessionId);
+      yield* this.executeSegment(plan, firstSegment, organizationId, scopeId, userId, executionId, timeoutMs, undefined, undefined, chatSessionId, claudeSessionId);
     }
 
     // If segment 0 has a checkpoint, create it and pause
@@ -740,12 +767,21 @@ export class WorkflowExecutorV2 {
       };
     }
 
+    // Read claude_session_id for provider resume
+    const resumeChatSessionId = (execution as any).chat_session_id ?? undefined;
+    let resumeClaudeSessionId: string | undefined;
+    if (resumeChatSessionId) {
+      const session = await prisma.chat_sessions.findUnique({ where: { id: resumeChatSessionId } });
+      resumeClaudeSessionId = session?.claude_session_id ?? undefined;
+    }
+
     // Execute the segment with resume context
     yield* this.executeSegment(
       plan, segment, execution.organization_id, scopeId, execution.user_id,
       executionId, DEFAULT_TIMEOUT_MS, priorOutputs,
       checkpoint.nodeTitle ? { nodeTitle: checkpoint.nodeTitle, result: checkpoint.result || {} } : undefined,
-      (execution as any).chat_session_id ?? undefined,
+      resumeChatSessionId,
+      resumeClaudeSessionId,
     );
 
     // If this segment has a checkpoint, create it and pause again
@@ -795,6 +831,7 @@ export class WorkflowExecutorV2 {
     priorOutputs?: Record<string, { title: string; output: unknown }>,
     checkpointResult?: { nodeTitle: string; result: Record<string, unknown> },
     chatSessionId?: string,
+    claudeSessionId?: string,
   ): AsyncGenerator<WorkflowProgressEvent> {
     // Provision workspace
     let workspace;
@@ -903,6 +940,7 @@ export class WorkflowExecutorV2 {
         {
           agentId: agentConfig.id,
           sessionId: chatSessionId,
+          providerSessionId: claudeSessionId,
           message: userMessage,
           organizationId,
           userId,

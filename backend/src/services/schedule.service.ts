@@ -11,6 +11,23 @@ import { workflowRepository } from '../repositories/workflow.repository.js';
 import cronParser from 'cron-parser';
 import { workflowExecutorV2, type WorkflowV2Plan } from './workflow-executor-v2.js';
 import { scheduleQueueService } from './schedule-queue.service.js';
+import crypto from 'crypto';
+
+const SCHEDULE_SESSION_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+
+function deterministicUuid(name: string): string {
+  const namespaceBytes = Buffer.from(SCHEDULE_SESSION_NAMESPACE.replace(/-/g, ''), 'hex');
+  const hash = crypto.createHash('sha1')
+    .update(namespaceBytes)
+    .update(name)
+    .digest();
+  // Set version 5 (bits 4-7 of byte 6)
+  hash[6] = (hash[6]! & 0x0f) | 0x50;
+  // Set variant (bits 6-7 of byte 8)
+  hash[8] = (hash[8]! & 0x3f) | 0x80;
+  const hex = hash.subarray(0, 16).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
 /**
  * Build a WorkflowV2Plan from stored workflow data, matching the execute-v2 route.
@@ -362,10 +379,16 @@ class ScheduleService {
       throw new Error('Workflow has no business scope assigned');
     }
 
+    // Compute deterministic or fresh session ID
+    const useShared = schedule.use_shared_session ?? true;
+    const chatSessionId = useShared
+      ? deterministicUuid(`schedule:${schedule.id}`)
+      : crypto.randomUUID();
+
     // Execute asynchronously using V2 executor (same agentic path as manual Run)
     const creatorId = schedule.created_by || organizationId;
     const timeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
-    this.runV2Execution(plan, organizationId, scopeId, record.id, scheduleId, schedule.workflow_id, creatorId, timeoutMs)
+    this.runV2Execution(plan, organizationId, scopeId, record.id, scheduleId, schedule.workflow_id, creatorId, timeoutMs, chatSessionId)
       .catch(err => console.error(`[SCHEDULE] V2 execution error for schedule ${scheduleId}:`, err));
 
     // Update schedule stats
@@ -392,6 +415,7 @@ class ScheduleService {
     workflowId: string,
     userId: string,
     timeoutMs?: number,
+    chatSessionId?: string,
   ): Promise<void> {
     console.log(`[SCHEDULE] Starting V2 execution for schedule=${scheduleId} record=${recordId} scope=${scopeId}`);
     console.log(`[SCHEDULE] Plan: title="${plan.title}" nodes=${plan.nodes.length} edges=${plan.edges.length}`);
@@ -414,7 +438,7 @@ class ScheduleService {
         organizationId,
         scopeId,
         userId,
-        { workflowId, triggerType: 'scheduled', timeoutMs },
+        { workflowId, triggerType: 'scheduled', timeoutMs, chatSessionId },
       );
 
       let lastError: string | null = null;
@@ -660,9 +684,15 @@ class ScheduleService {
       // Build V2 plan (same as the manual Run button)
       const plan = buildV2Plan(workflow, schedule.variables as any[]);
 
+      // Compute deterministic or fresh session ID based on use_shared_session
+      const useShared = schedule.use_shared_session ?? true;
+      const chatSessionId = useShared
+        ? deterministicUuid(`schedule:${schedule.id}`)
+        : crypto.randomUUID();
+
       // Execute using runV2Execution (same as manual trigger — collects logs)
       const cronTimeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
-      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id, schedule.workflow_id, schedule.created_by || schedule.organization_id, cronTimeoutMs);
+      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id, schedule.workflow_id, schedule.created_by || schedule.organization_id, cronTimeoutMs, chatSessionId);
 
       // runV2Execution handles status updates and failure_count internally.
       // We just need to update run_count and create the next scheduled placeholder.
