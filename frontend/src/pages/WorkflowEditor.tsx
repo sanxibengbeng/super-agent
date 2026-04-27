@@ -1197,7 +1197,7 @@ export function WorkflowEditor() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    navigate(`/chat?session=${exec.chatSessionId}&at=${encodeURIComponent(exec.createdAt)}`);
+                                    navigate(`/chat?session=${exec.chatSessionId}${exec.createdAt ? `&at=${encodeURIComponent(exec.createdAt)}` : ''}`);
                                   }}
                                   className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-blue-400 transition-colors"
                                   title="View chat session"
