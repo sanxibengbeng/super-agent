@@ -86,6 +86,7 @@ export interface ScheduleConfig {
   timezone: string;
   isEnabled: boolean;
   variables: any[];
+  useSharedSession: boolean;
   nextRunAt: Date | null;
   lastRunAt: Date | null;
   runCount: number;
@@ -136,6 +137,7 @@ class ScheduleService {
       timezone?: string;
       variables?: any[];
       isEnabled?: boolean;
+      useSharedSession?: boolean;
       maxRetries?: number;
       timeoutMinutes?: number;
       createdBy?: string;
@@ -161,6 +163,7 @@ class ScheduleService {
         timezone: options.timezone || 'UTC',
         variables: options.variables || [],
         is_enabled: options.isEnabled || false,
+        use_shared_session: options.useSharedSession ?? true,
         next_run_at: nextRunAt,
         max_retries: options.maxRetries || 3,
         timeout_minutes: options.timeoutMinutes ?? 10,
@@ -198,6 +201,7 @@ class ScheduleService {
       timezone?: string;
       variables?: any[];
       isEnabled?: boolean;
+      useSharedSession?: boolean;
       maxRetries?: number;
       timeoutMinutes?: number;
     }
@@ -230,6 +234,7 @@ class ScheduleService {
         timezone: updates.timezone,
         variables: updates.variables,
         is_enabled: updates.isEnabled,
+        use_shared_session: updates.useSharedSession,
         max_retries: updates.maxRetries,
         timeout_minutes: updates.timeoutMinutes,
         next_run_at: nextRunAt,
@@ -736,6 +741,7 @@ class ScheduleService {
       timezone: schedule.timezone,
       isEnabled: schedule.is_enabled,
       variables: schedule.variables as any[],
+      useSharedSession: schedule.use_shared_session ?? true,
       nextRunAt: schedule.next_run_at,
       lastRunAt: schedule.last_run_at,
       runCount: schedule.run_count,

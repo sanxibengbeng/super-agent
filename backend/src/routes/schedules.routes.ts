@@ -13,12 +13,24 @@ import { AppError } from '../middleware/errorHandler.js';
 // Schemas
 // ============================================================================
 
+const workflowVariableSchema = z.object({
+  variableId: z.string(),
+  name: z.string(),
+  value: z.union([
+    z.string(),
+    z.array(z.object({ type: z.string(), text: z.string().optional() })),
+  ]),
+  description: z.string().optional(),
+  required: z.boolean().optional(),
+});
+
 const createScheduleSchema = z.object({
   name: z.string().min(1).max(255),
   cronExpression: z.string().min(1).max(100),
   timezone: z.string().max(50).optional(),
-  variables: z.array(z.any()).optional(),
+  variables: z.array(workflowVariableSchema).optional(),
   isEnabled: z.boolean().optional(),
+  useSharedSession: z.boolean().optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
   timeoutMinutes: z.number().int().min(1).max(1440).optional(),
 });
@@ -27,8 +39,9 @@ const updateScheduleSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   cronExpression: z.string().min(1).max(100).optional(),
   timezone: z.string().max(50).optional(),
-  variables: z.array(z.any()).optional(),
+  variables: z.array(workflowVariableSchema).optional(),
   isEnabled: z.boolean().optional(),
+  useSharedSession: z.boolean().optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
   timeoutMinutes: z.number().int().min(1).max(1440).optional(),
 });
@@ -101,6 +114,8 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
           cronExpression: s.cronExpression,
           timezone: s.timezone,
           isEnabled: s.isEnabled,
+          variables: s.variables,
+          useSharedSession: s.useSharedSession,
           timeoutMinutes: s.timeoutMinutes,
           nextRunAt: s.nextRunAt?.toISOString() || null,
           lastRunAt: s.lastRunAt?.toISOString() || null,
@@ -140,6 +155,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             timezone: { type: 'string', maxLength: 50 },
             variables: { type: 'array' },
             isEnabled: { type: 'boolean' },
+            useSharedSession: { type: 'boolean' },
             maxRetries: { type: 'integer', minimum: 0, maximum: 10 },
             timeoutMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
           },
@@ -220,6 +236,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
           timezone: schedule.timezone,
           isEnabled: schedule.isEnabled,
           variables: schedule.variables,
+          useSharedSession: schedule.useSharedSession,
           timeoutMinutes: schedule.timeoutMinutes,
           nextRunAt: schedule.nextRunAt?.toISOString() || null,
           lastRunAt: schedule.lastRunAt?.toISOString() || null,
@@ -259,6 +276,7 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             timezone: { type: 'string', maxLength: 50 },
             variables: { type: 'array' },
             isEnabled: { type: 'boolean' },
+            useSharedSession: { type: 'boolean' },
             maxRetries: { type: 'integer', minimum: 0, maximum: 10 },
             timeoutMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
           },
@@ -282,6 +300,8 @@ export async function schedulesRoutes(fastify: FastifyInstance): Promise<void> {
             cronExpression: schedule.cronExpression,
             timezone: schedule.timezone,
             isEnabled: schedule.isEnabled,
+            variables: schedule.variables,
+            useSharedSession: schedule.useSharedSession,
             timeoutMinutes: schedule.timeoutMinutes,
             nextRunAt: schedule.nextRunAt?.toISOString() || null,
           },
