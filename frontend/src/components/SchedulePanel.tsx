@@ -66,6 +66,7 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
   const [newCron, setNewCron] = useState('0 9 * * *');
   const [newTimezone, setNewTimezone] = useState('UTC');
   const [newTimeoutMinutes, setNewTimeoutMinutes] = useState(10);
+  const [newUseSharedSession, setNewUseSharedSession] = useState(true);
 
   useEffect(() => {
     loadSchedules(workflowId);
@@ -110,21 +111,23 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
 
   const handleCreate = async () => {
     if (!newName.trim() || !newCron.trim()) return;
-    
+
     setIsCreating(true);
     const result = await createSchedule(workflowId, {
       name: newName.trim(),
       cronExpression: newCron.trim(),
       timezone: newTimezone,
       timeoutMinutes: newTimeoutMinutes,
+      useSharedSession: newUseSharedSession,
       isEnabled: true,
     });
     setIsCreating(false);
-    
+
     if (result) {
       setShowCreateForm(false);
       setNewName('');
       setNewCron('0 9 * * *');
+      setNewUseSharedSession(true);
     }
   };
 
@@ -278,6 +281,23 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
               </div>
             </div>
 
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs text-gray-400">{t('schedule.sharedSession')}</label>
+                <span className="text-[10px] text-gray-500">{t('schedule.sharedSessionHint')}</span>
+              </div>
+              <button
+                onClick={() => setNewUseSharedSession(!newUseSharedSession)}
+                className="p-1"
+              >
+                {newUseSharedSession ? (
+                  <ToggleRight className="w-6 h-6 text-green-400" />
+                ) : (
+                  <ToggleLeft className="w-6 h-6 text-gray-500" />
+                )}
+              </button>
+            </div>
+
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setShowCreateForm(false)}
@@ -404,6 +424,11 @@ export function SchedulePanel({ workflowId, onClose }: SchedulePanelProps) {
                     {schedule.isEnabled ? t('schedule.active') : t('schedule.disabled')}
                   </span>
                   <div className="flex items-center gap-2 text-gray-500">
+                    {schedule.useSharedSession && (
+                      <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 text-[10px]">
+                        {t('schedule.shared')}
+                      </span>
+                    )}
                     <span>{schedule.timeoutMinutes ?? 10}min</span>
                     <span>{schedule.timezone}</span>
                   </div>

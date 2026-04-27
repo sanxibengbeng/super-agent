@@ -17,6 +17,7 @@ export interface Schedule {
   cronExpression: string;
   timezone: string;
   isEnabled: boolean;
+  useSharedSession: boolean;
   variables: unknown[];
   nextRunAt: string | null;
   lastRunAt: string | null;
@@ -54,6 +55,7 @@ export interface CreateScheduleRequest {
   timezone?: string;
   variables?: unknown[];
   isEnabled?: boolean;
+  useSharedSession?: boolean;
   maxRetries?: number;
   timeoutMinutes?: number;
 }
@@ -64,6 +66,7 @@ export interface UpdateScheduleRequest {
   timezone?: string;
   variables?: unknown[];
   isEnabled?: boolean;
+  useSharedSession?: boolean;
   maxRetries?: number;
   timeoutMinutes?: number;
 }
