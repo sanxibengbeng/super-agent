@@ -183,6 +183,32 @@ Schedule triggers (BullMQ cron)
 
 The agent's CLAUDE.md describes the current workflow task. The workspace filesystem contains whatever the agent wrote in previous runs (logs, summaries, data files). The agent is free to read these and use them to inform the current run. No structured convention imposed — the workflow's skill definitions and CLAUDE.md guide agent behavior.
 
+### 8. Scroll-to-Execution in Shared Chat Session
+
+When multiple executions share a single chat session, clicking "View Chat" from a specific execution should scroll to that execution's messages rather than the bottom of the conversation.
+
+**Navigation side** (ExecutionDetailModal + WorkflowEditor execution history):
+
+Append the execution's `created_at` timestamp to the URL:
+```
+/chat?session={chatSessionId}&at={execution.created_at}
+```
+
+**Chat page side** (Chat.tsx):
+
+Read the `at` query parameter. Pass it down to `MessageList` as `scrollToTimestamp`.
+
+**MessageList component**:
+
+- Each message element gets a ref via `data-msg-id={message.id}`
+- On mount, if `scrollToTimestamp` is provided:
+  1. Find the first message with `timestamp >= scrollToTimestamp`
+  2. Scroll to that element with `scrollIntoView({ behavior: 'smooth', block: 'start' })`
+  3. Optionally flash-highlight the message briefly to orient the user
+- If no `scrollToTimestamp` (normal chat), keep current behavior (scroll to bottom)
+
+This is a small, self-contained enhancement. The `at` param is ignored by all other pages, and the scroll-to-timestamp is a pure additive change to `MessageList`.
+
 ---
 
 ## Files to Modify
@@ -200,6 +226,10 @@ The agent's CLAUDE.md describes the current workflow task. The workspace filesys
 | File | Change |
 |------|--------|
 | `components/SchedulePanel.tsx` | Add `use_shared_session` toggle, add variables editing section |
+| `components/MessageList.tsx` | Add `scrollToTimestamp` prop, scroll to target message on mount |
+| `components/ExecutionDetailModal.tsx` | Append `&at={created_at}` to chat navigation URL |
+| `pages/WorkflowEditor.tsx` | Append `&at={created_at}` to chat navigation URL |
+| `pages/Chat.tsx` | Read `at` query param, pass to MessageList |
 | `services/api/restScheduleService.ts` | Add `useSharedSession` to interfaces |
 | `services/useSchedules.ts` | Pass through new fields |
 
