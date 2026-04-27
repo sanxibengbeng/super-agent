@@ -706,6 +706,7 @@ model workflow_schedules {
   timezone        String    @default("UTC") @db.VarChar(50)
   is_enabled      Boolean   @default(false)
   variables       Json      @default("[]")
+  use_shared_session Boolean @default(true)
   next_run_at     DateTime? @db.Timestamptz
   last_run_at     DateTime? @db.Timestamptz
   run_count       Int       @default(0)
