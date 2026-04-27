@@ -3198,6 +3198,30 @@ export const translations: TranslationData = {
     en: 'Every day at midnight',
     cn: '每天午夜'
   },
+  'schedule.sharedSession': {
+    en: 'Shared Session',
+    cn: '共享会话'
+  },
+  'schedule.sharedSessionHint': {
+    en: 'Reuse workspace across runs to accumulate knowledge',
+    cn: '跨次运行复用工作区以积累经验'
+  },
+  'schedule.shared': {
+    en: 'Shared',
+    cn: '共享'
+  },
+  'schedule.disableSharedSession': {
+    en: 'Disable shared session',
+    cn: '禁用共享会话'
+  },
+  'schedule.enableSharedSession': {
+    en: 'Enable shared session',
+    cn: '启用共享会话'
+  },
+  'schedule.variables': {
+    en: 'Variables',
+    cn: '变量'
+  },
 
   // MCP Servers Panel
   'mcpPanel.title': {
