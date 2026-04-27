@@ -8,6 +8,7 @@ import { useTranslation } from '@/i18n'
 interface MessageListProps {
   messages: Message[]
   isTyping?: boolean
+  scrollToTimestamp?: Date
 }
 
 function formatTime(date: Date): string {
@@ -118,13 +119,27 @@ function TypingIndicator() {
   )
 }
 
-export function MessageList({ messages, isTyping = false }: MessageListProps) {
+export function MessageList({ messages, isTyping = false, scrollToTimestamp }: MessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollTargetRef = useRef<HTMLDivElement>(null)
+  const hasScrolledToTarget = useRef(false)
   const { t } = useTranslation()
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isTyping])
+    if (scrollToTimestamp && !hasScrolledToTarget.current && messages.length > 0) {
+      const targetIdx = messages.findIndex(m => m.timestamp >= scrollToTimestamp)
+      if (targetIdx >= 0) {
+        hasScrolledToTarget.current = true
+        requestAnimationFrame(() => {
+          scrollTargetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        })
+        return
+      }
+    }
+    if (!scrollToTimestamp) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, isTyping, scrollToTimestamp])
 
   if (messages.length === 0 && !isTyping) {
     return (
@@ -134,16 +149,29 @@ export function MessageList({ messages, isTyping = false }: MessageListProps) {
     )
   }
 
+  const targetIdx = scrollToTimestamp
+    ? messages.findIndex(m => m.timestamp >= scrollToTimestamp)
+    : -1
+
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
       {messages.map((message, idx) => (
-        message.type === 'user'
-          ? <UserBubble key={message.id} message={message} />
-          : <AIBubble
-              key={message.id}
-              message={message}
-              isStreaming={isTyping && idx === messages.length - 1}
-            />
+        <div key={message.id} ref={idx === targetIdx ? scrollTargetRef : undefined}>
+          {idx === targetIdx && (
+            <div className="flex items-center gap-2 py-1 mb-2">
+              <div className="flex-1 border-t border-blue-500/30" />
+              <span className="text-[10px] text-blue-400 px-2">Execution start</span>
+              <div className="flex-1 border-t border-blue-500/30" />
+            </div>
+          )}
+          {message.type === 'user'
+            ? <UserBubble message={message} />
+            : <AIBubble
+                message={message}
+                isStreaming={isTyping && idx === messages.length - 1}
+              />
+          }
+        </div>
       ))}
       {isTyping && !messages.some(m => m.type === 'ai' && !m.content) && <TypingIndicator />}
       <div ref={messagesEndRef} />

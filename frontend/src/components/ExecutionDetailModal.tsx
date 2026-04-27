@@ -222,7 +222,7 @@ export function ExecutionDetailModal({ executionId, onClose }: Props) {
                   <button
                     onClick={() => {
                       onClose();
-                      navigate(`/chat?session=${detail.chat_session_id}`);
+                      navigate(`/chat?session=${detail.chat_session_id}&at=${encodeURIComponent(detail.created_at)}`);
                     }}
                     className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
                   >

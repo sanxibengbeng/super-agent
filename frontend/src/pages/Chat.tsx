@@ -1627,6 +1627,12 @@ function ChatInterfaceContent() {
     clearConversation,
   } = useContext(ChatContext)
 
+  // Parse scroll-to-timestamp from URL (for execution-linked sessions)
+  const scrollToTimestamp = useMemo(() => {
+    const at = new URLSearchParams(window.location.search).get('at')
+    return at ? new Date(at) : undefined
+  }, [])
+
   // Auto-send initial prompt from showcase "Run" button
   const autoPromptSent = useRef(false)
   useEffect(() => {
@@ -1939,7 +1945,7 @@ function ChatInterfaceContent() {
                   isLoading={quickQuestionsLoading}
                 />
               ) : (
-                <MessageList messages={messages} isTyping={isSending} />
+                <MessageList messages={messages} isTyping={isSending} scrollToTimestamp={scrollToTimestamp} />
               )}
               <WorkspaceActions
                 sessionId={backendSessionId}
