@@ -215,6 +215,8 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
         </div>
       )}
 
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto">
       {/* Create Form */}
       {showCreateForm && (
         <div className="mx-4 mt-4 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
@@ -354,7 +356,7 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="p-4 space-y-3">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
@@ -539,6 +541,7 @@ export function SchedulePanel({ workflowId, getStartNodeVariables, onClose }: Sc
             )}
           </>
         )}
+      </div>
       </div>
 
       {/* Execution Records */}
