@@ -93,7 +93,9 @@ export function SessionHistoryPanel({
   const [search, setSearch] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<CategoryKey>>(new Set())
   const hasAutoSelected = useRef(false)
+  const hasAutoCollapsed = useRef(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const activeSessionRef = useRef<HTMLDivElement>(null)
 
   const loadSessions = useCallback(async (silent = false) => {
     if (!businessScopeId) {
@@ -133,6 +135,26 @@ export function SessionHistoryPanel({
   }, [businessScopeId, activeSessionId, onSelectSession])
 
   useEffect(() => { void loadSessions() }, [loadSessions, refreshKey])
+
+  // When a deep-linked session is loaded, collapse categories that don't contain it
+  // and scroll the active session into view
+  useEffect(() => {
+    if (!activeSessionId || sessions.length === 0 || hasAutoCollapsed.current) return
+    hasAutoCollapsed.current = true
+
+    const activeCategory = sessions.find(s => s.id === activeSessionId)
+    if (activeCategory) {
+      const activeCat = categorizeSession(activeCategory)
+      const toCollapse = new Set<CategoryKey>(
+        CATEGORY_ORDER.filter(c => c !== activeCat),
+      )
+      setCollapsedCategories(toCollapse)
+    }
+
+    setTimeout(() => {
+      activeSessionRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 100)
+  }, [activeSessionId, sessions])
 
   // Auto-refresh when any session is generating (e.g. workflow in progress)
   const hasGenerating = sessions.some(s => s.status === 'generating')
@@ -240,6 +262,7 @@ export function SessionHistoryPanel({
   const renderSessionItem = (session: SessionItem) => (
     <div
       key={session.id}
+      ref={session.id === activeSessionId ? activeSessionRef : undefined}
       onClick={() => onSelectSession(session.id)}
       role="button"
       tabIndex={0}

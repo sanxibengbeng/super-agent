@@ -1269,7 +1269,7 @@ function UploadModal({ open, onClose, onConfirm }: {
 // Message Input
 // ============================================================================
 
-interface MessageInputProps {
+export interface MessageInputProps {
   onSend: (message: string, mentionAgentId?: string) => void
   onStop: () => void
   onUpload: (files: File[]) => void
@@ -1290,7 +1290,7 @@ function flattenFiles(nodes: FileNode[], prefix = ''): string[] {
   return result
 }
 
-function MessageInput({ onSend, onStop, onUpload, sessionId, businessScopeId, disabled = false, isSending = false }: MessageInputProps) {
+export function MessageInput({ onSend, onStop, onUpload, sessionId, businessScopeId, disabled = false, isSending = false }: MessageInputProps) {
   const { t } = useTranslation()
   const [input, setInput] = useState('')
   const [showUpload, setShowUpload] = useState(false)
