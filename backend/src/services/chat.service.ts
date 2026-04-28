@@ -820,6 +820,23 @@ export class ChatService {
       // Flush any sub-agents still tracked as busy (handles interrupted sessions)
       flushActiveSubAgents(hookCtx);
 
+      // If the agent wrote a scope-config.json, emit it before [DONE]
+      // so the scope copilot frontend can pick it up regardless of how the
+      // agent wrote the file (Write tool, Bash + python, etc.).
+      if (!clientDisconnected && workspacePath && options.source === 'scope_copilot') {
+        try {
+          const { readFile: rf } = await import('fs/promises');
+          const { join: pjoin } = await import('path');
+          const configContent = await rf(pjoin(workspacePath, 'scope-config.json'), 'utf-8');
+          const parsed = JSON.parse(configContent);
+          if (parsed.scope && Array.isArray(parsed.agents)) {
+            reply.raw.write(formatSSEEvent({
+              data: JSON.stringify({ type: 'scope_config', content: configContent }),
+            }));
+          }
+        } catch { /* no scope-config.json or invalid — skip */ }
+      }
+
       // Send [DONE] immediately so the frontend can stop the loading indicator.
       // All remaining cleanup (DB writes, traces) happens after.
       streamRegistry.complete(sessionId);

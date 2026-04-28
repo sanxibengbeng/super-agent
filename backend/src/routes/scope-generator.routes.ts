@@ -14,7 +14,7 @@ import type { ConversationEvent } from '../services/claude-agent.service.js';
 import { chatService } from '../services/chat.service.js';
 import { prisma } from '../config/database.js';
 import { computeScopeCopilotSessionId } from '../utils/deterministic-session.js';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 function formatSSEEvent(payload: { event?: string; data: string }): string {
@@ -608,7 +608,7 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         return reply.status(404).send({ error: 'Scope Copilot not configured for this organization' });
       }
 
-      // Write current scope config into workspace CLAUDE.md for copilot context
+      // Seed the copilot workspace with current scope state
       const targetScope = await prisma.business_scopes.findFirst({
         where: { id: scope_id, organization_id: orgId, deleted_at: null },
       });
@@ -622,26 +622,49 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         const cfgModule = await import('../config/index.js');
         const workspaceBase = cfgModule.config.claude?.workspaceBaseDir ?? '/tmp/workspaces';
         const workspacePath = join(workspaceBase, orgId, copilotScope.id, 'sessions', sessionId);
-        await mkdir(workspacePath, { recursive: true });
+        await mkdir(join(workspacePath, 'research'), { recursive: true });
+        await mkdir(join(workspacePath, 'drafts'), { recursive: true });
+
         const hasAgents = targetAgents.length > 0;
+        const scopeConfig = hasAgents ? {
+          scope: { name: targetScope.name, description: targetScope.description, icon: targetScope.icon, color: targetScope.color },
+          agents: targetAgents.map((a: { name: string; display_name: string; role: string | null; system_prompt: string | null }) => ({
+            name: a.name, displayName: a.display_name, role: a.role, systemPrompt: a.system_prompt,
+          })),
+        } : null;
+
+        // CLAUDE.md — scope context for the agent
         const claudeLines: string[] = [
           `# Scope: ${targetScope.name}`,
+          `Scope ID: ${scope_id}`,
           `Description: ${targetScope.description ?? 'Not set'}`,
           '',
+          hasAgents
+            ? `Status: Existing scope with ${targetAgents.length} agent(s) — operate in EDITING mode.`
+            : 'Status: Empty scope — operate in GENERATION mode.',
+          '',
+          'Read scope-config.json for the current configuration.',
         ];
-        if (hasAgents) {
-          claudeLines.push('## Current Configuration', '```json');
-          claudeLines.push(JSON.stringify({
-            scope: { name: targetScope.name, description: targetScope.description, icon: targetScope.icon, color: targetScope.color },
-            agents: targetAgents.map((a: { name: string; display_name: string; role: string | null; system_prompt: string | null }) => ({
-              name: a.name, displayName: a.display_name, role: a.role, systemPrompt: a.system_prompt,
-            })),
-          }, null, 2));
-          claudeLines.push('```');
-        } else {
-          claudeLines.push('## Status: Empty scope — generate from scratch');
-        }
         await writeFile(join(workspacePath, 'CLAUDE.md'), claudeLines.join('\n'));
+
+        // Seed scope-config.json so the agent can read it on first turn
+        if (scopeConfig) {
+          const configPath = join(workspacePath, 'scope-config.json');
+          // Only write if not already present (don't overwrite agent's edits)
+          try {
+            await import('fs/promises').then(fs => fs.access(configPath));
+          } catch {
+            await writeFile(configPath, JSON.stringify(scopeConfig, null, 2));
+          }
+        }
+
+        // Seed CHANGELOG.md if not present
+        const changelogPath = join(workspacePath, 'CHANGELOG.md');
+        try {
+          await import('fs/promises').then(fs => fs.access(changelogPath));
+        } catch {
+          await writeFile(changelogPath, `# Changelog\n\n## [v0] ${new Date().toISOString().slice(0, 16)}\n- Initial workspace setup\n`);
+        }
       }
 
       await chatService.streamChat(reply, orgId, userId, {
@@ -676,6 +699,49 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
       const messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
 
       return reply.send({ session_id: sessionId, messages: messages ?? [] });
+    },
+  );
+
+  /**
+   * GET /api/scope-generator/copilot/scope-config
+   * Read the latest scope-config.json from the copilot workspace.
+   */
+  fastify.get<{
+    Querystring: { scope_id: string };
+  }>(
+    '/copilot/scope-config',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { scope_id } = request.query;
+      const orgId = request.user!.orgId;
+
+      if (!scope_id) {
+        return reply.status(400).send({ error: 'scope_id is required' });
+      }
+
+      const sessionId = computeScopeCopilotSessionId(scope_id);
+
+      const copilotScope = await prisma.business_scopes.findFirst({
+        where: { organization_id: orgId, name: 'Scope Copilot', scope_type: 'digital_twin', deleted_at: null },
+      });
+      if (!copilotScope) {
+        return reply.status(404).send({ error: 'Scope Copilot not configured' });
+      }
+
+      const cfg = await import('../config/index.js');
+      const workspaceBase = cfg.config.claude?.workspaceBaseDir ?? '/tmp/workspaces';
+      const workspacePath = join(workspaceBase, orgId, copilotScope.id, 'sessions', sessionId);
+
+      try {
+        const content = await readFile(join(workspacePath, 'scope-config.json'), 'utf-8');
+        const parsed = JSON.parse(content);
+        if (!parsed.scope || !Array.isArray(parsed.agents)) {
+          return reply.status(404).send({ error: 'scope-config.json is not a valid scope config' });
+        }
+        return reply.send({ data: parsed });
+      } catch {
+        return reply.status(404).send({ error: 'No scope-config.json found in workspace' });
+      }
     },
   );
 

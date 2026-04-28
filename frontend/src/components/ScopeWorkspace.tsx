@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Pencil, Plus, Trash2, RefreshCw, ChevronDown, X, Clock, Cloud } from 'lucide-react'
+import { useState, useCallback } from 'react'
+import { Pencil, Plus, Trash2, RefreshCw, ChevronDown, X, Clock, Cloud, Download, Loader2 } from 'lucide-react'
 import type { GeneratedScope } from '@/services/scopeGeneratorService'
 import type { AgentDraft, VersionSnapshot } from '@/hooks/useScopeDraft'
 import type { ServerVersion } from '@/pages/ScopeCopilotPage'
@@ -23,6 +23,7 @@ interface ScopeWorkspaceProps {
   onEditComplete: () => void
   onLoadVersion: (version: number) => void
   onLoadServerVersion: () => void
+  onLoadWorkspaceConfig?: () => Promise<{ scope: GeneratedScope; agents: AgentDraft[] } | null>
   onStartOver: () => void
 }
 
@@ -220,17 +221,20 @@ function AgentDetailPanel({
 }
 
 function VersionBar({
-  currentVersion, versions, serverVersion, onLoadVersion, onLoadServerVersion, onStartOver,
+  currentVersion, versions, serverVersion, onLoadVersion, onLoadServerVersion, onLoadWorkspaceConfig, onStartOver,
 }: {
   currentVersion: VersionSnapshot | null
   versions: VersionSnapshot[]
   serverVersion: ServerVersion | null
   onLoadVersion: (version: number) => void
   onLoadServerVersion: () => void
+  onLoadWorkspaceConfig?: () => Promise<{ scope: import('@/services/scopeGeneratorService').GeneratedScope; agents: AgentDraft[] } | null>
   onStartOver: () => void
 }) {
   const [showHistory, setShowHistory] = useState(false)
   const [activeSource, setActiveSource] = useState<'local' | 'server'>('server')
+  const [wsLoading, setWsLoading] = useState(false)
+  const [wsError, setWsError] = useState<string | null>(null)
 
   const timeAgo = (ts: number) => {
     const sec = Math.floor((Date.now() - ts) / 1000)
@@ -252,6 +256,25 @@ function VersionBar({
 
   const serverAgentCount = serverVersion?.draft.agents.filter(a => !a._deleted).length ?? 0
 
+  const handleLoadWorkspace = useCallback(async () => {
+    if (!onLoadWorkspaceConfig || wsLoading) return
+    setWsLoading(true)
+    setWsError(null)
+    try {
+      const result = await onLoadWorkspaceConfig()
+      if (result) {
+        setActiveSource('local')
+        setShowHistory(false)
+      } else {
+        setWsError('No config in workspace')
+      }
+    } catch {
+      setWsError('Failed to load')
+    } finally {
+      setWsLoading(false)
+    }
+  }, [onLoadWorkspaceConfig, wsLoading])
+
   return (
     <div className="relative">
       {/* Version history panel */}
@@ -267,6 +290,31 @@ function VersionBar({
             </button>
           </div>
           <div className="p-2 space-y-1">
+            {/* Load from workspace */}
+            {onLoadWorkspaceConfig && (
+              <button
+                onClick={handleLoadWorkspace}
+                disabled={wsLoading}
+                className="w-full px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors text-left disabled:opacity-50"
+              >
+                <div className="flex items-center gap-2">
+                  {wsLoading
+                    ? <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
+                    : <Download className="w-3 h-3 text-emerald-400" />
+                  }
+                  <span className="text-xs font-bold text-emerald-300">
+                    {wsLoading ? 'Loading...' : 'Load from Workspace'}
+                  </span>
+                </div>
+                <div className="text-[10px] text-gray-500 mt-1">
+                  {wsError
+                    ? <span className="text-red-400">{wsError}</span>
+                    : 'Pull the latest scope-config.json from the AI workspace'
+                  }
+                </div>
+              </button>
+            )}
+
             {/* Server version */}
             {serverVersion && (
               <div
@@ -362,7 +410,7 @@ function VersionBar({
 export function ScopeWorkspace({
   scope, agents, activeAgents, versions, currentVersion, serverVersion,
   onUpdateScope, onUpdateAgent, onAddAgent, onRemoveAgent, onRestoreAgent,
-  onEditComplete, onLoadVersion, onLoadServerVersion, onStartOver,
+  onEditComplete, onLoadVersion, onLoadServerVersion, onLoadWorkspaceConfig, onStartOver,
 }: ScopeWorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selectedAgent = agents.find(a => a._localId === selectedId) ?? null
@@ -425,6 +473,7 @@ export function ScopeWorkspace({
         serverVersion={serverVersion}
         onLoadVersion={onLoadVersion}
         onLoadServerVersion={onLoadServerVersion}
+        onLoadWorkspaceConfig={onLoadWorkspaceConfig}
         onStartOver={onStartOver}
       />
     </div>

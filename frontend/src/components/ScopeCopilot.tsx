@@ -89,12 +89,20 @@ export function ScopeCopilot({
             const blocks = JSON.parse(m.content) as Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>
             for (const block of blocks) {
               if (block.type === 'text' && block.text) displayText += block.text
-              // Extract scope config from Write tool_use block
+              // Extract scope config from Write tool_use block.
+              // file_path may be sanitized to [server-path] by backend output sanitizer.
               if (block.type === 'tool_use' && block.name === 'Write' && block.input) {
-                const fp = block.input.file_path as string | undefined
-                const ct = block.input.content as string | undefined
-                if (fp?.includes('scope-config') && ct) {
-                  latestConfigJson = ct
+                const fp = (block.input.file_path as string) ?? ''
+                if (fp.includes('scope-config') || fp === '[server-path]') {
+                  const ct = block.input.content as string | undefined
+                  if (ct) {
+                    try {
+                      const parsed = JSON.parse(ct)
+                      if (parsed.scope && Array.isArray(parsed.agents)) {
+                        latestConfigJson = ct
+                      }
+                    } catch { /* not scope config */ }
+                  }
                 }
               }
             }
@@ -170,6 +178,7 @@ export function ScopeCopilot({
 
     const assistantId = assistantMsg.id
     let accumulated = ''
+    let scopeConfigJson = ''
 
     try {
       const token = getAuthToken()
@@ -207,24 +216,35 @@ export function ScopeCopilot({
           try {
             const event = JSON.parse(data) as {
               type: string
-              content?: Array<{ type: string; text?: string; name?: string; input?: unknown }>
+              content?: Array<{ type: string; text?: string; name?: string; input?: unknown }> | string
               message?: string
+            }
+            // Backend emits scope_config event after reading workspace file
+            if (event.type === 'scope_config' && typeof event.content === 'string') {
+              scopeConfigJson = event.content
             }
             if (event.type === 'assistant' && Array.isArray(event.content)) {
               for (const block of event.content) {
                 if (block.type === 'text' && block.text) {
                   accumulated += block.text
                 }
-                // Capture tool_use input — agent writes scope-config.json via Write tool
-                if (block.type === 'tool_use' && block.input) {
+                // Fallback: capture Write tool_use with scope-config content.
+                // file_path may be sanitized to [server-path] by backend output sanitizer.
+                if (block.type === 'tool_use' && block.name === 'Write' && block.input) {
                   const input = block.input as Record<string, unknown>
-                  // Write tool: { file_path: '...scope-config.json', content: '...' }
-                  if (
-                    typeof input.file_path === 'string' &&
-                    input.file_path.includes('scope-config') &&
-                    typeof input.content === 'string'
-                  ) {
-                    accumulated = input.content
+                  const fp = typeof input.file_path === 'string' ? input.file_path : ''
+                  if (fp.includes('scope-config') || fp === '[server-path]') {
+                    const raw = typeof input.content === 'string'
+                      ? input.content
+                      : (input.content && typeof input.content === 'object' ? JSON.stringify(input.content) : null)
+                    if (raw) {
+                      try {
+                        const parsed = JSON.parse(raw)
+                        if (parsed.scope && Array.isArray(parsed.agents)) {
+                          scopeConfigJson = raw
+                        }
+                      } catch { /* not scope config JSON */ }
+                    }
                   }
                 }
               }
@@ -238,10 +258,11 @@ export function ScopeCopilot({
         }
       }
 
-      // Try to extract scope config from accumulated text
+      // Try to extract scope config: prefer captured Write tool content, fall back to text
       let applied = false
+      const configSource = scopeConfigJson || accumulated
       try {
-        const config = parseScopeConfig(accumulated)
+        const config = parseScopeConfig(configSource)
         onApplyFullConfig(config)
         onCreateSnapshot(hasAgents ? 'AI modified' : 'AI generated', hasAgents ? 'ai-modified' : 'ai-generated')
         applied = true

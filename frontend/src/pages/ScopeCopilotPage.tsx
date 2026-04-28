@@ -125,6 +125,33 @@ export function ScopeCopilotPage() {
     }
   }
 
+  const handleLoadWorkspaceConfig = useCallback(async () => {
+    if (!scopeId) return null
+    const { getAuthToken } = await import('@/services/api/restClient')
+    const token = getAuthToken()
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+
+    const res = await fetch(
+      `${API_BASE_URL}/api/scope-generator/copilot/scope-config?scope_id=${scopeId}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+    )
+    if (!res.ok) return null
+
+    const { data } = await res.json() as { data: GeneratedScopeConfig }
+    if (!data?.scope || !Array.isArray(data.agents)) return null
+
+    const agents: AgentDraft[] = data.agents.map((a, i) => ({
+      ...a,
+      _localId: `ws-${i}-${Date.now()}`,
+      _deleted: false,
+    }))
+
+    applyFullConfig(data)
+    createSnapshot('Loaded from workspace', 'ai-generated')
+    showSuccess('Loaded', `Workspace config loaded (${agents.length} agents)`)
+    return { scope: data.scope, agents }
+  }, [scopeId, applyFullConfig, createSnapshot, showSuccess])
+
   const currentConfig: GeneratedScopeConfig | null = activeAgents.length > 0
     ? { scope: draft.scope, agents: activeAgents }
     : null
@@ -187,6 +214,7 @@ export function ScopeCopilotPage() {
             onEditComplete={() => createSnapshot('Manual edit', 'manual-edit')}
             onLoadVersion={loadVersion}
             onLoadServerVersion={loadServerVersion}
+            onLoadWorkspaceConfig={handleLoadWorkspaceConfig}
             onStartOver={startOver}
           />
         </div>

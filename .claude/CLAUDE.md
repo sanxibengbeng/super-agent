@@ -384,6 +384,22 @@ Skills are stored in S3 with metadata in PostgreSQL. Loaded into agent workspace
 
 ---
 
+## Architecture Principles
+
+### Chat Component Reuse (Critical)
+All chat-like UIs in the app MUST reuse the shared components from `frontend/src/components/chat/` and `ChatContext.tsx`. This includes: scope copilot, workflow copilot, project twin sessions, and any future conversational UIs. Never create standalone chat implementations — styling, file preview, streaming, and message rendering must all come from the shared base.
+
+### Source-Based Session Types
+Chat sessions use a `source` enum to differentiate business contexts (chat, workflow, project, scope-copilot, etc.). Don't modify existing source values. Add new enum values for new features. Business logic routes from the source to determine which external entity table to join.
+
+### Upsert Pattern for Copilot-Created Entities
+When AI copilots (scope copilot, workflow copilot) create resources like agents or skills, use upsert-by-name within the scope rather than failing on name collision. Users iterate via copilot and expect saves to work repeatedly.
+
+### Workspace File Persistence
+Copilot sessions should persist generated artifacts (scope configs, workflow definitions) to workspace files, not just chat output. This enables history tracking, version comparison, and resumption across sessions.
+
+---
+
 ## Coding Standards
 
 ### General

@@ -19,6 +19,7 @@ import { tmpdir } from 'os';
 import { existsSync } from 'fs';
 import { businessScopeService } from './businessScope.service.js';
 import { agentService } from './agent.service.js';
+import { agentRepository } from '../repositories/agent.repository.js';
 import { skillService } from './skill.service.js';
 
 // ---------------------------------------------------------------------------
@@ -778,23 +779,38 @@ QUALITY CHECK — before outputting, verify:
           organizationId,
         );
       } else {
-        agent = await agentService.createAgent(
-          {
-            name: agentDef.name,
-            display_name: agentDef.displayName,
-            role: agentDef.role,
-            business_scope_id: scopeId,
-            system_prompt: agentDef.systemPrompt,
-            status: 'active',
-            metrics: {},
-            tools: [],
-            scope: [],
-            model_config: {},
-            origin: 'scope_generation',
-            is_shared: false,
-          },
-          organizationId,
-        );
+        // Check if an agent with this name already exists in the scope — update instead of create
+        const existingByName = await agentRepository.findByName(organizationId, agentDef.name, scopeId);
+        if (existingByName) {
+          agent = await agentService.updateAgent(
+            existingByName.id,
+            {
+              name: agentDef.name,
+              display_name: agentDef.displayName,
+              role: agentDef.role,
+              system_prompt: agentDef.systemPrompt,
+            },
+            organizationId,
+          );
+        } else {
+          agent = await agentService.createAgent(
+            {
+              name: agentDef.name,
+              display_name: agentDef.displayName,
+              role: agentDef.role,
+              business_scope_id: scopeId,
+              system_prompt: agentDef.systemPrompt,
+              status: 'active',
+              metrics: {},
+              tools: [],
+              scope: [],
+              model_config: {},
+              origin: 'scope_generation',
+              is_shared: false,
+            },
+            organizationId,
+          );
+        }
       }
 
       // 3. Upsert skills
