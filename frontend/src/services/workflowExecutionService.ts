@@ -272,6 +272,8 @@ export const RestWorkflowExecutionService = {
         status: string;
         title?: string;
         trigger_type?: string;
+        schedule_name?: string;
+        schedule_run_count?: number;
         chat_session_id?: string;
         error_message?: string;
         started_at: string;
@@ -297,6 +299,8 @@ export const RestWorkflowExecutionService = {
       canvasId: exec.workflow_id,
       title: exec.title,
       triggerType: exec.trigger_type,
+      scheduleName: exec.schedule_name,
+      scheduleRunCount: exec.schedule_run_count,
       chatSessionId: exec.chat_session_id,
       status: exec.status as WorkflowExecution['status'],
       nodeExecutions: exec.node_executions?.map(ne => ({

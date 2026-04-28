@@ -91,7 +91,8 @@ class ScheduleQueueService {
     organizationId: string,
     cronExpression: string,
     timezone: string,
-    isEnabled: boolean
+    isEnabled: boolean,
+    nextRunAt?: Date,
   ): Promise<void> {
     if (!this.queue) {
       throw new Error('Schedule queue not initialized');
@@ -107,15 +108,21 @@ class ScheduleQueueService {
       return;
     }
 
-    // Add new repeatable job
+    // Add new repeatable job with startDate to prevent BullMQ from firing
+    // "missed" iterations when re-registering jobs (e.g. on server restart)
+    const repeatOpts: Record<string, unknown> = {
+      pattern: cronExpression,
+      tz: timezone,
+    };
+    if (nextRunAt && nextRunAt > new Date()) {
+      repeatOpts.startDate = nextRunAt;
+    }
+
     await this.queue.add(
       'trigger',
       { scheduleId, workflowId, organizationId },
       {
-        repeat: {
-          pattern: cronExpression,
-          tz: timezone,
-        },
+        repeat: repeatOpts as any,
         jobId: jobKey,
       }
     );
@@ -135,16 +142,17 @@ class ScheduleQueueService {
 
     const repeatableJobs = await this.queue.getRepeatableJobs();
     const jobKey = `schedule:${scheduleId}`;
+    let removed = false;
 
     for (const job of repeatableJobs) {
       if (job.id === jobKey || job.key.includes(scheduleId)) {
         await this.queue.removeRepeatableByKey(job.key);
-        console.log(`[SCHEDULE_QUEUE] Removed repeatable job for schedule ${scheduleId}`);
-        return true;
+        console.log(`[SCHEDULE_QUEUE] Removed repeatable job for schedule ${scheduleId} (key=${job.key})`);
+        removed = true;
       }
     }
 
-    return false;
+    return removed;
   }
 
   /**
@@ -182,6 +190,7 @@ class ScheduleQueueService {
           organization_id: true,
           cron_expression: true,
           timezone: true,
+          next_run_at: true,
         },
       });
 
@@ -195,7 +204,8 @@ class ScheduleQueueService {
             schedule.organization_id,
             schedule.cron_expression,
             schedule.timezone,
-            true
+            true,
+            schedule.next_run_at ?? undefined,
           );
         } catch (err: any) {
           console.error(`[SCHEDULE_QUEUE] Failed to sync schedule ${schedule.id}:`, err.message);

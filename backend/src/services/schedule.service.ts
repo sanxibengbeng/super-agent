@@ -195,7 +195,8 @@ class ScheduleService {
       organizationId,
       options.cronExpression,
       options.timezone || 'UTC',
-      options.isEnabled || false
+      options.isEnabled || false,
+      nextRunAt ?? undefined,
     );
 
     // If enabled, create the first scheduled record (for UI display)
@@ -265,7 +266,8 @@ class ScheduleService {
       organizationId,
       newCron,
       newTimezone,
-      newEnabled
+      newEnabled,
+      nextRunAt ?? undefined,
     );
 
     // Update or create scheduled record (for UI display)
@@ -605,6 +607,35 @@ class ScheduleService {
 
     if (!schedule.is_enabled) {
       console.log(`[SCHEDULE] Schedule ${scheduleId} is disabled, skipping execution`);
+      return;
+    }
+
+    if (schedule.next_run_at && schedule.next_run_at > new Date()) {
+      console.log(`[SCHEDULE] Schedule ${scheduleId} not due yet (next_run_at=${schedule.next_run_at.toISOString()}), skipping`);
+      return;
+    }
+
+    const timeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
+    const staleThreshold = new Date(Date.now() - timeoutMs);
+
+    await prisma.schedule_execution_records.updateMany({
+      where: {
+        schedule_id: scheduleId,
+        status: 'running',
+        triggered_at: { lt: staleThreshold },
+      },
+      data: {
+        status: 'failed',
+        error_message: 'Timed out (stale record cleanup)',
+        completed_at: new Date(),
+      },
+    });
+
+    const runningRecord = await prisma.schedule_execution_records.findFirst({
+      where: { schedule_id: scheduleId, status: 'running' },
+    });
+    if (runningRecord) {
+      console.log(`[SCHEDULE] Schedule ${scheduleId} already has a running execution (record=${runningRecord.id}), skipping`);
       return;
     }
 

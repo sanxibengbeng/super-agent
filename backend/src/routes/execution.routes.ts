@@ -453,6 +453,8 @@ export async function executionRoutes(fastify: FastifyInstance): Promise<void> {
                     started_at: { type: 'string' },
                     completed_at: { type: 'string', nullable: true },
                     created_at: { type: 'string' },
+                    schedule_name: { type: 'string', nullable: true },
+                    schedule_run_count: { type: 'integer', nullable: true },
                     node_executions: {
                       type: 'array',
                       items: {
@@ -495,7 +497,19 @@ export async function executionRoutes(fastify: FastifyInstance): Promise<void> {
         { page, limit, userId: isAdmin ? undefined : request.user!.id }
       );
 
-      return reply.status(200).send(result);
+      const data = result.data.map((exec) => {
+        const raw = exec as unknown as Record<string, unknown>;
+        const records = raw.schedule_execution_records as Array<{ schedule: { name: string; run_count: number } }> | undefined;
+        const schedule = records?.[0]?.schedule;
+        const { schedule_execution_records: _, ...rest } = raw;
+        return {
+          ...rest,
+          schedule_name: schedule?.name ?? null,
+          schedule_run_count: schedule?.run_count ?? null,
+        };
+      });
+
+      return reply.status(200).send({ data, pagination: result.pagination });
     }
   );
 }

@@ -352,6 +352,17 @@ export class WorkflowExecutionRepository {
           },
           orderBy: { created_at: 'asc' },
         },
+        schedule_execution_records: {
+          select: {
+            schedule: {
+              select: {
+                name: true,
+                run_count: true,
+              },
+            },
+          },
+          take: 1,
+        },
       },
       orderBy: {
         created_at: 'desc',

@@ -127,6 +127,10 @@ export interface WorkflowExecution {
   nodeExecutions?: WorkflowNodeExecution[];
   /** Trigger type (manual, scheduled, webhook, api) */
   triggerType?: string;
+  /** Schedule name (for scheduled executions) */
+  scheduleName?: string;
+  /** Schedule total run count */
+  scheduleRunCount?: number;
   /** Associated chat session ID for conversation continuity */
   chatSessionId?: string;
   /** Error message (if failed) */

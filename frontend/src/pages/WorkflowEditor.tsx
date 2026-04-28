@@ -1152,8 +1152,10 @@ export function WorkflowEditor() {
                             onClick={() => setSelectedExecutionId(exec.executionId)}
                           >
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-medium text-white">
-                                {exec.title || 'Execution'}
+                              <span className="text-xs font-medium text-white truncate mr-2">
+                                {exec.scheduleName
+                                  ? `${exec.scheduleName}${exec.scheduleRunCount ? ` (${exec.scheduleRunCount})` : ''}`
+                                  : exec.title || 'Execution'}
                               </span>
                               <span className={`text-xs px-1.5 py-0.5 rounded ${
                                 exec.status === 'finish'
