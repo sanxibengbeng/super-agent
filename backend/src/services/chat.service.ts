@@ -967,6 +967,7 @@ export class ChatService {
       ? agentsWithSkills.find(a => a.id === selectedAgentId)
       : null;
 
+    const selectedModelConfig = selectedAgent?.model_config as Record<string, unknown> | null;
     const agentConfig: AgentConfig = {
       id: selectedAgent?.id ?? scopeId,
       name: selectedAgent?.name ?? scopeForWorkspace.name,
@@ -975,6 +976,7 @@ export class ChatService {
       organizationId,
       skillIds: scopeForWorkspace.skills.map(s => s.id),
       mcpServerIds: [],
+      model: (selectedModelConfig?.model as string) ?? undefined,
     };
 
     const subAgentInfoMap = new Map(agentsWithSkills.map(a => {
@@ -1132,6 +1134,7 @@ export class ChatService {
 
     const workspacePath = await this.workspaceManager.ensureWorkspace(agent.id, skills);
 
+    const agentModelConfig = agent.model_config as Record<string, unknown> | null;
     const agentConfig: AgentConfig = {
       id: agent.id,
       name: agent.name,
@@ -1140,6 +1143,7 @@ export class ChatService {
       organizationId,
       skillIds: skills.map(s => s.id),
       mcpServerIds: [],
+      model: (agentModelConfig?.model as string) ?? undefined,
     };
 
     return { sessionId, workspacePath, agentConfig, skills, claudeSessionId };

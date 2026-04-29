@@ -168,6 +168,7 @@ export interface AgentConfig {
   organizationId: string;
   skillIds: string[];
   mcpServerIds: string[];
+  model?: string;
 }
 
 export type ContentBlock =
@@ -370,7 +371,7 @@ export class ClaudeAgentService {
     mcpServers: Record<string, AnyMCPServerConfig>, resumeSessionId?: string, abortController?: AbortController, userId?: string,
     pluginPaths?: string[],
   ): ClaudeCodeOptions {
-    let model = config.claude.model;
+    let model = agentConfig.model ?? config.claude.model;
     if (config.claude.useBedrock) model = getBedrockModelId(model);
     const preToolUseHooks: SDKHookCallbackMatcher[] = [{ hooks: [dangerousCommandBlocker, binaryFileReadBlocker] }];
     if (skillNames.length > 0) preToolUseHooks.push({ hooks: [createSkillAccessChecker(skillNames)] });
@@ -520,7 +521,13 @@ export class ClaudeAgentService {
 
         return { type: 'result', sessionId: r.session_id ?? sessionId, durationMs: r.duration_ms, numTurns: r.num_turns, tokenUsage };
       }
-      case 'system': return null;
+      case 'system': {
+        const sysMsg = message as SDKSystemMessage;
+        if (sysMsg.subtype === 'local_command_output') {
+          return { type: 'assistant', sessionId, content: [{ type: 'text', text: sysMsg.content as string ?? '' }] };
+        }
+        return null;
+      }
       default: return null;
     }
   }

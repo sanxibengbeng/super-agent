@@ -17,6 +17,8 @@ export interface AgentPayload {
   mcp_servers?: Record<string, unknown>;
   allowed_tools?: string[];
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** Claude model ID to use (e.g. us.anthropic.claude-sonnet-4-6) */
+  model?: string;
   /** S3 bucket where the backend uploaded the full workspace */
   workspace_s3_bucket?: string;
   /** S3 region for the workspace bucket */

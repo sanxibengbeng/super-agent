@@ -127,6 +127,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       org_id: options.organizationId,
       agent_id: options.agentId,
       system_prompt: agentConfig.systemPrompt ?? undefined,
+      model: agentConfig.model ?? undefined,
       mcp_servers: serializableMcpServers,
       workspace_s3_bucket: this.workspaceBucket,
       workspace_s3_region: config.agentcore.workspaceS3Region,
