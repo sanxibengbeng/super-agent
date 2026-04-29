@@ -234,6 +234,20 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
       try {
         if (backendSessionId && shouldUseRestApi()) {
           RestChatService.setCurrentSessionId(backendSessionId)
+
+          // When loading a session from URL without explicit scope, resolve it from session metadata
+          if (initialSessionId && !initialScopeId) {
+            const detail = await RestChatService.getSessionDetail(backendSessionId)
+            if (detail?.business_scope_id) {
+              setSelectedBusinessScopeIdState(detail.business_scope_id)
+              localStorage.setItem(CHAT_SCOPE_STORAGE_KEY, detail.business_scope_id)
+            }
+            if (detail?.agent_id && !initialAgentId) {
+              setSelectedAgentIdState(detail.agent_id)
+              localStorage.setItem(CHAT_AGENT_STORAGE_KEY, detail.agent_id)
+            }
+          }
+
           const existingState = sessionStreamManager.getSession(backendSessionId)
           if (existingState.messages.length === 0) {
             const history = await RestChatService.getSessionHistory(backendSessionId)

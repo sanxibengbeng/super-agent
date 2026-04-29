@@ -379,6 +379,17 @@ export const RestChatService = {
   },
 
   /**
+   * Gets session metadata (scope, agent, status, etc.)
+   */
+  async getSessionDetail(sessionId: string): Promise<ApiChatSession | null> {
+    try {
+      return await restClient.get<ApiChatSession>(`/api/chat/sessions/${sessionId}`);
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Gets chat history for a specific session by its backend ID
    */
   async getSessionHistory(sessionId: string): Promise<Message[]> {
