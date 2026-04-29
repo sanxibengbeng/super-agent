@@ -825,20 +825,28 @@ QUALITY CHECK — before outputting, verify:
         }
 
         if (skillId) {
-          // Update existing skill metadata
           await skillService.updateSkill(organizationId, skillId, {
             name: skillDef.name,
             description: skillDef.description,
             metadata: { body: skillDef.body, generatedBy: 'scope-generator' },
           });
         } else {
-          const skill = await skillService.createSkill(organizationId, {
-            name: skillDef.name,
-            display_name: skillDef.name.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
-            description: skillDef.description,
-            metadata: { body: skillDef.body, generatedBy: 'scope-generator' },
-          });
-          await skillService.assignSkillToAgent(organizationId, agent.id, skill.id);
+          const existingByName = await skillService.findByName(organizationId, skillDef.name);
+          if (existingByName) {
+            await skillService.updateSkill(organizationId, existingByName.id, {
+              description: skillDef.description,
+              metadata: { body: skillDef.body, generatedBy: 'scope-generator' },
+            });
+            await skillService.assignSkillToAgent(organizationId, agent.id, existingByName.id).catch(() => {});
+          } else {
+            const skill = await skillService.createSkill(organizationId, {
+              name: skillDef.name,
+              display_name: skillDef.name.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+              description: skillDef.description,
+              metadata: { body: skillDef.body, generatedBy: 'scope-generator' },
+            });
+            await skillService.assignSkillToAgent(organizationId, agent.id, skill.id);
+          }
         }
       }
 
