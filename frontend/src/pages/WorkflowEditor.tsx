@@ -23,6 +23,8 @@ import {
   PanelLeftClose,
   Pencil,
   MessageSquare,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useWorkflows, useWorkflowExecution } from '@/services';
@@ -38,7 +40,9 @@ import { SchedulePanel } from '@/components/SchedulePanel';
 import type { CanvasNode, CanvasEdge, CanvasData, CanvasNodeType } from '@/types/canvas';
 import type { NodeExecutionState } from '@/services/useWorkflowExecution';
 import type { Workflow as WorkflowType, WorkflowImportResult } from '@/types';
+import { parseWorkflowPlan } from '@/types/workflow-plan';
 import type { WorkflowVariable } from '@/types/workflow-plan';
+import { workflowPlanToCanvasData } from '@/lib/workflow-plan/convert';
 import { createCanvasNode } from '@/lib/canvas/nodes';
 import { getAuthToken } from '@/services/api/restClient';
 import { ExecutionDetailModal } from '@/components/ExecutionDetailModal';
@@ -255,6 +259,7 @@ export function WorkflowEditor() {
   const [deletingSidebarName, setDeletingSidebarName] = useState<string | null>(null);
 
   const copilotRef = useRef<WorkflowCopilotHandle>(null);
+  const [loadFromWorkspaceStatus, setLoadFromWorkspaceStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const isLoading = workflowsLoading || scopesLoading;
 
   // Set default active scope when scopes load
@@ -957,6 +962,58 @@ export function WorkflowEditor() {
 
                     {isVersionDropdownOpen && (
                       <div className="absolute top-full left-0 mt-1 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-10 py-1">
+                        {/* Load from Workspace */}
+                        <button
+                          onClick={async () => {
+                            if (!selectedWorkflow) return
+                            const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+                            const token = getAuthToken()
+                            setLoadFromWorkspaceStatus('loading')
+                            try {
+                              const version = selectedWorkflow.version ?? '1'
+                              const res = await fetch(
+                                `${API_BASE}/api/workflows/copilot/workflow-config?workflow_id=${selectedWorkflow.id}&version=${encodeURIComponent(version)}`,
+                                { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+                              )
+                              if (!res.ok) throw new Error('not found')
+                              const cfgData = await res.json() as { data: unknown }
+                              const parsed = parseWorkflowPlan(cfgData.data)
+                              if (!parsed.success || !parsed.data) throw new Error('invalid')
+                              const canvas = workflowPlanToCanvasData(parsed.data)
+                              await handleGenerateWorkflow(canvas, parsed.data.title, parsed.data.variables)
+                              setLoadFromWorkspaceStatus('success')
+                              setIsVersionDropdownOpen(false)
+                            } catch {
+                              setLoadFromWorkspaceStatus('error')
+                            }
+                            setTimeout(() => setLoadFromWorkspaceStatus('idle'), 2000)
+                          }}
+                          disabled={loadFromWorkspaceStatus === 'loading'}
+                          className="w-full px-3 py-2 mx-1 mb-1 rounded-md bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors text-left disabled:opacity-50"
+                          style={{ width: 'calc(100% - 8px)' }}
+                        >
+                          <div className="flex items-center gap-2">
+                            {loadFromWorkspaceStatus === 'loading' ? (
+                              <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
+                            ) : loadFromWorkspaceStatus === 'success' ? (
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            ) : loadFromWorkspaceStatus === 'error' ? (
+                              <RefreshCw className="w-3 h-3 text-red-400" />
+                            ) : (
+                              <RefreshCw className="w-3 h-3 text-emerald-400" />
+                            )}
+                            <span className="text-xs font-bold text-emerald-300">
+                              {loadFromWorkspaceStatus === 'loading' ? 'Loading...' :
+                               loadFromWorkspaceStatus === 'success' ? 'Loaded!' :
+                               loadFromWorkspaceStatus === 'error' ? 'No workflow in workspace' :
+                               'Load from Workspace'}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            Pull the latest workflow.json from the AI session
+                          </div>
+                        </button>
+                        <div className="border-t border-gray-700 mx-1 mb-1" />
                         {workflowVersions.map((version: WorkflowType) => (
                           <button
                             key={version.id}

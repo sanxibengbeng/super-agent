@@ -56,6 +56,8 @@ export interface WorkflowCopilotHandle {
   startExecution: () => string
   pushExecutionEvent: (msgId: string, event: { type: string; taskId?: string; taskTitle?: string; message?: string; content?: unknown }) => void
   finishExecution: (msgId: string, success: boolean, message?: string) => void
+  /** Pull the latest workflow.json from the copilot workspace and apply it to the canvas */
+  loadFromWorkspace: () => Promise<boolean>
 }
 
 interface WorkflowCopilotProps {
@@ -499,7 +501,26 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
         return prev.map(m => m.id === msgId ? { ...m, content: summary, status: success ? 'done' : 'error' } : m)
       })
     },
-  }), [createMessage, updateMessage, appendStep])
+    async loadFromWorkspace() {
+      if (!workflowId || !onGenerateWorkflow) return false
+      const version = workflowVersion ?? '1'
+      const token = getAuthToken()
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/workflows/copilot/workflow-config?workflow_id=${workflowId}&version=${encodeURIComponent(version)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        )
+        if (!res.ok) return false
+        const cfgData = await res.json() as { data: { title: string; tasks: unknown[]; variables?: unknown[] } }
+        const plan = parseWorkflowPlan(JSON.stringify(cfgData.data))
+        const canvasData = workflowPlanToCanvasData(plan)
+        onGenerateWorkflow(canvasData, plan.title, plan.variables)
+        return true
+      } catch {
+        return false
+      }
+    },
+  }), [createMessage, updateMessage, appendStep, workflowId, workflowVersion, onGenerateWorkflow])
 
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault()
