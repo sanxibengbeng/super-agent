@@ -43,7 +43,7 @@ function createFileChangeHook(bucket: string, prefix: string) {
     const key = `${prefix}${relativePath}`;
 
     try {
-      if (!fs.existsSync(filePath)) return {}; // file was deleted by the tool
+      if (!fs.existsSync(filePath)) return {};
       const content = fs.readFileSync(filePath);
       await s3.send(new PutObjectCommand({
         Bucket: bucket,
@@ -61,44 +61,62 @@ function createFileChangeHook(bucket: string, prefix: string) {
 }
 
 /**
+ * PostToolUse hook for Bash: after a Bash command runs, do a full workspace
+ * sync since Bash can create/modify/delete arbitrary files that we can't
+ * track individually (mkdir, npm init, cp, mv, etc.).
+ */
+function createBashSyncHook(bucket: string, prefix: string) {
+  let lastSyncTime = 0;
+  const MIN_INTERVAL_MS = 2000;
+
+  return async (_input: any, _toolUseId: string | undefined) => {
+    const now = Date.now();
+    if (now - lastSyncTime < MIN_INTERVAL_MS) return {};
+    lastSyncTime = now;
+
+    try {
+      const count = await syncWorkspaceToS3(s3, bucket, prefix);
+      if (count > 0) {
+        console.log(`[hook:PostBash] Synced ${count} files → s3://${bucket}/${prefix}`);
+      }
+    } catch (err) {
+      console.warn('[hook:PostBash] Workspace sync failed:', err);
+    }
+    return {};
+  };
+}
+
+/**
  * Stop hook: after agent finishes, do a full workspace sync to S3.
  * Catches files created by Bash tool or other indirect means.
  * Also extracts git diff and uploads it as __diff__.json.
  */
 function createStopHook(bucket: string, prefix: string) {
   return async () => {
-    // Fire-and-forget: run diff extraction + full S3 sync in the background
-    // so the agent result is returned immediately without waiting for sync.
-    // PostToolUse hooks already handle incremental file sync for Write/Edit,
-    // and the frontend reads files directly from the container while it's alive.
-    // This full sync is just a safety net for files created via Bash or other
-    // indirect means.
-    (async () => {
-      try {
-        extractAndUploadDiff(bucket, prefix);
-      } catch (err) {
-        console.warn('[hook:Stop] Diff extraction failed:', err);
-      }
+    try {
+      extractAndUploadDiff(bucket, prefix);
+    } catch (err) {
+      console.warn('[hook:Stop] Diff extraction failed:', err);
+    }
 
-      try {
-        const count = await syncWorkspaceToS3(s3, bucket, prefix);
-        if (count > 0) {
-          console.log(`[hook:Stop] Final sync: ${count} files → s3://${bucket}/${prefix}`);
-        }
-      } catch (err) {
-        console.warn('[hook:Stop] Final sync failed:', err);
+    try {
+      const count = await syncWorkspaceToS3(s3, bucket, prefix);
+      if (count > 0) {
+        console.log(`[hook:Stop] Final sync: ${count} files → s3://${bucket}/${prefix}`);
       }
+    } catch (err) {
+      console.warn('[hook:Stop] Final sync failed:', err);
+    }
 
-      // 3. Sync ~/.claude to S3 (session resume data, projects state)
-      try {
-        const count = await syncClaudeHomeToS3(s3, bucket, prefix);
-        if (count > 0) {
-          console.log(`[hook:Stop] ~/.claude sync: ${count} files → S3`);
-        }
-      } catch (err) {
-        console.warn('[hook:Stop] ~/.claude sync failed:', err);
+    try {
+      const count = await syncClaudeHomeToS3(s3, bucket, prefix);
+      if (count > 0) {
+        console.log(`[hook:Stop] ~/.claude sync: ${count} files → S3`);
       }
-    })();
+    } catch (err) {
+      console.warn('[hook:Stop] ~/.claude sync failed:', err);
+    }
+
     return {};
   };
 }
@@ -275,6 +293,8 @@ function extractAndUploadDiff(bucket: string, prefix: string): void {
 // ---------------------------------------------------------------------------
 
 export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEvent> {
+  const model = payload.model || process.env.ANTHROPIC_MODEL;
+
   const baseOptions: Record<string, unknown> = {
     systemPrompt: payload.system_prompt ?? undefined,
     allowedTools: payload.allowed_tools ?? DEFAULT_TOOLS,
@@ -282,6 +302,7 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     settingSources: ['project'],
+    ...(model ? { model } : {}),
   };
 
   if (payload.mcp_servers && Object.keys(payload.mcp_servers).length > 0) {
@@ -302,6 +323,10 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
         {
           matcher: 'Write|Edit',
           hooks: [createFileChangeHook(bucket, prefix)],
+        },
+        {
+          matcher: 'Bash',
+          hooks: [createBashSyncHook(bucket, prefix)],
         },
       ],
       Stop: [
@@ -343,6 +368,15 @@ async function* runWithOptions(
       yield {
         type: 'session_start',
         session_id: msg.session_id as string,
+      };
+      continue;
+    }
+
+    if (msg.type === 'system' && msg.subtype === 'local_command_output') {
+      yield {
+        type: 'assistant',
+        content: [{ type: 'text', text: msg.content as string }],
+        session_id: msg.session_id as string | undefined,
       };
       continue;
     }
