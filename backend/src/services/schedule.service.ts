@@ -390,7 +390,8 @@ class ScheduleService {
     // Execute asynchronously using V2 executor (same agentic path as manual Run)
     const creatorId = schedule.created_by || organizationId;
     const timeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
-    this.runV2Execution(plan, organizationId, scopeId, record.id, scheduleId, schedule.workflow_id, creatorId, timeoutMs, chatSessionId)
+    const nextRunNumber = (schedule.run_count ?? 0) + 1;
+    this.runV2Execution(plan, organizationId, scopeId, record.id, scheduleId, schedule.workflow_id, creatorId, timeoutMs, chatSessionId, schedule.name, nextRunNumber)
       .catch(err => console.error(`[SCHEDULE] V2 execution error for schedule ${scheduleId}:`, err));
 
     // Update schedule stats
@@ -418,6 +419,8 @@ class ScheduleService {
     userId: string,
     timeoutMs?: number,
     chatSessionId?: string,
+    scheduleName?: string,
+    runNumber?: number,
   ): Promise<void> {
     console.log(`[SCHEDULE] Starting V2 execution for schedule=${scheduleId} record=${recordId} scope=${scopeId}`);
     console.log(`[SCHEDULE] Plan: title="${plan.title}" nodes=${plan.nodes.length} edges=${plan.edges.length}`);
@@ -440,7 +443,7 @@ class ScheduleService {
         organizationId,
         scopeId,
         userId,
-        { workflowId, triggerType: 'scheduled', timeoutMs, chatSessionId },
+        { workflowId, triggerType: 'scheduled', timeoutMs, chatSessionId, scheduleName, runNumber },
       );
 
       let lastError: string | null = null;
@@ -610,15 +613,12 @@ class ScheduleService {
       return;
     }
 
-    if (schedule.next_run_at && schedule.next_run_at > new Date()) {
-      console.log(`[SCHEDULE] Schedule ${scheduleId} not due yet (next_run_at=${schedule.next_run_at.toISOString()}), skipping`);
-      return;
-    }
-
+    // Clean up stale running records BEFORE the due-time check — otherwise a
+    // hung execution blocks all future runs until next_run_at advances past it.
     const timeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
     const staleThreshold = new Date(Date.now() - timeoutMs);
 
-    await prisma.schedule_execution_records.updateMany({
+    const staleCleanup = await prisma.schedule_execution_records.updateMany({
       where: {
         schedule_id: scheduleId,
         status: 'running',
@@ -630,6 +630,27 @@ class ScheduleService {
         completed_at: new Date(),
       },
     });
+    if (staleCleanup.count > 0) {
+      console.log(`[SCHEDULE] Cleaned up ${staleCleanup.count} stale running record(s) for schedule ${scheduleId}`);
+      // Also fail the corresponding workflow_executions so they don't show as stuck
+      await prisma.workflow_executions.updateMany({
+        where: {
+          trigger_id: scheduleId,
+          status: { in: ['executing', 'running'] },
+          started_at: { lt: staleThreshold },
+        },
+        data: {
+          status: 'failed',
+          error_message: 'Timed out (stale execution cleanup)',
+          completed_at: new Date(),
+        },
+      });
+    }
+
+    if (schedule.next_run_at && schedule.next_run_at > new Date()) {
+      console.log(`[SCHEDULE] Schedule ${scheduleId} not due yet (next_run_at=${schedule.next_run_at.toISOString()}), skipping`);
+      return;
+    }
 
     const runningRecord = await prisma.schedule_execution_records.findFirst({
       where: { schedule_id: scheduleId, status: 'running' },
@@ -723,7 +744,8 @@ class ScheduleService {
 
       // Execute using runV2Execution (same as manual trigger — collects logs)
       const cronTimeoutMs = ((schedule as any).timeout_minutes ?? 10) * 60 * 1000;
-      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id, schedule.workflow_id, schedule.created_by || schedule.organization_id, cronTimeoutMs, chatSessionId);
+      const cronRunNumber = (schedule.run_count ?? 0) + 1;
+      await this.runV2Execution(plan, schedule.organization_id, scopeId, record.id, schedule.id, schedule.workflow_id, schedule.created_by || schedule.organization_id, cronTimeoutMs, chatSessionId, schedule.name, cronRunNumber);
 
       // runV2Execution handles status updates and failure_count internally.
       // We just need to update run_count and create the next scheduled placeholder.

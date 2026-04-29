@@ -16,7 +16,7 @@ import { prisma } from '../config/database.js';
 import { computeWorkflowCopilotSessionId } from '../utils/deterministic-session.js';
 import { workspaceManager } from '../services/workspace-manager.js';
 import { businessScopeService } from '../services/businessScope.service.js';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
 import {
   createWorkflowSchema,
@@ -1150,6 +1150,62 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
       const messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
 
       return reply.send({ session_id: sessionId, messages: messages ?? [] });
+    },
+  );
+
+  /**
+   * GET /api/workflows/copilot/workflow-config
+   * Read workflow.json from the copilot workspace (local filesystem or S3 fallback for AgentCore).
+   */
+  fastify.get<{
+    Querystring: { workflow_id: string; version: string };
+  }>(
+    '/copilot/workflow-config',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { workflow_id, version } = request.query;
+      const orgId = request.user!.orgId;
+
+      if (!workflow_id || !version) {
+        return reply.status(400).send({ error: 'workflow_id and version are required' });
+      }
+
+      const sessionId = computeWorkflowCopilotSessionId(workflow_id, version);
+
+      const copilotScope = await prisma.business_scopes.findFirst({
+        where: { organization_id: orgId, name: 'Workflow Copilot', scope_type: 'digital_twin', deleted_at: null },
+      });
+      if (!copilotScope) {
+        return reply.status(404).send({ error: 'Workflow Copilot not configured' });
+      }
+
+      const workspacePath = workspaceManager.getSessionWorkspacePath(orgId, copilotScope.id, sessionId);
+
+      // Try local filesystem first
+      try {
+        const content = await readFile(join(workspacePath, 'workflow.json'), 'utf-8');
+        const parsed = JSON.parse(content);
+        if (!parsed.title || !Array.isArray(parsed.tasks)) {
+          return reply.status(404).send({ error: 'workflow.json is not a valid workflow plan' });
+        }
+        return reply.send({ data: parsed });
+      } catch {
+        // Local not found — fall back to S3 (AgentCore mode)
+      }
+
+      try {
+        const content = await workspaceManager.readWorkspaceFileFromS3(orgId, copilotScope.id, sessionId, 'workflow.json');
+        if (!content) {
+          return reply.status(404).send({ error: 'No workflow.json found in workspace' });
+        }
+        const parsed = JSON.parse(content);
+        if (!parsed.title || !Array.isArray(parsed.tasks)) {
+          return reply.status(404).send({ error: 'workflow.json is not a valid workflow plan' });
+        }
+        return reply.send({ data: parsed });
+      } catch {
+        return reply.status(404).send({ error: 'No workflow.json found in workspace' });
+      }
     },
   );
 

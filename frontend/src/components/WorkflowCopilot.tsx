@@ -391,6 +391,20 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
             const canvasData = workflowPlanToCanvasData(plan)
             onGenerateWorkflow(canvasData, plan.title, plan.variables)
           } catch { /* plan parse failed — skip */ }
+        } else if (onGenerateWorkflow && data.messages.length > 0) {
+          // No workflow.json found in chat messages — try workspace fallback (AgentCore mode)
+          try {
+            const cfgRes = await fetch(
+              `${API_BASE_URL}/api/workflows/copilot/workflow-config?workflow_id=${workflowId}&version=${encodeURIComponent(version)}`,
+              { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+            )
+            if (cfgRes.ok) {
+              const cfgData = await cfgRes.json() as { data: { title: string; tasks: unknown[]; variables?: unknown[] } }
+              const plan = parseWorkflowPlan(JSON.stringify(cfgData.data))
+              const canvasData = workflowPlanToCanvasData(plan)
+              onGenerateWorkflow(canvasData, plan.title, plan.variables)
+            }
+          } catch { /* workspace fallback failed */ }
         }
       } catch {
         // non-fatal
@@ -559,6 +573,30 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
         } catch {
           // workflow.json parse failed — show text as-is
           updateMessage(assistantId, { content: accumulatedText, status: 'done' })
+        }
+      }
+
+      // Fallback: if no workflow.json captured from SSE stream, try loading from workspace (AgentCore writes to /workspace/workflow.json)
+      if (!applied && onGenerateWorkflow) {
+        try {
+          const token = getAuthToken()
+          const cfgRes = await fetch(
+            `${API_BASE_URL}/api/workflows/copilot/workflow-config?workflow_id=${workflowId ?? ''}&version=${encodeURIComponent(version)}`,
+            { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+          )
+          if (cfgRes.ok) {
+            const cfgData = await cfgRes.json() as { data: { title: string; tasks: unknown[]; variables?: unknown[] } }
+            const plan = parseWorkflowPlan(JSON.stringify(cfgData.data))
+            const newCanvasData = workflowPlanToCanvasData(plan)
+            onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
+            applied = true
+            updateMessage(assistantId, {
+              content: accumulatedText || `${hasNodes ? 'Updated' : 'Generated'} workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
+              status: 'done',
+            })
+          }
+        } catch {
+          // workspace fallback failed — continue to text-based fallback
         }
       }
 

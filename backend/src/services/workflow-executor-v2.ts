@@ -348,6 +348,7 @@ async function createExecutionRecord(
   plan: WorkflowV2Plan,
   triggerType: string = 'manual',
   chatSessionId?: string,
+  displayTitle?: string,
 ): Promise<string> {
   const execution = await prisma.workflow_executions.create({
     data: {
@@ -355,7 +356,7 @@ async function createExecutionRecord(
       organization_id: organizationId,
       user_id: userId,
       status: 'executing',
-      title: plan.title,
+      title: displayTitle || plan.title,
       canvas_data: JSON.parse(JSON.stringify(plan)),
       variables: JSON.parse(JSON.stringify(plan.variables || [])),
       trigger_type: triggerType,
@@ -568,12 +569,19 @@ export class WorkflowExecutorV2 {
       timeoutMs?: number;
       triggerType?: string;
       chatSessionId?: string;
+      scheduleName?: string;
+      runNumber?: number;
     },
   ): AsyncGenerator<WorkflowProgressEvent> {
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     // Split plan into segments at checkpoint boundaries
     const segments = splitIntoSegments(plan);
+
+    // Build descriptive title: include schedule name + run number when available
+    const sessionTitle = options?.scheduleName
+      ? `${options.scheduleName} #${options.runNumber ?? '?'} — ${plan.title}`
+      : `Workflow: ${plan.title}`;
 
     // Create a chat session for this workflow execution so the conversation
     // is persisted and can be resumed later via the chat interface.
@@ -587,6 +595,11 @@ export class WorkflowExecutorV2 {
         if (existing) {
           chatSessionId = existing.id;
           claudeSessionId = existing.claude_session_id ?? undefined;
+          // Update title to reflect latest run
+          await prisma.chat_sessions.update({
+            where: { id: chatSessionId },
+            data: { title: sessionTitle },
+          }).catch(() => {});
           console.log(`[workflow-v2] Reusing chat session ${chatSessionId} (claude_session=${claudeSessionId ?? 'none'}) for workflow "${plan.title}"`);
         } else {
           const chatSession = await prisma.chat_sessions.create({
@@ -596,7 +609,7 @@ export class WorkflowExecutorV2 {
               user_id: userId,
               business_scope_id: scopeId,
               source: 'workflow',
-              title: `Workflow: ${plan.title}`,
+              title: sessionTitle,
               status: 'idle',
             },
           });
@@ -610,7 +623,7 @@ export class WorkflowExecutorV2 {
             user_id: userId,
             business_scope_id: scopeId,
             source: 'workflow',
-            title: `Workflow: ${plan.title}`,
+            title: sessionTitle,
             status: 'idle',
           },
         });
@@ -625,7 +638,7 @@ export class WorkflowExecutorV2 {
     let executionId: string | undefined;
     if (options?.workflowId) {
       try {
-        executionId = await createExecutionRecord(options.workflowId, organizationId, userId, plan, options.triggerType, chatSessionId);
+        executionId = await createExecutionRecord(options.workflowId, organizationId, userId, plan, options.triggerType, chatSessionId, sessionTitle);
         // Store segment plan
         await prisma.workflow_executions.update({
           where: { id: executionId },
@@ -980,12 +993,33 @@ export class WorkflowExecutorV2 {
       let lastFlushedLength = 0;
       const DB_FLUSH_INTERVAL_MS = 5_000;
 
-      for await (const event of generator) {
-        if (Date.now() - startTime > timeoutMs) {
+      // Race each generator.next() against a hard deadline so a hung runtime
+      // (e.g. AgentCore never responds) doesn't block the loop forever.
+      const deadline = startTime + timeoutMs;
+      const iter = generator[Symbol.asyncIterator]();
+      let iterResult: IteratorResult<ConversationEvent>;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
           timedOut = true;
           yield { type: 'error', message: `Workflow execution timed out after ${timeoutMs / 1000}s` };
           break;
         }
+        try {
+          iterResult = await Promise.race([
+            iter.next(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Workflow execution timed out after ${timeoutMs / 1000}s`)), remaining),
+            ),
+          ]);
+        } catch (err: any) {
+          timedOut = true;
+          yield { type: 'error', message: err.message };
+          break;
+        }
+        if (iterResult.done) break;
+        const event = iterResult.value;
 
         while (eventQueue.length > 0) {
           yield eventQueue.shift()!;
