@@ -117,10 +117,31 @@ export class SeedCopilotService {
     }
   }
 
+  async upgradeScopeCopilotIntegrations(organizationId: string): Promise<void> {
+    const template = loadTemplate('scope-copilot.json');
+    const agent = await prisma.agents.findFirst({
+      where: {
+        organization_id: organizationId,
+        name: 'scope-copilot',
+        origin: 'system_seed',
+      },
+      select: { id: true, system_prompt: true },
+    });
+
+    if (agent && !agent.system_prompt?.includes('# Integration Management')) {
+      await prisma.agents.update({
+        where: { id: agent.id },
+        data: { system_prompt: template.agent.systemPrompt },
+      });
+      console.log(`[seed-copilot] Upgraded scope-copilot integration prompt for org ${organizationId}`);
+    }
+  }
+
   async ensureAllOrgs(): Promise<void> {
     const orgs = await prisma.organizations.findMany({ select: { id: true } });
     for (const org of orgs) {
       await this.ensureSeedCopilots(org.id);
+      await this.upgradeScopeCopilotIntegrations(org.id);
     }
     console.log(`[seed-copilot] Checked ${orgs.length} organizations for seed copilots`);
   }
