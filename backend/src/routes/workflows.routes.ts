@@ -18,6 +18,7 @@ import { workspaceManager } from '../services/workspace-manager.js';
 import { businessScopeService } from '../services/businessScope.service.js';
 import { mkdir, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
+import { agentCoreCommandService } from '../services/agentcore-command.service.js';
 import {
   createWorkflowSchema,
   updateWorkflowSchema,
@@ -1181,27 +1182,42 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
 
       const workspacePath = workspaceManager.getSessionWorkspacePath(orgId, copilotScope.id, sessionId);
 
-      // Try local filesystem first
+      const tryParse = (content: string) => {
+        const parsed = JSON.parse(content);
+        if (!parsed.title || !Array.isArray(parsed.tasks)) return null;
+        return parsed;
+      };
+
+      // 1. Local filesystem (non-AgentCore mode)
       try {
         const content = await readFile(join(workspacePath, 'workflow.json'), 'utf-8');
-        const parsed = JSON.parse(content);
-        if (!parsed.title || !Array.isArray(parsed.tasks)) {
-          return reply.status(404).send({ error: 'workflow.json is not a valid workflow plan' });
-        }
-        return reply.send({ data: parsed });
+        const parsed = tryParse(content);
+        if (parsed) return reply.send({ data: parsed });
       } catch {
-        // Local not found — fall back to S3 (AgentCore mode)
+        // not found locally
       }
 
+      const { config: appConfig } = await import('../config/index.js');
+
+      // 2. AgentCore Command API — reads live from the running container (most up-to-date)
+      if (appConfig.agentRuntime === 'agentcore') {
+        try {
+          const cmdContent = await agentCoreCommandService.readFile(sessionId, 'workflow.json');
+          if (cmdContent) {
+            const parsed = tryParse(cmdContent);
+            if (parsed) return reply.send({ data: parsed });
+          }
+        } catch {
+          // Command API unavailable, fall through to S3
+        }
+      }
+
+      // 3. S3 fallback (files synced after agent session ends)
       try {
         const content = await workspaceManager.readWorkspaceFileFromS3(orgId, copilotScope.id, sessionId, 'workflow.json');
-        if (!content) {
-          return reply.status(404).send({ error: 'No workflow.json found in workspace' });
-        }
-        const parsed = JSON.parse(content);
-        if (!parsed.title || !Array.isArray(parsed.tasks)) {
-          return reply.status(404).send({ error: 'workflow.json is not a valid workflow plan' });
-        }
+        if (!content) return reply.status(404).send({ error: 'No workflow.json found in workspace' });
+        const parsed = tryParse(content);
+        if (!parsed) return reply.status(404).send({ error: 'workflow.json is not a valid workflow plan' });
         return reply.send({ data: parsed });
       } catch {
         return reply.status(404).send({ error: 'No workflow.json found in workspace' });
