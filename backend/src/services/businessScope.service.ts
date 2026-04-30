@@ -162,9 +162,9 @@ export class BusinessScopeService {
     data: CreateBusinessScopeInput,
     organizationId: string
   ): Promise<BusinessScopeEntity> {
-    // Check for duplicate name within organization (unique constraint)
+    // Check for duplicate name within the same scope_type (business vs digital_twin are separate namespaces)
     const existingScope = await businessScopeRepository.findByName(organizationId, data.name);
-    if (existingScope) {
+    if (existingScope && existingScope.scope_type === (data.scope_type ?? 'business')) {
       throw AppError.conflict(
         `Business scope with name "${data.name}" already exists in this organization`
       );
@@ -228,9 +228,10 @@ export class BusinessScopeService {
     }
 
     // Check for duplicate name if name is being updated (unique constraint)
+    // Only conflict within the same scope_type — business and digital_twin scopes are separate namespaces
     if (data.name !== undefined && data.name !== existingScope.name) {
       const scopeWithName = await businessScopeRepository.findByName(organizationId, data.name);
-      if (scopeWithName && scopeWithName.id !== id) {
+      if (scopeWithName && scopeWithName.id !== id && scopeWithName.scope_type === existingScope.scope_type) {
         throw AppError.conflict(
           `Business scope with name "${data.name}" already exists in this organization`
         );
