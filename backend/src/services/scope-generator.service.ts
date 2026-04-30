@@ -909,3 +909,130 @@ QUALITY CHECK — before outputting, verify:
 }
 
 export const scopeGeneratorService = new ScopeGeneratorService();
+
+// ---------------------------------------------------------------------------
+// Integration diff computation
+// ---------------------------------------------------------------------------
+
+import type { ScopeIntegrations } from './scope-copilot-seeder.js';
+
+export interface IntegrationsDiff {
+  mcpServers: { toAdd: Array<{ mcpServerId: string; scopeConfig: Record<string, unknown> }>; toRemove: string[] };
+  documentGroups: { toAdd: Array<{ documentGroupId: string }>; toRemove: string[] };
+  imChannels: { toAdd: Array<{ channelType: string; channelId: string; channelName: string | null; isEnabled: boolean }>; toRemove: string[] };
+  connectors: { toAdd: Array<{ connectorId: string; scopeConfig: Record<string, unknown> }>; toRemove: string[] };
+  plugins: { toAdd: Array<{ name: string; gitUrl: string; ref: string }>; toRemove: string[] };
+}
+
+/**
+ * Compute the diff between current scope integrations and desired integrations.
+ * For each resource type:
+ *   - toAdd = items in desired but not in current (matched by primary key)
+ *   - toRemove = items in current but not in desired (returns assignmentId/id for deletion)
+ *
+ * If a resource type key is absent from `desired`, that type is left unchanged (no diff).
+ */
+export function computeIntegrationsDiff(
+  current: ScopeIntegrations,
+  desired: Partial<ScopeIntegrations>,
+): IntegrationsDiff {
+  const diff: IntegrationsDiff = {
+    mcpServers: { toAdd: [], toRemove: [] },
+    documentGroups: { toAdd: [], toRemove: [] },
+    imChannels: { toAdd: [], toRemove: [] },
+    connectors: { toAdd: [], toRemove: [] },
+    plugins: { toAdd: [], toRemove: [] },
+  };
+
+  // --- MCP Servers (keyed by mcpServerId) ---
+  if (desired.mcpServers !== undefined) {
+    const currentIds = new Set(current.mcpServers.map((s) => s.mcpServerId));
+    const desiredIds = new Set(desired.mcpServers.map((s) => s.mcpServerId));
+
+    for (const s of desired.mcpServers) {
+      if (!currentIds.has(s.mcpServerId)) {
+        diff.mcpServers.toAdd.push({ mcpServerId: s.mcpServerId, scopeConfig: s.scopeConfig });
+      }
+    }
+    for (const s of current.mcpServers) {
+      if (!desiredIds.has(s.mcpServerId)) {
+        diff.mcpServers.toRemove.push(s.assignmentId);
+      }
+    }
+  }
+
+  // --- Document Groups (keyed by documentGroupId) ---
+  if (desired.documentGroups !== undefined) {
+    const currentIds = new Set(current.documentGroups.map((g) => g.documentGroupId));
+    const desiredIds = new Set(desired.documentGroups.map((g) => g.documentGroupId));
+
+    for (const g of desired.documentGroups) {
+      if (!currentIds.has(g.documentGroupId)) {
+        diff.documentGroups.toAdd.push({ documentGroupId: g.documentGroupId });
+      }
+    }
+    for (const g of current.documentGroups) {
+      if (!desiredIds.has(g.documentGroupId)) {
+        diff.documentGroups.toRemove.push(g.assignmentId);
+      }
+    }
+  }
+
+  // --- IM Channels (keyed by id) ---
+  if (desired.imChannels !== undefined) {
+    const currentIds = new Set(current.imChannels.map((c) => c.id));
+    const desiredIds = new Set(desired.imChannels.filter((c) => c.id).map((c) => c.id));
+
+    for (const c of desired.imChannels) {
+      if (!c.id || !currentIds.has(c.id)) {
+        diff.imChannels.toAdd.push({
+          channelType: c.channelType,
+          channelId: c.channelId,
+          channelName: c.channelName,
+          isEnabled: c.isEnabled,
+        });
+      }
+    }
+    for (const c of current.imChannels) {
+      if (!desiredIds.has(c.id)) {
+        diff.imChannels.toRemove.push(c.id);
+      }
+    }
+  }
+
+  // --- Connectors (keyed by connectorId) ---
+  if (desired.connectors !== undefined) {
+    const currentIds = new Set(current.connectors.map((c) => c.connectorId));
+    const desiredIds = new Set(desired.connectors.map((c) => c.connectorId));
+
+    for (const c of desired.connectors) {
+      if (!currentIds.has(c.connectorId)) {
+        diff.connectors.toAdd.push({ connectorId: c.connectorId, scopeConfig: c.scopeConfig });
+      }
+    }
+    for (const c of current.connectors) {
+      if (!desiredIds.has(c.connectorId)) {
+        diff.connectors.toRemove.push(c.connectorId);
+      }
+    }
+  }
+
+  // --- Plugins (keyed by name) ---
+  if (desired.plugins !== undefined) {
+    const currentNames = new Set(current.plugins.map((p) => p.name));
+    const desiredNames = new Set(desired.plugins.map((p) => p.name));
+
+    for (const p of desired.plugins) {
+      if (!currentNames.has(p.name)) {
+        diff.plugins.toAdd.push({ name: p.name, gitUrl: p.gitUrl, ref: p.ref });
+      }
+    }
+    for (const p of current.plugins) {
+      if (!desiredNames.has(p.name)) {
+        diff.plugins.toRemove.push(p.id);
+      }
+    }
+  }
+
+  return diff;
+}

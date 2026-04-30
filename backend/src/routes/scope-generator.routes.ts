@@ -4,7 +4,7 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { scopeGeneratorService, type GeneratedScopeConfig } from '../services/scope-generator.service.js';
+import { scopeGeneratorService, type GeneratedScopeConfig, computeIntegrationsDiff, type IntegrationsDiff } from '../services/scope-generator.service.js';
 import { businessScopeService } from '../services/businessScope.service.js';
 import { agentService } from '../services/agent.service.js';
 import { skillService } from '../services/skill.service.js';
@@ -39,6 +39,7 @@ interface SaveBody {
   Body: {
     scopeId: string;
     config: GeneratedScopeConfig;
+    integrations?: Partial<import('../services/scope-copilot-seeder.js').ScopeIntegrations>;
   };
 }
 
@@ -52,6 +53,79 @@ interface ModifyBody {
 }
 
 export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<void> {
+
+  // -------------------------------------------------------------------------
+  // Helper: apply computed integrations diff to the database
+  // -------------------------------------------------------------------------
+  async function applyIntegrationsDiff(orgId: string, scopeId: string, userId: string, diff: IntegrationsDiff) {
+    const results = { added: 0, removed: 0, errors: [] as string[] };
+
+    // MCP Servers - add with ON CONFLICT DO NOTHING, remove by assignmentId
+    for (const mcp of diff.mcpServers.toAdd) {
+      try {
+        await prisma.$executeRaw`INSERT INTO scope_mcp_servers (id, business_scope_id, mcp_server_id, assigned_by) VALUES (gen_random_uuid(), ${scopeId}::uuid, ${mcp.mcpServerId}::uuid, ${userId}::uuid) ON CONFLICT (business_scope_id, mcp_server_id) DO NOTHING`;
+        results.added++;
+      } catch (e) { results.errors.push(`MCP add ${mcp.mcpServerId}: ${e}`); }
+    }
+    for (const id of diff.mcpServers.toRemove) {
+      try { await prisma.$executeRaw`DELETE FROM scope_mcp_servers WHERE id = ${id}::uuid`; results.removed++; }
+      catch (e) { results.errors.push(`MCP remove ${id}: ${e}`); }
+    }
+
+    // Document Groups - same pattern
+    for (const dg of diff.documentGroups.toAdd) {
+      try {
+        await prisma.$executeRaw`INSERT INTO scope_document_groups (id, business_scope_id, document_group_id, assigned_by) VALUES (gen_random_uuid(), ${scopeId}::uuid, ${dg.documentGroupId}::uuid, ${userId}::uuid) ON CONFLICT (business_scope_id, document_group_id) DO NOTHING`;
+        results.added++;
+      } catch (e) { results.errors.push(`DocGroup add ${dg.documentGroupId}: ${e}`); }
+    }
+    for (const id of diff.documentGroups.toRemove) {
+      try { await prisma.$executeRaw`DELETE FROM scope_document_groups WHERE id = ${id}::uuid`; results.removed++; }
+      catch (e) { results.errors.push(`DocGroup remove ${id}: ${e}`); }
+    }
+
+    // IM Channels - create via prisma.im_channel_bindings.create, delete via prisma.im_channel_bindings.delete
+    for (const ch of diff.imChannels.toAdd) {
+      try {
+        await prisma.im_channel_bindings.create({ data: { organization_id: orgId, business_scope_id: scopeId, channel_type: ch.channelType, channel_id: ch.channelId, channel_name: ch.channelName, is_enabled: ch.isEnabled, created_by: userId, config: {} } });
+        results.added++;
+      } catch (e) { results.errors.push(`IM add ${ch.channelType}/${ch.channelId}: ${e}`); }
+    }
+    for (const id of diff.imChannels.toRemove) {
+      try { await prisma.im_channel_bindings.delete({ where: { id } }); results.removed++; }
+      catch (e) { results.errors.push(`IM remove ${id}: ${e}`); }
+    }
+
+    // Data Connectors - raw SQL with ON CONFLICT, delete by connector_id + scope_id
+    for (const conn of diff.connectors.toAdd) {
+      try {
+        await prisma.$executeRaw`INSERT INTO scope_data_connectors (id, business_scope_id, connector_id, scope_config, assigned_by) VALUES (gen_random_uuid(), ${scopeId}::uuid, ${conn.connectorId}::uuid, ${JSON.stringify(conn.scopeConfig)}::jsonb, ${userId}::uuid) ON CONFLICT (business_scope_id, connector_id) DO NOTHING`;
+        results.added++;
+      } catch (e) { results.errors.push(`Connector add ${conn.connectorId}: ${e}`); }
+    }
+    for (const id of diff.connectors.toRemove) {
+      try { await prisma.$executeRaw`DELETE FROM scope_data_connectors WHERE business_scope_id = ${scopeId}::uuid AND connector_id = ${id}::uuid`; results.removed++; }
+      catch (e) { results.errors.push(`Connector remove ${id}: ${e}`); }
+    }
+
+    // Plugins - raw SQL with ON CONFLICT DO UPDATE, delete by id
+    for (const plug of diff.plugins.toAdd) {
+      try {
+        await prisma.$executeRaw`INSERT INTO scope_plugins (id, business_scope_id, name, git_url, ref, assigned_by) VALUES (gen_random_uuid(), ${scopeId}::uuid, ${plug.name}, ${plug.gitUrl}, ${plug.ref}, ${userId}::uuid) ON CONFLICT (business_scope_id, name) DO UPDATE SET git_url = ${plug.gitUrl}, ref = ${plug.ref}`;
+        results.added++;
+      } catch (e) { results.errors.push(`Plugin add ${plug.name}: ${e}`); }
+    }
+    for (const id of diff.plugins.toRemove) {
+      try { await prisma.$executeRaw`DELETE FROM scope_plugins WHERE id = ${id}::uuid`; results.removed++; }
+      catch (e) { results.errors.push(`Plugin remove ${id}: ${e}`); }
+    }
+
+    // Bump scope config version
+    await prisma.business_scopes.update({ where: { id: scopeId }, data: { config_version: { increment: 1 } } });
+
+    return results;
+  }
+
   /**
    * POST /api/business-scopes/generate
    * Stream AI-generated scope configuration via SSE.
@@ -342,7 +416,7 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
    * Save the full scope + agents + skills configuration to the database.
    */
   fastify.post<SaveBody>('/save', { preHandler: [authenticate] }, async (request: FastifyRequest<SaveBody>, reply: FastifyReply) => {
-    const { scopeId, config } = request.body;
+    const { scopeId, config, integrations } = request.body;
     const orgId = request.user!.orgId;
 
     if (!scopeId || !config?.scope || !config?.agents) {
@@ -351,7 +425,16 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
 
     try {
       const result = await scopeGeneratorService.saveFullConfig(scopeId, config, orgId);
-      return reply.status(200).send({ data: result });
+
+      let integrationsResult = null;
+      if (integrations) {
+        const { fetchScopeBindings } = await import('../services/scope-copilot-seeder.js');
+        const current = await fetchScopeBindings(orgId, scopeId);
+        const diff = computeIntegrationsDiff(current, integrations);
+        integrationsResult = await applyIntegrationsDiff(orgId, scopeId, request.user!.id, diff);
+      }
+
+      return reply.status(200).send({ data: { ...result, integrations: integrationsResult } });
     } catch (error) {
       console.error('[scope-generator] Save error:', error);
       return reply.status(500).send({
@@ -772,6 +855,43 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         return reply.send({ data: parsed });
       } catch {
         return reply.status(404).send({ error: 'No scope-config.json found in workspace' });
+      }
+    },
+  );
+
+  /**
+   * GET /api/scope-generator/copilot/scope-integrations
+   * Read the latest scope-integrations.json from the copilot workspace.
+   */
+  fastify.get<{ Querystring: { scope_id: string } }>(
+    '/copilot/scope-integrations',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { scope_id } = request.query;
+      const orgId = request.user!.orgId;
+
+      if (!scope_id) {
+        return reply.status(400).send({ error: 'scope_id is required' });
+      }
+
+      const sessionId = computeScopeCopilotSessionId(scope_id);
+
+      const copilotScope = await prisma.business_scopes.findFirst({
+        where: { organization_id: orgId, name: 'Scope Copilot', scope_type: 'digital_twin', deleted_at: null },
+      });
+      if (!copilotScope) {
+        return reply.status(404).send({ error: 'Scope Copilot not found' });
+      }
+
+      const cfgModule = await import('../config/index.js');
+      const workspaceBase = cfgModule.config.claude?.workspaceBaseDir ?? '/tmp/workspaces';
+      const filePath = join(workspaceBase, orgId, copilotScope.id, 'sessions', sessionId, 'scope-integrations.json');
+
+      try {
+        const content = await readFile(filePath, 'utf-8');
+        return reply.send({ data: JSON.parse(content) });
+      } catch {
+        return reply.send({ data: null });
       }
     },
   );
