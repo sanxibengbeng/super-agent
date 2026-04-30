@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Server, Plus, Trash2, Loader2, Briefcase,
   Users, Zap, TrendingUp, BarChart3,
@@ -298,6 +299,7 @@ function AgentRow({ agent }: { agent: Agent }) {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onAddAgent, onRemoveAgent }: ScopeProfileProps) {
+  const navigate = useNavigate()
   const { success, error: showError } = useToast()
   const { servers: allServers, getServers, createServer } = useMCP()
 
@@ -657,6 +659,13 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
                   {t('scopeProfile.comingSoon')}
                 </span>
               </div>
+              <button
+                onClick={() => navigate(`/create-business-scope/ai?scopeId=${scope.id}`)}
+                className="flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
+              >
+                <Sparkles className="w-3 h-3" />
+                {t('scopeProfile.editWithCopilot')}
+              </button>
             </div>
             {scope.description && (
               <p className="text-xs text-gray-400 mt-0.5 truncate">{scope.description}</p>

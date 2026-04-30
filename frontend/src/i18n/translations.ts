@@ -3576,6 +3576,10 @@ export const translations: TranslationData = {
     en: 'Coming Soon',
     cn: '即将推出'
   },
+  'scopeProfile.editWithCopilot': {
+    en: 'Edit with Copilot',
+    cn: 'Copilot 编辑'
+  },
   'scopeProfile.deleteScope': {
     en: 'Delete scope',
     cn: '删除范围'
