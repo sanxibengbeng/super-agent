@@ -4,29 +4,16 @@
  */
 
 import { FastifyInstance } from 'fastify';
-import { stat as fsStat, cp, mkdir, readFile, rm } from 'fs/promises';
-import { createReadStream, existsSync } from 'fs';
+import { stat as fsStat } from 'fs/promises';
+import { existsSync } from 'fs';
 import { join, extname } from 'path';
 import { authenticate } from '../middleware/auth.js';
-import { config } from '../config/index.js';
 import { prisma } from '../config/database.js';
 import { chatService } from '../services/chat.service.js';
 import { workspaceManager } from '../services/workspace-manager.js';
 import { streamRegistry } from '../services/stream-registry.js';
 import { findAppRoot } from '../services/app-finder.js';
-
-const APPS_STORAGE_DIR = join(config.claude.workspaceBaseDir, '_published_apps');
-
-const MIME_TYPES: Record<string, string> = {
-  '.html': 'text/html', '.htm': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript', '.mjs': 'application/javascript',
-  '.json': 'application/json',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
-};
+import { appStorage } from '../services/app-storage.js';
 
 export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
 
@@ -169,7 +156,7 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
    * This is the primary endpoint used by the app-publisher skill. It:
    *   1. Resolves the folder path within the session workspace
    *   2. Validates an HTML entry point exists
-   *   3. Copies the bundle to the published apps storage directory
+   *   3. Uploads the bundle to S3
    *   4. Creates the DB record
    *   5. Returns the app ID and access URL
    */
@@ -338,16 +325,12 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
           },
         });
 
-        // Replace the bundle on disk
-        const targetDir = existingApp.bundle_path;
+        // Replace the bundle in S3
         try {
-          await rm(targetDir, { recursive: true, force: true });
-        } catch { /* old dir may already be gone */ }
-        await mkdir(targetDir, { recursive: true });
-        try {
-          await cp(copySourcePath, targetDir, { recursive: true });
+          await appStorage.deletePrefix(existingApp.id);
+          await appStorage.uploadDir(existingApp.id, copySourcePath);
         } catch {
-          return reply.status(500).send({ error: 'Failed to copy app bundle', code: 'COPY_FAILED' });
+          return reply.status(500).send({ error: 'Failed to upload app bundle to S3', code: 'UPLOAD_FAILED' });
         }
 
         // Update DB record
@@ -359,6 +342,7 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
             icon: icon || existingApp.icon,
             category: category || existingApp.category,
             entry_point: resolvedEntry,
+            bundle_path: appStorage.getKeyPrefix(existingApp.id),
             version: newVersion,
             published_at: new Date(),
             metadata: { source_folder: folder_path },
@@ -382,21 +366,19 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
 
       // ── NEW publish ──
 
-      // 6. Copy bundle to published apps storage
-      await mkdir(APPS_STORAGE_DIR, { recursive: true });
+      // 6. Upload bundle to S3
       const appId = crypto.randomUUID();
-      const targetDir = join(APPS_STORAGE_DIR, appId);
 
       try {
-        await cp(copySourcePath, targetDir, { recursive: true });
+        await appStorage.uploadDir(appId, copySourcePath);
       } catch (err) {
         return reply.status(500).send({
-          error: 'Failed to copy app bundle',
-          code: 'COPY_FAILED',
+          error: 'Failed to upload app bundle to S3',
+          code: 'UPLOAD_FAILED',
         });
       }
 
-      // 6. Create DB record
+      // 7. Create DB record
       const app = await prisma.published_apps.create({
         data: {
           id: appId,
@@ -409,7 +391,7 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
           category: category || 'tool',
           status: appStatus,
           entry_point: resolvedEntry,
-          bundle_path: targetDir,
+          bundle_path: appStorage.getKeyPrefix(appId),
           published_by: request.user!.id,
           metadata: { source_folder: folder_path },
         },
@@ -480,18 +462,19 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
       if (!app) return reply.status(404).send({ error: 'App not found' });
 
       const resolvedPath = requestedPath || app.entry_point;
-      const filePath = join(APPS_STORAGE_DIR, app.id, resolvedPath);
 
       // Security: prevent path traversal
-      if (!filePath.startsWith(join(APPS_STORAGE_DIR, app.id))) {
+      if (resolvedPath.includes('..')) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
       const staticPrefix = `/api/apps/${app.id}/static/`;
 
       // Helper: serve HTML with absolute asset paths rewritten to the app sub-path.
-      const serveHtml = async (htmlPath: string) => {
-        let html = await readFile(htmlPath, 'utf-8');
+      const serveHtml = async (htmlKey: string) => {
+        const obj = await appStorage.getObject(app.id, htmlKey);
+        if (!obj) return reply.status(404).send({ error: 'File not found' });
+        let html = Buffer.from(obj.body).toString('utf-8');
         html = html.replace(/(src|href|action)="\/(?!\/)/g, `$1="${staticPrefix}`);
         html = html.replace(/url\("\/(?!\/)/g, `url("${staticPrefix}`);
         return reply
@@ -501,29 +484,27 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
           .send(html);
       };
 
-      if (!existsSync(filePath)) {
+      const obj = await appStorage.getObject(app.id, resolvedPath);
+
+      if (!obj) {
         // SPA fallback — serve entry point for client-side routing
-        const indexPath = join(APPS_STORAGE_DIR, app.id, app.entry_point);
-        if (existsSync(indexPath)) {
-          return serveHtml(indexPath);
+        if (isHtml || !ext) {
+          return serveHtml(app.entry_point);
         }
         return reply.status(404).send({ error: 'File not found' });
       }
 
       // HTML files get path rewriting
       if (isHtml) {
-        return serveHtml(filePath);
+        return serveHtml(resolvedPath);
       }
 
       // Non-HTML assets: serve as-is with long cache
-      const stat = await fsStat(filePath);
-      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-
       return reply
-        .type(contentType)
-        .header('Content-Length', stat.size)
+        .type(obj.contentType)
+        .header('Content-Length', obj.contentLength)
         .header('Cache-Control', 'public, max-age=31536000, immutable')
-        .send(createReadStream(filePath));
+        .send(Buffer.from(obj.body));
     },
   );
 
@@ -557,14 +538,12 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
       // Delete DB record — FK cascades handle usage_events, ratings, versions
       await prisma.published_apps.delete({ where: { id: app.id } });
 
-      // Best-effort cleanup of the on-disk bundle
-      const bundleDir = join(APPS_STORAGE_DIR, app.id);
+      // Best-effort cleanup of the S3 bundle
       try {
-        const { rm } = await import('fs/promises');
-        await rm(bundleDir, { recursive: true, force: true });
+        await appStorage.deletePrefix(app.id);
       } catch {
         // Non-fatal — the DB record is already gone
-        request.log.warn({ appId: app.id, bundleDir }, 'Failed to remove app bundle directory');
+        request.log.warn({ appId: app.id }, 'Failed to remove app bundle from S3');
       }
 
       return reply.status(200).send({ deleted: true, id: app.id });
@@ -610,13 +589,12 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
 
       await prisma.published_apps.deleteMany({ where: { id: { in: validIds } } });
 
-      // Best-effort cleanup of bundle directories
-      const { rm } = await import('fs/promises');
-      for (const appId of validIds) {
+      // Best-effort cleanup of S3 bundles
+      for (const id of validIds) {
         try {
-          await rm(join(APPS_STORAGE_DIR, appId), { recursive: true, force: true });
+          await appStorage.deletePrefix(id);
         } catch {
-          request.log.warn({ appId }, 'Failed to remove app bundle directory');
+          request.log.warn({ appId: id }, 'Failed to remove app bundle from S3');
         }
       }
 
