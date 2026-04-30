@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Send, Loader2, User, Bot } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { parseScopeConfig, type GeneratedScopeConfig } from '@/services/scopeGeneratorService'
+import { parseScopeConfig, parseIntegrations, type GeneratedScopeConfig, type ScopeIntegrations } from '@/services/scopeGeneratorService'
 import type { ChatMessageDraft } from '@/hooks/useScopeDraft'
 import { getAuthToken } from '@/services/api/restClient'
 
@@ -20,6 +20,7 @@ interface ScopeCopilotProps {
   onApplyFullConfig: (config: GeneratedScopeConfig) => void
   onApplyPatches: (patches: Array<{ op: string; path: string; value?: unknown }>) => void
   onCreateSnapshot: (label: string, source: 'ai-generated' | 'ai-modified') => void
+  onApplyIntegrations?: (integrations: ScopeIntegrations) => void
   initialDescription?: string
   sopFile?: File | null
   language?: string
@@ -46,6 +47,7 @@ export function ScopeCopilot({
   onApplyFullConfig,
   onApplyPatches,
   onCreateSnapshot,
+  onApplyIntegrations,
   initialDescription,
   sopFile,
   language,
@@ -231,12 +233,12 @@ export function ScopeCopilot({
                 // Fallback: capture Write tool_use with scope-config content.
                 // file_path may be sanitized to [server-path] by backend output sanitizer.
                 if (block.type === 'tool_use' && block.name === 'Write' && block.input) {
-                  const input = block.input as Record<string, unknown>
-                  const fp = typeof input.file_path === 'string' ? input.file_path : ''
+                  const toolInput = block.input as Record<string, unknown>
+                  const fp = typeof toolInput.file_path === 'string' ? toolInput.file_path : ''
                   if (fp.includes('scope-config') || fp === '[server-path]') {
-                    const raw = typeof input.content === 'string'
-                      ? input.content
-                      : (input.content && typeof input.content === 'object' ? JSON.stringify(input.content) : null)
+                    const raw = typeof toolInput.content === 'string'
+                      ? toolInput.content
+                      : (toolInput.content && typeof toolInput.content === 'object' ? JSON.stringify(toolInput.content) : null)
                     if (raw) {
                       try {
                         const parsed = JSON.parse(raw)
@@ -244,6 +246,13 @@ export function ScopeCopilot({
                           scopeConfigJson = raw
                         }
                       } catch { /* not scope config JSON */ }
+                    }
+                  }
+                  if (fp.includes('scope-integrations') && toolInput.content) {
+                    const parsed = parseIntegrations(typeof toolInput.content === 'string' ? toolInput.content : JSON.stringify(toolInput.content))
+                    if (parsed && onApplyIntegrations) {
+                      onApplyIntegrations(parsed)
+                      onCreateSnapshot('AI updated integrations', 'ai-modified')
                     }
                   }
                 }

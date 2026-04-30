@@ -6,6 +6,7 @@ import { ScopeCopilot } from '@/components/ScopeCopilot'
 import { useScopeDraft } from '@/hooks/useScopeDraft'
 import { useToast } from '@/components'
 import type { GeneratedScopeConfig } from '@/services/scopeGeneratorService'
+import { fetchScopeIntegrations } from '@/services/scopeGeneratorService'
 import type { AgentDraft, ScopeDraft } from '@/hooks/useScopeDraft'
 import { consumeSopFile } from '@/services/sopFileStore'
 
@@ -30,7 +31,7 @@ export function ScopeCopilotPage() {
   const {
     draft, chatHistory, setChatHistory,
     isDirty, isSaving, versions, currentVersion, activeAgents,
-    initializeFromApi, applyFullConfig, applyPatches,
+    initializeFromApi, applyFullConfig, applyPatches, applyIntegrations,
     updateScope, updateAgent, addAgent, removeAgent, restoreAgent,
     startOver, createSnapshot, loadVersion, save,
   } = useScopeDraft(scopeId)
@@ -105,6 +106,11 @@ export function ScopeCopilotPage() {
           const label = existingAgents.length > 0 ? 'Loaded from database' : 'Empty scope created'
           createSnapshot(label, 'created')
         }
+
+        // Load integrations from workspace
+        fetchScopeIntegrations(scopeId).then(data => {
+          if (data) applyIntegrations(data)
+        })
       } catch (err) {
         console.error('Failed to load scope:', err)
         showError('Error', 'Failed to load scope')
@@ -206,6 +212,7 @@ export function ScopeCopilotPage() {
             versions={versions}
             currentVersion={currentVersion}
             serverVersion={serverVersion}
+            integrations={draft.integrations}
             onUpdateScope={updateScope}
             onUpdateAgent={updateAgent}
             onAddAgent={addAgent}
@@ -215,6 +222,7 @@ export function ScopeCopilotPage() {
             onLoadVersion={loadVersion}
             onLoadServerVersion={loadServerVersion}
             onLoadWorkspaceConfig={handleLoadWorkspaceConfig}
+            onUpdateIntegrations={applyIntegrations}
             onStartOver={startOver}
           />
         </div>
@@ -235,6 +243,7 @@ export function ScopeCopilotPage() {
               onApplyFullConfig={applyFullConfig}
               onApplyPatches={applyPatches}
               onCreateSnapshot={createSnapshot}
+              onApplyIntegrations={applyIntegrations}
               initialDescription={initialDescription}
               sopFile={sopFile}
               language={language}

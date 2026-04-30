@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { Pencil, Plus, Trash2, RefreshCw, ChevronDown, X, Clock, Cloud, Download, Loader2 } from 'lucide-react'
-import type { GeneratedScope } from '@/services/scopeGeneratorService'
+import { IntegrationWorkspace } from './IntegrationWorkspace'
+import type { GeneratedScope, ScopeIntegrations } from '@/services/scopeGeneratorService'
 import type { AgentDraft, VersionSnapshot } from '@/hooks/useScopeDraft'
 import type { ServerVersion } from '@/pages/ScopeCopilotPage'
 
@@ -15,6 +16,7 @@ interface ScopeWorkspaceProps {
   versions: VersionSnapshot[]
   currentVersion: VersionSnapshot | null
   serverVersion: ServerVersion | null
+  integrations: ScopeIntegrations
   onUpdateScope: (fields: Partial<GeneratedScope>) => void
   onUpdateAgent: (localId: string, fields: Partial<AgentDraft>) => void
   onAddAgent: () => string
@@ -24,6 +26,7 @@ interface ScopeWorkspaceProps {
   onLoadVersion: (version: number) => void
   onLoadServerVersion: () => void
   onLoadWorkspaceConfig?: () => Promise<{ scope: GeneratedScope; agents: AgentDraft[] } | null>
+  onUpdateIntegrations: (integrations: ScopeIntegrations) => void
   onStartOver: () => void
 }
 
@@ -408,11 +411,12 @@ function VersionBar({
 // ---------------------------------------------------------------------------
 
 export function ScopeWorkspace({
-  scope, agents, activeAgents, versions, currentVersion, serverVersion,
+  scope, agents, activeAgents, versions, currentVersion, serverVersion, integrations,
   onUpdateScope, onUpdateAgent, onAddAgent, onRemoveAgent, onRestoreAgent,
-  onEditComplete, onLoadVersion, onLoadServerVersion, onLoadWorkspaceConfig, onStartOver,
+  onEditComplete, onLoadVersion, onLoadServerVersion, onLoadWorkspaceConfig, onUpdateIntegrations, onStartOver,
 }: ScopeWorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [view, setView] = useState<'agents' | 'integrations'>('agents')
   const selectedAgent = agents.find(a => a._localId === selectedId) ?? null
 
   return (
@@ -424,46 +428,75 @@ export function ScopeWorkspace({
           <ScopeOverviewCard scope={scope} onUpdate={onUpdateScope} onEditComplete={onEditComplete} />
         </div>
 
-        {/* Agent Grid + Detail */}
-        <div className="p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400 font-medium">Agents ({activeAgents.length})</span>
-            <button onClick={() => { const id = onAddAgent(); setSelectedId(id) }}
-              className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
-              <Plus className="w-3.5 h-3.5" /> Add
+        {/* Tab Bar */}
+        <div className="px-4 pt-4">
+          <div className="flex gap-1 p-1 bg-gray-800/40 rounded-lg">
+            <button
+              onClick={() => setView('agents')}
+              className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                view === 'agents' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-300'
+              }`}
+            >
+              Agents ({activeAgents.length})
+            </button>
+            <button
+              onClick={() => setView('integrations')}
+              className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                view === 'integrations' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-300'
+              }`}
+            >
+              Integrations
             </button>
           </div>
-
-          {agents.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 text-sm">
-              No agents yet. Use the chat to generate your scope configuration.
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 gap-2">
-                {agents.map(agent => (
-                  <AgentGridCard
-                    key={agent._localId}
-                    agent={agent}
-                    isSelected={selectedId === agent._localId}
-                    onClick={() => setSelectedId(selectedId === agent._localId ? null : agent._localId)}
-                  />
-                ))}
-              </div>
-
-              {selectedAgent && (
-                <AgentDetailPanel
-                  agent={selectedAgent}
-                  onUpdate={(fields) => onUpdateAgent(selectedAgent._localId, fields)}
-                  onRemove={() => onRemoveAgent(selectedAgent._localId)}
-                  onRestore={() => onRestoreAgent(selectedAgent._localId)}
-                  onClose={() => setSelectedId(null)}
-                  onEditComplete={onEditComplete}
-                />
-              )}
-            </>
-          )}
         </div>
+
+        {view === 'agents' ? (
+          /* Agent Grid + Detail */
+          <div className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400 font-medium">Agents ({activeAgents.length})</span>
+              <button onClick={() => { const id = onAddAgent(); setSelectedId(id) }}
+                className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                <Plus className="w-3.5 h-3.5" /> Add
+              </button>
+            </div>
+
+            {agents.length === 0 ? (
+              <div className="text-center py-12 text-gray-500 text-sm">
+                No agents yet. Use the chat to generate your scope configuration.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  {agents.map(agent => (
+                    <AgentGridCard
+                      key={agent._localId}
+                      agent={agent}
+                      isSelected={selectedId === agent._localId}
+                      onClick={() => setSelectedId(selectedId === agent._localId ? null : agent._localId)}
+                    />
+                  ))}
+                </div>
+
+                {selectedAgent && (
+                  <AgentDetailPanel
+                    agent={selectedAgent}
+                    onUpdate={(fields) => onUpdateAgent(selectedAgent._localId, fields)}
+                    onRemove={() => onRemoveAgent(selectedAgent._localId)}
+                    onRestore={() => onRestoreAgent(selectedAgent._localId)}
+                    onClose={() => setSelectedId(null)}
+                    onEditComplete={onEditComplete}
+                  />
+                )}
+              </>
+            )}
+          </div>
+        ) : (
+          <IntegrationWorkspace
+            integrations={integrations}
+            onUpdate={onUpdateIntegrations}
+          />
+        )}
       </div>
 
       {/* Version Bar (fixed bottom) */}
