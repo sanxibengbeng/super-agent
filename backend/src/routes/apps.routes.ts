@@ -143,7 +143,7 @@ export async function appsRoutes(fastify: FastifyInstance): Promise<void> {
           entry_point: b.entry_point || 'index.html',
           bundle_path: b.bundle_path,
           published_by: request.user!.id,
-          metadata: b.metadata || {},
+          metadata: (b.metadata || {}) as any,
         },
       });
       return reply.status(201).send(app);
