@@ -95,7 +95,7 @@ export function ScopeCopilotPage() {
           color: scope.color || '#6366f1',
         }
 
-        const apiDraft: ScopeDraft = { scope: scopeFields, agents: existingAgents }
+        const apiDraft: ScopeDraft = { scope: scopeFields, agents: existingAgents, integrations: draft.integrations }
         const apiUpdatedAt = scope.updated_at ?? scope.updatedAt ?? ''
         setServerVersion({ draft: apiDraft, updatedAt: apiUpdatedAt })
 
