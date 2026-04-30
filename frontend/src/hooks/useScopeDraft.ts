@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { GeneratedScope, GeneratedAgent, GeneratedScopeConfig } from '@/services/scopeGeneratorService'
+import type { GeneratedScope, GeneratedAgent, GeneratedScopeConfig, ScopeIntegrations } from '@/services/scopeGeneratorService'
+import { EMPTY_INTEGRATIONS } from '@/services/scopeGeneratorService'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,6 +15,7 @@ export interface AgentDraft extends GeneratedAgent {
 export interface ScopeDraft {
   scope: GeneratedScope
   agents: AgentDraft[]
+  integrations: ScopeIntegrations
 }
 
 export interface ChatMessageDraft {
@@ -91,9 +93,9 @@ const EMPTY_SCOPE: GeneratedScope = { name: '', description: '', icon: '📋', c
 
 export function useScopeDraft(scopeId: string | null) {
   const [draft, setDraft] = useState<ScopeDraft>(() => {
-    if (!scopeId) return { scope: EMPTY_SCOPE, agents: [] }
+    if (!scopeId) return { scope: EMPTY_SCOPE, agents: [], integrations: EMPTY_INTEGRATIONS }
     const stored = loadDraft(scopeId)
-    return stored ? stored.draft : { scope: EMPTY_SCOPE, agents: [] }
+    return stored ? { ...{ scope: EMPTY_SCOPE, agents: [], integrations: EMPTY_INTEGRATIONS }, ...stored.draft } : { scope: EMPTY_SCOPE, agents: [], integrations: EMPTY_INTEGRATIONS }
   })
   const [chatHistory, setChatHistory] = useState<ChatMessageDraft[]>(() => {
     if (!scopeId) return []
@@ -159,8 +161,8 @@ export function useScopeDraft(scopeId: string | null) {
   // Draft mutations
   // -----------------------------------------------------------------------
 
-  const initializeFromApi = useCallback((scope: GeneratedScope, agents: AgentDraft[]) => {
-    const newDraft = { scope, agents }
+  const initializeFromApi = useCallback((scope: GeneratedScope, agents: AgentDraft[], integrations?: ScopeIntegrations) => {
+    const newDraft: ScopeDraft = { scope, agents, integrations: integrations ?? EMPTY_INTEGRATIONS }
     setDraft(newDraft)
     savedDraftRef.current = JSON.stringify(newDraft)
     setIsDirty(false)
@@ -172,7 +174,7 @@ export function useScopeDraft(scopeId: string | null) {
       _localId: localId(),
       _deleted: false,
     }))
-    setDraft({ scope: config.scope, agents })
+    setDraft(prev => ({ scope: config.scope, agents, integrations: prev.integrations }))
     setIsDirty(true)
   }, [])
 
@@ -218,6 +220,11 @@ export function useScopeDraft(scopeId: string | null) {
       }
       return next
     })
+    setIsDirty(true)
+  }, [])
+
+  const applyIntegrations = useCallback((integrations: ScopeIntegrations) => {
+    setDraft(prev => ({ ...prev, integrations }))
     setIsDirty(true)
   }, [])
 
@@ -267,7 +274,7 @@ export function useScopeDraft(scopeId: string | null) {
 
   const startOver = useCallback(() => {
     createSnapshot('Before reset', 'manual-edit')
-    setDraft({ scope: { ...EMPTY_SCOPE, name: draft.scope.name }, agents: [] })
+    setDraft({ scope: { ...EMPTY_SCOPE, name: draft.scope.name }, agents: [], integrations: EMPTY_INTEGRATIONS })
     setChatHistory([])
     setIsDirty(true)
   }, [createSnapshot, draft.scope.name])
@@ -304,6 +311,7 @@ export function useScopeDraft(scopeId: string | null) {
               _deleted: a._deleted,
             })),
           },
+          integrations: draft.integrations,
         }),
       })
 
@@ -357,6 +365,7 @@ export function useScopeDraft(scopeId: string | null) {
     initializeFromApi,
     applyFullConfig,
     applyPatches,
+    applyIntegrations,
     updateScope,
     updateAgent,
     addAgent,

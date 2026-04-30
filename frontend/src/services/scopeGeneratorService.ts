@@ -39,6 +39,74 @@ export interface GeneratedScopeConfig {
   agents: GeneratedAgent[];
 }
 
+// ---------------------------------------------------------------------------
+// Integration types (mirror backend ScopeIntegrations)
+// ---------------------------------------------------------------------------
+
+export interface ScopeIntegrations {
+  mcpServers: Array<{
+    assignmentId?: string;
+    mcpServerId: string;
+    name: string;
+    scopeConfig: Record<string, unknown>;
+  }>;
+  documentGroups: Array<{
+    assignmentId?: string;
+    documentGroupId: string;
+    name: string;
+  }>;
+  imChannels: Array<{
+    id?: string;
+    channelType: string;
+    channelId: string;
+    channelName: string | null;
+    isEnabled: boolean;
+  }>;
+  connectors: Array<{
+    connectorId: string;
+    name: string;
+    displayName: string;
+    connectorType: string;
+    scopeConfig: Record<string, unknown>;
+  }>;
+  plugins: Array<{
+    id?: string;
+    name: string;
+    gitUrl: string;
+    ref: string;
+  }>;
+}
+
+export const EMPTY_INTEGRATIONS: ScopeIntegrations = {
+  mcpServers: [],
+  documentGroups: [],
+  imChannels: [],
+  connectors: [],
+  plugins: [],
+};
+
+export async function fetchScopeIntegrations(scopeId: string): Promise<ScopeIntegrations | null> {
+  const token = getAuthToken();
+  const res = await fetch(`${API_BASE_URL}/api/scope-generator/copilot/scope-integrations?scope_id=${scopeId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data ?? null;
+}
+
+export function parseIntegrations(text: string): ScopeIntegrations | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && ('mcpServers' in parsed || 'documentGroups' in parsed || 'imChannels' in parsed || 'connectors' in parsed || 'plugins' in parsed)) {
+      return { ...EMPTY_INTEGRATIONS, ...parsed };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export interface ConfirmResult {
   scope: { id: string; name: string; description: string; icon: string; color: string };
   agents: Array<{ id: string; name: string; displayName: string; role: string; avatar?: string | null }>;
