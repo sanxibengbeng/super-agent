@@ -643,7 +643,17 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
             ? `Status: Existing scope with ${targetAgents.length} agent(s) — operate in EDITING mode.`
             : 'Status: Empty scope — operate in GENERATION mode.',
           '',
-          'Read scope-config.json for the current configuration.',
+          '## Configuration Files',
+          '- `scope-config.json` — Scope metadata, agents, and skills (read/write)',
+          '- `scope-integrations.json` — MCP servers, document groups, IM channels, connectors, plugins (read/write)',
+          '',
+          '## Organization Resource Catalogs',
+          '- `catalogs/mcp-servers.md` — Available MCP servers (read-only reference)',
+          '- `catalogs/connectors.md` — Available data connectors (read-only reference)',
+          '- `catalogs/document-groups.md` — Available document groups (read-only reference)',
+          '',
+          'Read scope-config.json and scope-integrations.json for the current configuration.',
+          'Read catalogs/*.md to see what resources are available to assign.',
         ];
         await writeFile(join(workspacePath, 'CLAUDE.md'), claudeLines.join('\n'));
 
@@ -664,6 +674,27 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
           await import('fs/promises').then(fs => fs.access(changelogPath));
         } catch {
           await writeFile(changelogPath, `# Changelog\n\n## [v0] ${new Date().toISOString().slice(0, 16)}\n- Initial workspace setup\n`);
+        }
+
+        // Seed organization resource catalogs for the copilot to reference
+        const catalogDir = join(workspacePath, 'catalogs');
+        await mkdir(catalogDir, { recursive: true });
+
+        const { fetchOrgCatalogs, fetchScopeBindings, buildMcpCatalog, buildConnectorCatalog, buildDocGroupCatalog } = await import('../services/scope-copilot-seeder.js');
+        const catalogs = await fetchOrgCatalogs(orgId);
+        await Promise.all([
+          writeFile(join(catalogDir, 'mcp-servers.md'), buildMcpCatalog(catalogs.mcpServers)),
+          writeFile(join(catalogDir, 'connectors.md'), buildConnectorCatalog(catalogs.connectors)),
+          writeFile(join(catalogDir, 'document-groups.md'), buildDocGroupCatalog(catalogs.docGroups)),
+        ]);
+
+        // Seed scope-integrations.json (current bindings) — only if not already present
+        const integrationsPath = join(workspacePath, 'scope-integrations.json');
+        try {
+          await import('fs/promises').then(fs => fs.access(integrationsPath));
+        } catch {
+          const integrations = await fetchScopeBindings(orgId, scope_id);
+          await writeFile(integrationsPath, JSON.stringify(integrations, null, 2));
         }
       }
 
