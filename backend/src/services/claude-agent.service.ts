@@ -185,7 +185,7 @@ export interface TokenUsage {
 }
 
 export interface ConversationEvent {
-  type: 'session_start' | 'assistant' | 'result' | 'heartbeat' | 'error' | 'preview_ready';
+  type: 'session_start' | 'assistant' | 'result' | 'heartbeat' | 'error';
   sessionId?: string;
   content?: ContentBlock[];
   model?: string;
@@ -194,10 +194,6 @@ export interface ConversationEvent {
   code?: string;
   message?: string;
   suggestedAction?: string;
-  /** preview_ready fields */
-  appId?: string;
-  url?: string;
-  appName?: string;
   /** Sub-agent speaker identity — set when the message originates from a sub-agent */
   speakerAgentName?: string;
   speakerAgentAvatar?: string | null;

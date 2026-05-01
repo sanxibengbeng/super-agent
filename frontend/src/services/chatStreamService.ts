@@ -81,21 +81,13 @@ export interface DoneEvent {
   type: 'done';
 }
 
-export interface PreviewReadyEvent {
-  type: 'preview_ready';
-  app_id: string;
-  url: string;
-  name?: string;
-}
-
 export type ChatStreamEvent =
   | SessionStartEvent
   | AssistantEvent
   | ResultEvent
   | HeartbeatEvent
   | ErrorEvent
-  | DoneEvent
-  | PreviewReadyEvent;
+  | DoneEvent;
 
 /**
  * Callbacks for consuming chat stream events.
@@ -106,7 +98,6 @@ export interface ChatStreamCallbacks {
   onResult?: (event: ResultEvent) => void;
   onHeartbeat?: (event: HeartbeatEvent) => void;
   onError?: (event: ErrorEvent) => void;
-  onPreviewReady?: (event: PreviewReadyEvent) => void;
   onDone?: () => void;
 }
 
@@ -271,14 +262,6 @@ export function parseSSEData(data: string, eventName?: string): ChatStreamEvent 
             message: parsed.message ?? parsed.error,
             suggested_action: parsed.suggested_action,
           } satisfies ErrorEvent;
-
-        case 'preview_ready':
-          return {
-            type: 'preview_ready',
-            app_id: parsed.appId ?? parsed.app_id ?? '',
-            url: parsed.url ?? '',
-            name: parsed.appName ?? parsed.name,
-          } satisfies PreviewReadyEvent;
 
         default:
           // Unknown type — return null
@@ -453,10 +436,6 @@ export function streamChat(
                 callbacks.onError?.(event);
                 break;
 
-              case 'preview_ready':
-                callbacks.onPreviewReady?.(event);
-                break;
-
               case 'done':
                 callbacks.onDone?.();
                 break;
@@ -493,9 +472,6 @@ export function streamChat(
               break;
             case 'error':
               callbacks.onError?.(event);
-              break;
-            case 'preview_ready':
-              callbacks.onPreviewReady?.(event);
               break;
             case 'done':
               callbacks.onDone?.();

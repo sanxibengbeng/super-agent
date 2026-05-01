@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useContext, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, Rocket, RefreshCw, ExternalLink, Brain, Download, Users } from 'lucide-react'
+import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, RefreshCw, Brain, Download, Users } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from 'highlight.js'
@@ -10,7 +10,6 @@ import { MessageList, QuickQuestions, WorkspaceExplorer } from '@/components'
 import type { FileNode } from '@/components/WorkspaceExplorer'
 import { SessionHistoryPanel } from '@/components/chat/SessionHistoryPanel'
 import { SaveToMemoryModal } from '@/components/chat/SaveToMemoryModal'
-import { WorkspaceActions } from '@/components/WorkspaceActions'
 import { ChatProvider, ChatContext } from '@/services/ChatContext'
 import { AgentService } from '@/services/agentService'
 import { BusinessScopeService, type BusinessScope } from '@/services/businessScopeService'
@@ -28,7 +27,7 @@ export interface FileTab {
   id: string       // unique key (path)
   name: string     // display name
   path: string     // workspace-relative path or published app URL
-  kind?: 'file' | 'preview' | 'published-preview'
+  kind?: 'file' | 'preview'
 }
 
 const PREVIEWABLE_EXTENSIONS = new Set(['md', 'markdown', 'html', 'htm'])
@@ -594,51 +593,6 @@ function AppPreviewTab({ path, sessionId }: { path: string; sessionId: string })
           title={t('chat.appPreview')}
         />
       )}
-    </div>
-  )
-}
-
-// ============================================================================
-// Published App Preview Tab — iframe preview of a published/preview app
-// ============================================================================
-
-function PublishedAppPreviewTab({ url, name }: { url: string; name: string }) {
-  const { t } = useTranslation()
-  const [refreshCount, setRefreshCount] = useState(0)
-  const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-  const fullUrl = `${baseUrl}${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token || '')}&_r=${refreshCount}`
-
-  return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 bg-gray-900/60 text-xs">
-        <Eye className="w-3.5 h-3.5 text-blue-400" />
-        <span className="text-gray-300 font-medium">{t('chat.preview')}: {name}</span>
-        <div className="flex-1" />
-        <button
-          onClick={() => setRefreshCount(c => c + 1)}
-          className="flex items-center gap-1 px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-          title={t('chat.refreshPreview')}
-        >
-          <RefreshCw className="w-3 h-3" />
-          {t('chat.refresh')}
-        </button>
-        <button
-          onClick={() => window.open(fullUrl, '_blank')}
-          className="flex items-center gap-1 px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-          title={t('chat.openInNewTab')}
-        >
-          <ExternalLink className="w-3 h-3" />
-          {t('chat.popOut')}
-        </button>
-      </div>
-      <iframe
-        key={refreshCount}
-        src={fullUrl}
-        className="flex-1 w-full border-0 bg-white"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        title={`${t('chat.preview')}: ${name}`}
-      />
     </div>
   )
 }
@@ -1732,21 +1686,6 @@ function ChatInterfaceContent() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [fileTabs, activeTab])
 
-  // Listen for preview_ready events from the SSE stream to open an in-app preview tab
-  useEffect(() => {
-    const onPreviewReady = (e: Event) => {
-      const { url, name, appId } = (e as CustomEvent).detail
-      const tabId = `published-preview:${appId}`
-      setFileTabs(prev => {
-        const existing = prev.find(t => t.id === tabId)
-        if (existing) return prev // already open, just activate
-        return [...prev, { id: tabId, name: name || 'Preview', path: url, kind: 'published-preview' as const }]
-      })
-      setActiveTab(tabId)
-    }
-    window.addEventListener('preview-ready', onPreviewReady)
-    return () => window.removeEventListener('preview-ready', onPreviewReady)
-  }, [])
 
   const handleSelectSession = useCallback((sessionId: string) => {
     setFileTabs([])
@@ -1947,11 +1886,6 @@ function ChatInterfaceContent() {
               ) : (
                 <MessageList messages={messages} isTyping={isSending} scrollToTimestamp={scrollToTimestamp} />
               )}
-              <WorkspaceActions
-                sessionId={backendSessionId}
-                refreshKey={wsRefreshKey}
-                onSendMessage={handleSendMessage}
-              />
               <MessageInput onSend={handleSendMessage} onStop={stopGeneration} onUpload={handleUploadFile} sessionId={backendSessionId} businessScopeId={selectedBusinessScopeId} disabled={isSending} isSending={isSending} />
             </>
           )
@@ -1960,8 +1894,6 @@ function ChatInterfaceContent() {
           backendSessionId ? (() => {
             const tab = fileTabs.find(t => t.id === activeTab)
             if (!tab) return null
-            if (tab.kind === 'published-preview')
-              return <PublishedAppPreviewTab url={tab.path} name={tab.name} />
             return tab.kind === 'preview'
               ? <AppPreviewTab path={tab.path} sessionId={backendSessionId} />
               : <FileViewerTab path={tab.path} sessionId={backendSessionId} />

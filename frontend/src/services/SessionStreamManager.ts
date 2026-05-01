@@ -159,12 +159,6 @@ class SessionStreamManager {
             this.notify()
           }
         },
-        onPreviewReady: (event) => {
-          // Dispatch a custom event so Chat.tsx can open an in-app preview tab
-          window.dispatchEvent(new CustomEvent('preview-ready', {
-            detail: { url: event.url, name: event.name || 'Preview', appId: event.app_id },
-          }))
-        },
         onDone: () => {
           const s = this.sessions.get(sessionId)
           if (s) {
@@ -292,10 +286,6 @@ class SessionStreamManager {
                   if (parsed.type === 'assistant' && Array.isArray(parsed.content)) {
                     allBlocks.push(...parsed.content)
                     this.updateMessage(sessionId, aiMessageId, JSON.stringify(allBlocks), parsed.speakerAgentName, parsed.speakerAgentAvatar)
-                  } else if (parsed.type === 'preview_ready' && parsed.url) {
-                    window.dispatchEvent(new CustomEvent('preview-ready', {
-                      detail: { url: parsed.url, name: parsed.appName || 'Preview', appId: parsed.appId },
-                    }))
                   }
                 } catch { /* ignore non-JSON */ }
               }

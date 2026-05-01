@@ -658,22 +658,6 @@ export class ChatService {
     let lastFlushedBlockCount = 0;
     const DB_FLUSH_INTERVAL_MS = 5_000;
 
-    // Listen for external events pushed to the registry by other routes (e.g. preview_ready)
-    const registrySub = streamRegistry.subscribe(sessionId);
-    const onExternalEvent = (event: ConversationEvent) => {
-      if (clientDisconnected) return;
-      // Only forward event types that don't come from the conversation generator
-      if (event.type === 'preview_ready') {
-        try {
-          reply.raw.write(formatSSEEvent({
-            data: JSON.stringify({ type: event.type, appId: event.appId, url: event.url, appName: event.appName }),
-          }));
-        } catch { /* client gone */ }
-      }
-    };
-    if (registrySub) {
-      registrySub.emitter.on('event', onExternalEvent);
-    }
 
     // Track active sub-agent for speaker identity annotation.
     // When a Task tool_use is seen, record the sub-agent info keyed by tool_use_id.
@@ -813,9 +797,6 @@ export class ChatService {
     } finally {
       clearInterval(heartbeatInterval);
       reply.raw.removeListener('close', onClose);
-      if (registrySub) {
-        registrySub.emitter.removeListener('event', onExternalEvent);
-      }
 
       // Flush any sub-agents still tracked as busy (handles interrupted sessions)
       flushActiveSubAgents(hookCtx);
