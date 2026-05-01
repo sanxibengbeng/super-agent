@@ -3580,6 +3580,10 @@ export const translations: TranslationData = {
     en: 'Edit with Copilot',
     cn: 'Copilot 编辑'
   },
+  'scopeProfile.manageAccess': {
+    en: 'Manage access',
+    cn: '管理权限'
+  },
   'scopeProfile.deleteScope': {
     en: 'Delete scope',
     cn: '删除范围'

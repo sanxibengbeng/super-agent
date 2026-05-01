@@ -3,7 +3,7 @@
  * Manages published app file storage in S3 under _published_apps/ prefix.
  */
 
-import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, CopyObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { readdir, stat, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 import { config } from '../config/index.js';
@@ -218,6 +218,86 @@ export class AppStorage {
     } while (continuationToken);
 
     return files;
+  }
+
+  /**
+   * List objects under an arbitrary S3 prefix (same bucket), returning
+   * relative paths and ETags for content comparison.
+   */
+  async listS3Prefix(prefix: string): Promise<{ path: string; etag: string }[]> {
+    const files: { path: string; etag: string }[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const res = await this.s3Client.send(new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }));
+
+      for (const obj of res.Contents ?? []) {
+        if (obj.Key) {
+          const rel = obj.Key.substring(prefix.length);
+          if (rel && !rel.endsWith('/')) {
+            files.push({ path: rel, etag: obj.ETag ?? '' });
+          }
+        }
+      }
+      continuationToken = res.NextContinuationToken;
+    } while (continuationToken);
+
+    return files;
+  }
+
+  /**
+   * Compare two S3 prefixes by file paths and ETags.
+   * Returns true if they contain the same files with identical content.
+   */
+  async prefixesMatch(prefixA: string, prefixB: string): Promise<boolean> {
+    const [filesA, filesB] = await Promise.all([
+      this.listS3Prefix(prefixA),
+      this.listS3Prefix(prefixB),
+    ]);
+
+    if (filesA.length !== filesB.length) return false;
+
+    const mapB = new Map(filesB.map(f => [f.path, f.etag]));
+    return filesA.every(f => mapB.get(f.path) === f.etag);
+  }
+
+  /**
+   * Check whether a specific key exists in S3.
+   */
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.s3Client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Copy all objects from a source prefix to an app's _published_apps/ prefix.
+   * Uses same-bucket CopyObject (server-side, no data transfer).
+   * @returns Count of copied objects
+   */
+  async copyFromPrefix(appId: string, sourcePrefix: string): Promise<number> {
+    const destPrefix = this.getKeyPrefix(appId);
+    const sourceFiles = await this.listS3Prefix(sourcePrefix);
+
+    let copyCount = 0;
+    for (const { path: relPath } of sourceFiles) {
+      if (SKIP_PATTERNS.some(p => relPath.includes(p))) continue;
+
+      await this.s3Client.send(new CopyObjectCommand({
+        Bucket: this.bucket,
+        CopySource: `${this.bucket}/${sourcePrefix}${relPath}`,
+        Key: `${destPrefix}${relPath}`,
+      }));
+      copyCount++;
+    }
+    return copyCount;
   }
 }
 

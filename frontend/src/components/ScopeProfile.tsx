@@ -19,6 +19,8 @@ import { DocGroupsPanel } from './DocGroupsPanel'
 import { RehearsalPanel } from './RehearsalPanel'
 import { MCPCatalogPanel, type CustomMcpServer } from './MCPCatalogPanel'
 import { ConnectorPanel } from './ConnectorPanel'
+import { ScopeAccessPanel } from './ScopeAccessPanel'
+import { useAuth } from '@/services/AuthContext'
 import {
   getAvatarDisplayUrl,
   getAvatarFallback,
@@ -302,6 +304,9 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
   const navigate = useNavigate()
   const { success, error: showError } = useToast()
   const { servers: allServers, getServers, createServer } = useMCP()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin'
+  const [showAccessPanel, setShowAccessPanel] = useState(false)
 
   const [scopeServers, setScopeServers] = useState<ScopeMcpServer[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -671,15 +676,26 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
               <p className="text-xs text-gray-400 mt-0.5 truncate">{scope.description}</p>
             )}
           </div>
-          {onDeleteScope && (
-            <button
-              onClick={() => onDeleteScope(scope.id)}
-              className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-              title={t('scopeProfile.deleteScope')}
-            >
-              <Trash2 className="w-5 h-5" />
-            </button>
-          )}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {isAdmin && (
+              <button
+                onClick={() => setShowAccessPanel(true)}
+                className="p-2 text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
+                title={t('scopeProfile.manageAccess')}
+              >
+                <Shield className="w-5 h-5" />
+              </button>
+            )}
+            {onDeleteScope && (
+              <button
+                onClick={() => onDeleteScope(scope.id)}
+                className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                title={t('scopeProfile.deleteScope')}
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Inline KPI strip */}
@@ -1086,6 +1102,16 @@ export function ScopeProfile({ scope, agents, allAgents = [], onDeleteScope, onA
         onInstall={handleCatalogInstall}
         onCustomInstall={handleCustomInstall}
       />
+
+      {showAccessPanel && (
+        <ScopeAccessPanel
+          scopeId={scope.id}
+          scopeName={scope.name}
+          visibility={scope.visibility}
+          isAdmin={isAdmin}
+          onClose={() => setShowAccessPanel(false)}
+        />
+      )}
     </div>
   )
 }
