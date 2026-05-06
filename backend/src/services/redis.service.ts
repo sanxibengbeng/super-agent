@@ -33,6 +33,8 @@ export type ReleaseLockFn = () => Promise<void>;
 export class RedisService {
   private client: Redis | null = null;
   private initialized = false;
+  private subscriber: Redis | null = null;
+  private patternHandlers: Map<string, (channel: string, message: string) => void> = new Map();
 
   // Default lock settings
   private readonly defaultLockTTL = NODE_LOCK_TTL_MS;
@@ -326,9 +328,77 @@ export class RedisService {
   }
 
   /**
+   * Publish a message to a Redis channel
+   *
+   * @param channel - The channel name
+   * @param message - The message to publish
+   */
+  async publish(channel: string, message: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('Redis service not initialized');
+    }
+    await this.client.publish(channel, message);
+  }
+
+  /**
+   * Subscribe to a Redis channel pattern
+   *
+   * @param pattern - The pattern to subscribe to (e.g., 'workspace:events:*')
+   * @param handler - The handler function to call when a message is received
+   */
+  async psubscribe(pattern: string, handler: (channel: string, message: string) => void): Promise<void> {
+    if (!this.client) {
+      throw new Error('Redis service not initialized');
+    }
+
+    if (!this.subscriber) {
+      this.subscriber = this.client.duplicate();
+      this.subscriber.on('pmessage', (_pattern: string, channel: string, message: string) => {
+        for (const [p, h] of this.patternHandlers.entries()) {
+          if (this.matchPattern(p, channel)) {
+            h(channel, message);
+          }
+        }
+      });
+    }
+
+    this.patternHandlers.set(pattern, handler);
+    await this.subscriber.psubscribe(pattern);
+  }
+
+  /**
+   * Unsubscribe from a Redis channel pattern
+   *
+   * @param pattern - The pattern to unsubscribe from
+   */
+  async punsubscribe(pattern: string): Promise<void> {
+    this.patternHandlers.delete(pattern);
+    if (this.subscriber) {
+      await this.subscriber.punsubscribe(pattern);
+    }
+  }
+
+  /**
+   * Match a pattern against a channel name
+   *
+   * @param pattern - The pattern (e.g., 'workspace:events:*')
+   * @param channel - The channel name
+   * @returns True if the channel matches the pattern
+   */
+  private matchPattern(pattern: string, channel: string): boolean {
+    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+    return regex.test(channel);
+  }
+
+  /**
    * Shutdown the Redis connection gracefully
    */
   async shutdown(): Promise<void> {
+    if (this.subscriber) {
+      await this.subscriber.quit();
+      this.subscriber = null;
+      this.patternHandlers.clear();
+    }
     if (this.client) {
       await this.client.quit();
       this.client = null;
