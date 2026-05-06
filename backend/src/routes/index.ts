@@ -68,6 +68,7 @@ import { tokenUsageRoutes } from './token-usage.routes.js';
 import { showcaseRoutes } from './showcase.routes.js';
 import { llmProxyRoutes } from './llm-proxy.routes.js';
 import { connectorRoutes } from './connectors.routes.js';
+import { workspaceEventsRoutes } from './workspace-events.routes.js';
 
 /**
  * Register all API routes on the Fastify instance.
@@ -238,6 +239,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   // Data Connector Routes (credentials, connectors, scope bindings)
   await fastify.register(connectorRoutes, { prefix: '/api/data-connectors' });
+
+  // Workspace Events Routes (recovery after WebSocket disconnect)
+  await fastify.register(workspaceEventsRoutes, { prefix: '/api' });
 
   // ============================================================================
   // LLM Proxy Routes (OpenAI-compatible, API Key Authentication)
