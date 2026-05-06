@@ -1,4 +1,5 @@
 import { prisma } from '../config/database.js';
+import type { Prisma } from '@prisma/client';
 
 export interface CreateExecutionEventInput {
   task_id: string;
@@ -9,7 +10,14 @@ export interface CreateExecutionEventInput {
 
 class ExecutionEventRepository {
   async create(data: CreateExecutionEventInput) {
-    return prisma.execution_events.create({ data });
+    return prisma.execution_events.create({
+      data: {
+        task_id: data.task_id,
+        session_id: data.session_id,
+        type: data.type,
+        payload: data.payload as Prisma.InputJsonValue,
+      },
+    });
   }
 
   async findAfter(sessionId: string, afterEventId: string | null) {
@@ -35,7 +43,7 @@ class ExecutionEventRepository {
     return prisma.execution_events.findMany({
       where: {
         session_id: sessionId,
-        created_at: { gt: refEvents[0].created_at },
+        created_at: { gt: refEvents[0]!.created_at },
       },
       orderBy: { created_at: 'asc' },
     });
