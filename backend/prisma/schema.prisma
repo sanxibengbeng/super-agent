@@ -66,6 +66,7 @@ model organizations {
   data_connectors            data_connectors[]
   connector_audit_log        connector_audit_log[]
   connector_oauth_providers  connector_oauth_providers[]
+  execution_tasks            execution_tasks[]
 
   @@index([slug])
   @@index([plan_type])
@@ -469,6 +470,8 @@ model chat_sessions {
   room_members        chat_room_members[]
   workflow_executions workflow_executions[]
   twin_session        project_twin_sessions?
+  execution_tasks     execution_tasks[]
+  execution_events    execution_events[]
 
   @@index([organization_id])
   @@index([user_id])
@@ -1746,4 +1749,54 @@ model connector_oauth_providers {
 
   @@unique([organization_id, provider], name: "unique_oauth_provider_per_org")
   @@index([organization_id])
+}
+
+// ============================================================================
+// Execution Tasks - tracks execution intent for workspace event reconciliation
+// ============================================================================
+model execution_tasks {
+  id                  String    @id @default(uuid()) @db.Uuid
+  org_id              String    @db.Uuid
+  session_id          String    @db.Uuid
+  source              String    @db.VarChar(30)   // scope_copilot | workflow | project | twin_session
+  source_entity_id    String?   @db.Uuid
+  runtime             String    @db.VarChar(20)   // claude | agentcore
+  runtime_session_id  String?   @db.VarChar(100)
+  workspace_bucket    String?   @db.VarChar(200)
+  workspace_prefix    String?   @db.VarChar(500)
+  status              String    @default("pending") @db.VarChar(20) // pending | running | completed | failed | timeout | cancelled
+  started_at          DateTime? @db.Timestamptz
+  completed_at        DateTime? @db.Timestamptz
+  error_message       String?
+  created_by          String?   @db.Uuid
+  created_at          DateTime  @default(now()) @db.Timestamptz
+  updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz
+
+  organization    organizations   @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  session         chat_sessions   @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  execution_events execution_events[]
+
+  @@index([session_id])
+  @@index([org_id])
+  @@index([status])
+  @@index([source])
+  @@index([created_at(sort: Desc)])
+}
+
+// ============================================================================
+// Execution Events - persistent event log for workspace change notifications
+// ============================================================================
+model execution_events {
+  id          String   @id @default(uuid()) @db.Uuid
+  task_id     String   @db.Uuid
+  session_id  String   @db.Uuid
+  type        String   @db.VarChar(30) // task_started | task_completed | task_failed | task_timeout | files_changed
+  payload     Json     @default("{}")
+  created_at  DateTime @default(now()) @db.Timestamptz
+
+  task        execution_tasks @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  session     chat_sessions   @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@index([session_id, created_at])
+  @@index([task_id])
 }
