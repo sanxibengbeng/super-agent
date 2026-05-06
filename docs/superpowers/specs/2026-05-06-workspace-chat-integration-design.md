@@ -315,8 +315,10 @@ interface UseWorkspaceEventsOptions {
 
 interface FileChange {
   path: string;
-  content: string;
   action: 'created' | 'modified' | 'deleted';
+  size: number;                   // bytes
+  content?: string;               // Included inline if size < 256KB, otherwise null
+  fetch_url?: string;             // Presigned S3 URL if content omitted
 }
 
 function useWorkspaceEvents(options: UseWorkspaceEventsOptions): {
@@ -411,7 +413,11 @@ Browser closed / network disconnect
 │ Response: {                             │
 │   missed_events: WorkspaceEvent[],      │
 │   current_tasks: ExecutionTask[],       │
-│   notification: string | null           │
+│   summary: {                            │
+│     completed_count: number,            │
+│     failed_count: number,               │
+│     failed_task_ids: string[]           │
+│   } | null                              │
 │ }                                       │
 └──────────────┬──────────────────────────┘
                │
@@ -562,6 +568,14 @@ async reconcileTask(task: ExecutionTask) {
 ### Multi-Instance Safety
 
 Uses existing Redis distributed lock pattern. Only one instance runs reconciler per interval. Lock auto-expires to prevent deadlock if holder crashes.
+
+### Event Retention
+
+`execution_events` table grows with usage. Retention policy:
+- Events older than 7 days are eligible for deletion
+- A scheduled cleanup job (daily) removes expired events
+- Frontend recovery only needs events from the last session interaction (typically minutes to hours)
+- For audit purposes, `execution_tasks` table (compact) is retained indefinitely; only the verbose `execution_events` log is pruned
 
 ## Gradual Migration Strategy
 
