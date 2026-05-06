@@ -29,6 +29,9 @@ import { imService } from './services/im.service.js';
 import { imQueueService } from './services/im-queue.service.js';
 import { distillationService } from './services/distillation.service.js';
 import { redisService } from './services/redis.service.js';
+import { workspaceWebSocketGateway } from './websocket/workspace.gateway.js';
+import { workspaceEventBus } from './services/workspace-event-bus.js';
+import { executionReconciler } from './services/execution-reconciler.service.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   // Configure logger based on environment
@@ -200,6 +203,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Requirements: 5.1, 5.4 - Real-time status updates
   await executionWebSocketGateway.register(app);
 
+  // Register workspace events WebSocket gateway (session-level subscriptions)
+  await workspaceWebSocketGateway.register(app);
+
   // Initialize the event-websocket bridge to forward workflow events to WebSocket clients
   // Requirements: 5.1 - WHEN a node's status changes, emit a Workflow_Event to all subscribed clients
   initializeEventWebSocketBridge();
@@ -226,6 +232,12 @@ export async function buildApp(): Promise<FastifyInstance> {
     // Initialize distillation queue worker for memory extraction
     await distillationService.initialize();
 
+    // Initialize workspace event bus (Redis pub/sub for cross-instance broadcasting)
+    await workspaceEventBus.initialize();
+
+    // Start execution reconciler (checks stale tasks against S3 every 60s)
+    executionReconciler.start();
+
     // Periodic workspace pruning (every hour)
     const workspacePruneInterval = setInterval(async () => {
       try {
@@ -239,6 +251,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     app.addHook('onClose', async () => {
       clearInterval(workspacePruneInterval);
+      executionReconciler.stop();
+      await workspaceEventBus.shutdown();
       briefingScheduler.stop();
       await stopScheduleProcessor();
       stopProjectAutoProcessor();
@@ -278,6 +292,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addHook('onClose', async (_instance) => {
     app.log.info('Server shutting down — disconnecting all Claude Agent SDK sessions...');
     try {
+      workspaceWebSocketGateway.close();
       const count = await claudeAgentService.disconnectAll();
       app.log.info(`Graceful shutdown complete: cleaned up ${count} Claude session(s)`);
       const devCount = devServerManager.stopAll();
