@@ -8,6 +8,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp, Send, RefreshCw, FileCode } from 'lucide-react'
 import { RestProjectService, type Project, type ProjectIssue, type IssueComment, type IssueRelation, type TriageReport } from '@/services/api/restProjectService'
 import { useTranslation } from '@/i18n'
+import { useWorkspaceEvents } from '@/hooks/useWorkspaceEvents'
+import { WorkspaceRecoveryBanner } from '@/components/WorkspaceRecoveryBanner'
 import { WorkspaceExplorer } from '@/components'
 import { TwinSessionPanel } from '@/components/TwinSessionPanel'
 import { CreateTwinSessionModal } from '@/components/CreateTwinSessionModal'
@@ -109,6 +111,40 @@ export function ProjectBoard() {
   const [showCreateTwinModal, setShowCreateTwinModal] = useState(false)
   const [createTwinPreselectedIssueId, setCreateTwinPreselectedIssueId] = useState<string | undefined>()
 
+  // Real-time workspace events — replaces high-frequency polling for status changes
+  const { recoverySummary, dismissRecovery } = useWorkspaceEvents({
+    sessionId: project?.workspace_session_id ?? null,
+    onTaskStarted: (event) => {
+      const issueId = event.payload.issue_id as string
+      if (issueId) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: 'in_progress' } : iss
+        ))
+      }
+    },
+    onTaskCompleted: (event) => {
+      const newStatus = event.payload.new_status as string
+      const issueId = event.payload.issue_id as string
+      if (issueId && newStatus) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: newStatus } : iss
+        ))
+      }
+      loadData()
+    },
+    onTaskFailed: (event) => {
+      const issueId = event.payload.issue_id as string
+      if (issueId) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: 'todo' } : iss
+        ))
+      }
+    },
+    onFilesChanged: () => {
+      setWsRefreshKey(k => k + 1)
+    },
+  })
+
   const loadData = useCallback(async () => {
     if (!projectId) return
     try {
@@ -166,7 +202,7 @@ export function ProjectBoard() {
     }
 
     loadMessages()
-    const interval = setInterval(loadMessages, 3000)
+    const interval = setInterval(loadMessages, 10000)
     return () => clearInterval(interval)
   }, [showConsole, project?.workspace_session_id])
 
@@ -208,7 +244,7 @@ export function ProjectBoard() {
         } catch (err) {
           console.error('Auto-process error:', err)
         }
-      }, 10000)
+      }, 30000)
     }
     return () => {
       if (autoProcessTimerRef.current) clearInterval(autoProcessTimerRef.current)
@@ -438,6 +474,13 @@ export function ProjectBoard() {
 
   return (
     <div className="flex flex-col h-full bg-gray-950">
+      {recoverySummary && (
+        <WorkspaceRecoveryBanner
+          summary={recoverySummary}
+          onDismiss={dismissRecovery}
+          onViewDetails={() => { loadData(); dismissRecovery() }}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
         <div className="flex items-center gap-3">

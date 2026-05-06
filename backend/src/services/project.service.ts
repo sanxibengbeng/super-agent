@@ -6,6 +6,8 @@
 import { prisma } from '../config/database.js';
 import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
+import { workspaceEventBus } from './workspace-event-bus.js';
+import { executionTaskRepository } from '../repositories/execution-task.repository.js';
 
 // ============================================================================
 // Types
@@ -356,6 +358,43 @@ export class ProjectService {
       },
     });
 
+    // Create execution task for workspace event tracking
+    let executionTaskId: string | null = null;
+    try {
+      const { config: appConfig } = await import('../config/index.js');
+      const scopeId = project.business_scope_id;
+      const execTask = await executionTaskRepository.create({
+        org_id: orgId,
+        session_id: sessionId,
+        source: 'project',
+        source_entity_id: issueId,
+        runtime: appConfig.agentRuntime ?? 'claude',
+        workspace_bucket: appConfig.agentcore?.workspaceS3Bucket ?? undefined,
+        workspace_prefix: scopeId ? `${orgId}/${scopeId}/sessions/${sessionId}/` : undefined,
+        created_by: userId,
+      });
+      executionTaskId = execTask.id;
+
+      await executionTaskRepository.update(execTask.id, {
+        status: 'running',
+        started_at: new Date(),
+      });
+
+      await workspaceEventBus.emit({
+        task_id: execTask.id,
+        session_id: sessionId,
+        type: 'task_started',
+        payload: {
+          issue_id: issueId,
+          issue_number: issue.issue_number,
+          issue_title: issue.title,
+          branch_name: branchName,
+        },
+      });
+    } catch (err) {
+      console.warn('[ProjectService] Failed to create execution task or emit event:', err instanceof Error ? err.message : err);
+    }
+
     // Actually send the task to the agent via the workspace session
     const taskMessage = [
       `You are a software developer working on a project.`,
@@ -421,6 +460,24 @@ export class ProjectService {
           metadata: { source: 'project_agent_response', issue_id: issueId },
         }, orgId).catch(() => {});
 
+        // Emit task_completed event via workspace event bus
+        if (executionTaskId) {
+          try {
+            await executionTaskRepository.updateStatusWhere(executionTaskId, 'running', {
+              status: 'completed',
+              completed_at: new Date(),
+            });
+            await workspaceEventBus.emit({
+              task_id: executionTaskId,
+              session_id: sessionId,
+              type: 'task_completed',
+              payload: { issue_id: issueId, new_status: 'in_review' },
+            });
+          } catch (emitErr) {
+            console.warn('[ProjectService] Failed to emit task_completed:', emitErr instanceof Error ? emitErr.message : emitErr);
+          }
+        }
+
         // Auto-transition: move issue to in_review when agent completes
         await this.completeIssueExecution(orgId, projectId, issueId, 'in_review', userId);
       }).catch(async (err) => {
@@ -433,6 +490,25 @@ export class ProjectService {
           mention_agent_id: null,
           metadata: { source: 'project_agent_error', issue_id: issueId },
         }, orgId).catch(() => {});
+
+        // Emit task_failed event via workspace event bus
+        if (executionTaskId) {
+          try {
+            await executionTaskRepository.updateStatusWhere(executionTaskId, 'running', {
+              status: 'failed',
+              completed_at: new Date(),
+              error_message: err instanceof Error ? err.message : 'Unknown error',
+            });
+            await workspaceEventBus.emit({
+              task_id: executionTaskId,
+              session_id: sessionId,
+              type: 'task_failed',
+              payload: { issue_id: issueId, error: err instanceof Error ? err.message : 'Unknown error' },
+            });
+          } catch (emitErr) {
+            console.warn('[ProjectService] Failed to emit task_failed:', emitErr instanceof Error ? emitErr.message : emitErr);
+          }
+        }
 
         // On failure, move back to todo so auto-process can retry or user can intervene
         await this.completeIssueExecution(orgId, projectId, issueId, 'todo', userId);

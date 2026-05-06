@@ -244,6 +244,23 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
           const count = await this.syncBackFromS3(syncS3Prefix, options.workspacePath);
           if (count > 0) {
             console.log(`[agentcore-runtime] Synced back ${count} files from S3 to local workspace`);
+            // Emit files_changed event so frontend knows workspace has updated files
+            try {
+              const { executionTaskRepository } = await import('../repositories/execution-task.repository.js');
+              const { workspaceEventBus } = await import('./workspace-event-bus.js');
+              const tasks = await executionTaskRepository.findBySessionId(chatSessionId);
+              const activeTask = tasks.find((t: { status: string }) => t.status === 'running');
+              if (activeTask) {
+                await workspaceEventBus.emit({
+                  task_id: activeTask.id,
+                  session_id: chatSessionId,
+                  type: 'files_changed',
+                  payload: { source: 'sync_back', file_count: count },
+                });
+              }
+            } catch {
+              // Best effort — don't fail the main flow
+            }
           }
         } catch (err) {
           console.warn('[agentcore-runtime] S3 sync-back failed:', err instanceof Error ? err.message : err);
