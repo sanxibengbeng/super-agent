@@ -140,6 +140,14 @@ export function ProjectBoard() {
         ))
       }
     },
+    onTaskTimeout: (event) => {
+      const issueId = event.payload.issue_id as string
+      if (issueId) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: 'todo' } : iss
+        ))
+      }
+    },
     onFilesChanged: () => {
       setWsRefreshKey(k => k + 1)
     },

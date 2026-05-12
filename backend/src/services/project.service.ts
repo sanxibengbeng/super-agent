@@ -370,7 +370,7 @@ export class ProjectService {
         source_entity_id: issueId,
         runtime: appConfig.agentRuntime ?? 'claude',
         workspace_bucket: appConfig.agentcore?.workspaceS3Bucket ?? undefined,
-        workspace_prefix: scopeId ? `${orgId}/${scopeId}/sessions/${sessionId}/` : undefined,
+        workspace_prefix: scopeId ? `${orgId}/${scopeId}/${sessionId}/` : undefined,
         created_by: userId,
       });
       executionTaskId = execTask.id;
@@ -441,14 +441,37 @@ export class ProjectService {
     console.log(`[ProjectService] Sending task to agent via chatService.processMessage. scopeId=${project.business_scope_id}, agentId=${project.agent_id}`);
     this.executingIssues.add(issueId);
     const { chatService } = await import('./chat.service.js');
-    chatService.processMessage({
+    const { config: runtimeConfig } = await import('../config/index.js');
+    const executionTimeoutMs = runtimeConfig.claude.sessionTimeoutMs || 1800000; // default 30min
+
+    // Write execution status to S3 (__executions__/{taskId}.json)
+    if (executionTaskId) {
+      await this.writeTaskStatus(orgId, project.business_scope_id!, sessionId, executionTaskId, {
+        status: 'running',
+        started_at: new Date().toISOString(),
+        issue_id: issueId,
+        issue_number: issue.issue_number,
+        title: issue.title,
+        branch_name: branchName,
+      });
+    }
+
+    // Wrap processMessage with a timeout
+    const agentPromise = chatService.processMessage({
       sessionId,
       businessScopeId: project.business_scope_id,
       message: taskMessage,
       organizationId: orgId,
       userId,
       systemPromptOverride: devSystemPrompt,
-    }).then(async (result) => {
+      executionTaskId: executionTaskId ?? undefined,
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Agent execution timed out after ${Math.round(executionTimeoutMs / 60000)} minutes`)), executionTimeoutMs);
+    });
+
+    Promise.race([agentPromise, timeoutPromise]).then(async (result) => {
         console.log(`[ProjectService] Agent responded for issue ${issueId}. Response length: ${result.text.length}`);
         // Persist agent response
         await chatMessageRepository.create({
@@ -476,6 +499,20 @@ export class ProjectService {
           } catch (emitErr) {
             console.warn('[ProjectService] Failed to emit task_completed:', emitErr instanceof Error ? emitErr.message : emitErr);
           }
+        }
+
+        // Write completed status to S3
+        if (executionTaskId) {
+          await this.writeTaskStatus(orgId, project.business_scope_id!, sessionId, executionTaskId, {
+            status: 'completed',
+            started_at: updated.updated_at?.toISOString?.() ?? new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+            error: null,
+            issue_id: issueId,
+            issue_number: issue.issue_number,
+            title: issue.title,
+            branch_name: branchName,
+          });
         }
 
         // Auto-transition: move issue to in_review when agent completes
@@ -508,6 +545,20 @@ export class ProjectService {
           } catch (emitErr) {
             console.warn('[ProjectService] Failed to emit task_failed:', emitErr instanceof Error ? emitErr.message : emitErr);
           }
+        }
+
+        // Write failed status to S3
+        if (executionTaskId) {
+          await this.writeTaskStatus(orgId, project.business_scope_id!, sessionId, executionTaskId, {
+            status: 'failed',
+            started_at: updated.updated_at?.toISOString?.() ?? new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+            error: err instanceof Error ? err.message : 'Unknown error',
+            issue_id: issueId,
+            issue_number: issue.issue_number,
+            title: issue.title,
+            branch_name: branchName,
+          });
         }
 
         // On failure, move back to todo so auto-process can retry or user can intervene
@@ -621,6 +672,28 @@ export class ProjectService {
     if (!nextTodo) return null;
 
     return this.executeIssue(orgId, projectId, nextTodo.id, userId);
+  }
+
+  private async writeTaskStatus(orgId: string, scopeId: string, sessionId: string, taskId: string, status: Record<string, unknown>) {
+    try {
+      const { config: appConfig } = await import('../config/index.js');
+      const s3Bucket = appConfig.agentcore?.workspaceS3Bucket;
+      if (!s3Bucket) return;
+
+      const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+      const s3Client = new S3Client({ region: appConfig.agentcore?.region || 'us-east-1' });
+      const key = `${orgId}/${scopeId}/${sessionId}/__executions__/${taskId}.json`;
+      const body = JSON.stringify({ task_id: taskId, ...status }, null, 2);
+
+      await s3Client.send(new PutObjectCommand({
+        Bucket: s3Bucket,
+        Key: key,
+        Body: body,
+        ContentType: 'application/json',
+      }));
+    } catch (err) {
+      console.warn('[ProjectService] Failed to write execution status:', err instanceof Error ? err.message : err);
+    }
   }
 
   async updateSettings(orgId: string, projectId: string, userId: string, settings: Record<string, unknown>) {

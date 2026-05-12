@@ -18,7 +18,7 @@
  */
 
 import http from 'http';
-import { S3Client } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { runAgent } from './agent-runner.js';
 import { restoreWorkspaceFromS3, restoreClaudeHomeFromS3 } from './workspace-sync.js';
 import { startClaudeHomeWatcher } from './file-watcher.js';
@@ -103,6 +103,26 @@ async function handleInvocations(
       message: err instanceof Error ? err.message : String(err),
     };
     res.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
+
+    // Layer 1 fallback: write failed execution status if Stop hook didn't fire
+    if (bucket && prefix && payload.execution_task_id) {
+      try {
+        const statusKey = `${prefix}__executions__/${payload.execution_task_id}.json`;
+        await s3.send(new PutObjectCommand({
+          Bucket: bucket,
+          Key: statusKey,
+          Body: JSON.stringify({
+            task_id: payload.execution_task_id,
+            status: 'failed',
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+            error: err instanceof Error ? err.message : String(err),
+            files_modified: [],
+          }, null, 2),
+          ContentType: 'application/json',
+        }));
+      } catch { /* best effort */ }
+    }
   }
 
   res.end();

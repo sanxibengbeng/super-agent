@@ -86,12 +86,26 @@ function createBashSyncHook(bucket: string, prefix: string) {
   };
 }
 
+function getModifiedFilesList(): string[] {
+  try {
+    const output = execSync('git diff --cached --name-only HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null', {
+      cwd: WORKSPACE_DIR,
+      encoding: 'utf-8',
+      maxBuffer: 1024 * 1024,
+    }).trim();
+    return output ? output.split('\n').filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Stop hook: after agent finishes, do a full workspace sync to S3.
  * Catches files created by Bash tool or other indirect means.
  * Also extracts git diff and uploads it as __diff__.json.
+ * If execution_task_id is present, writes __executions__/{taskId}.json (Layer 1).
  */
-function createStopHook(bucket: string, prefix: string) {
+function createStopHook(bucket: string, prefix: string, executionTaskId?: string, startedAt?: string) {
   return async () => {
     try {
       extractAndUploadDiff(bucket, prefix);
@@ -115,6 +129,31 @@ function createStopHook(bucket: string, prefix: string) {
       }
     } catch (err) {
       console.warn('[hook:Stop] ~/.claude sync failed:', err);
+    }
+
+    // Layer 1: Write execution status file to S3
+    if (executionTaskId) {
+      try {
+        const statusKey = `${prefix}__executions__/${executionTaskId}.json`;
+        const modifiedFiles = getModifiedFilesList();
+        const statusData = {
+          task_id: executionTaskId,
+          status: 'completed',
+          started_at: startedAt ?? new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+          error: null,
+          files_modified: modifiedFiles,
+        };
+        await s3.send(new PutObjectCommand({
+          Bucket: bucket,
+          Key: statusKey,
+          Body: JSON.stringify(statusData, null, 2),
+          ContentType: 'application/json',
+        }));
+        console.log(`[hook:Stop] Wrote execution status → s3://${bucket}/${statusKey}`);
+      } catch (err) {
+        console.warn('[hook:Stop] Failed to write execution status:', err);
+      }
     }
 
     return {};
@@ -331,7 +370,7 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
       ],
       Stop: [
         {
-          hooks: [createStopHook(bucket, prefix)],
+          hooks: [createStopHook(bucket, prefix, payload.execution_task_id, new Date().toISOString())],
         },
       ],
     };

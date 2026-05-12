@@ -25,6 +25,8 @@ export interface AgentPayload {
   workspace_s3_region?: string;
   /** S3 prefix — workspace files are at s3://{bucket}/{prefix}{relativePath} */
   workspace_s3_prefix?: string;
+  /** Execution task ID for writing __executions__/{taskId}.json status files */
+  execution_task_id?: string;
 }
 
 // ---------------------------------------------------------------------------

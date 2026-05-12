@@ -4292,6 +4292,11 @@ export const translations: TranslationData = {
   'projectCopilot.quickExecute': { en: 'Execute next', cn: '执行下一个' },
   'projectCopilot.inputPlaceholder': { en: 'Ask about your project...', cn: '关于项目的任何问题...' },
   'projectCopilot.noIssues': { en: 'No issues yet', cn: '暂无任务' },
+  'projectCopilot.askAboutIssue': { en: 'Ask Copilot', cn: '询问副驾' },
+  'projectCopilot.startTwin': { en: 'Start Twin', cn: '启动分身' },
+  'projectCopilot.executeIssue': { en: 'Execute with Agent', cn: 'Agent 执行' },
+  'projectCopilot.executing': { en: 'Executing...', cn: '执行中...' },
+  'projectCopilot.activity': { en: 'Activity', cn: '动态' },
 
   // Twin Session
   'twinSession.title': { en: 'Twin Sessions', cn: '分身会话' },

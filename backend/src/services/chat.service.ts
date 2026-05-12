@@ -241,6 +241,8 @@ export class ChatService {
     userId: string;
     /** Override the agent's system prompt (used by Project module to inject dev-focused instructions) */
     systemPromptOverride?: string;
+    /** Execution task ID for workspace event tracking */
+    executionTaskId?: string;
   }): Promise<{ text: string; sessionId: string; contentBlocks: ContentBlock[] }> {
     const result = await this.prepareScopeSession(
       options.organizationId,
@@ -279,6 +281,7 @@ export class ChatService {
           userId: options.userId,
           workspacePath,
           scopeId: options.businessScopeId,
+          executionTaskId: options.executionTaskId,
         },
         agentConfig,
         skills,

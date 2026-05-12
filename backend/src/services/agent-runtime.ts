@@ -41,6 +41,8 @@ export interface AgentRuntimeOptions {
   workspacePath?: string;
   /** Business scope ID (required for AgentCore runtime). */
   scopeId?: string;
+  /** Execution task ID — enables status file writes in __executions__/{taskId}.json */
+  executionTaskId?: string;
 }
 
 // ---------------------------------------------------------------------------

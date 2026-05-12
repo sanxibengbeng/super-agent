@@ -132,6 +132,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       workspace_s3_bucket: this.workspaceBucket,
       workspace_s3_region: config.agentcore.workspaceS3Region,
       workspace_s3_prefix: s3Prefix,
+      execution_task_id: options.executionTaskId ?? undefined,
     });
 
     console.log(`[agentcore-runtime] S3 workspace: s3://${this.workspaceBucket}/${s3Prefix}`);

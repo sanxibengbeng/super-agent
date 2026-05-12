@@ -1,9 +1,10 @@
 // frontend/src/pages/ProjectCopilot.tsx
 import { useState, useEffect, useCallback, useContext } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, Settings, MessageSquare, File as FileIcon, Users, X } from 'lucide-react'
+import { ArrowLeft, Loader2, Settings, MessageSquare, File as FileIcon, Users, X, Play, ChevronRight, Pencil, Check } from 'lucide-react'
 import { useTranslation } from '@/i18n'
-import { RestProjectService, type Project, type ProjectIssue, type IssueRelation } from '@/services/api/restProjectService'
+import { useWorkspaceEvents } from '@/hooks/useWorkspaceEvents'
+import { RestProjectService, type Project, type ProjectIssue, type IssueRelation, type IssueComment } from '@/services/api/restProjectService'
 import { RestTwinSessionService, type TwinSessionSummary } from '@/services/api/restTwinSessionService'
 import { ChatProvider, ChatContext } from '@/services/ChatContext'
 import { MessageList, WorkspaceExplorer } from '@/components'
@@ -100,12 +101,59 @@ function ProjectCopilotContent({
   const [relations, setRelations] = useState<IssueRelation[]>([])
   const [twinSessions, setTwinSessions] = useState<TwinSessionSummary[]>([])
   const [showKanban, setShowKanban] = useState(false)
+  const [showCreateIssue, setShowCreateIssue] = useState(false)
+  const [newIssueTitle, setNewIssueTitle] = useState('')
+  const [newIssueLane, setNewIssueLane] = useState('backlog')
+  const [newIssuePriority, setNewIssuePriority] = useState('medium')
+  const [selectedIssue, setSelectedIssue] = useState<ProjectIssue | null>(null)
   const [showCreateTwin, setShowCreateTwin] = useState(false)
   const [createTwinIssueId, setCreateTwinIssueId] = useState<string | undefined>()
 
   // Workspace refresh
   const [wsRefreshKey, setWsRefreshKey] = useState(0)
   const [panelWidth, setPanelWidth] = useState(288)
+
+  // Real-time workspace events
+  useWorkspaceEvents({
+    sessionId: project.workspace_session_id ?? null,
+    onTaskStarted: (event) => {
+      const issueId = event.payload.issue_id as string
+      if (issueId) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: 'in_progress' } : iss
+        ))
+      }
+    },
+    onTaskCompleted: (event) => {
+      const newStatus = event.payload.new_status as string
+      const issueId = event.payload.issue_id as string
+      if (issueId && newStatus) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: newStatus } : iss
+        ))
+      }
+      loadBoardData()
+    },
+    onTaskFailed: (event) => {
+      const issueId = event.payload.issue_id as string
+      if (issueId) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: 'todo' } : iss
+        ))
+      }
+    },
+    onTaskTimeout: (event) => {
+      const issueId = event.payload.issue_id as string
+      if (issueId) {
+        setIssues(prev => prev.map(iss =>
+          iss.id === issueId ? { ...iss, status: 'todo' } : iss
+        ))
+      }
+    },
+    onFilesChanged: () => {
+      setWsRefreshKey(k => k + 1)
+    },
+  })
 
   // File and twin session tabs
   const [fileTabs, setFileTabs] = useState<FileTab[]>([])
@@ -148,14 +196,28 @@ function ProjectCopilotContent({
     }
 
     fetchData()
-    const interval = setInterval(fetchData, 10000)
+    const interval = setInterval(fetchData, 30000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [projectId])
 
   const executingIssue = issues.find(i => i.status === 'in_progress' && i.workspace_session_id)
 
   const handleIssueClick = (issue: ProjectIssue) => {
-    sendMessage(`Tell me about issue #${issue.issue_number}: ${issue.title}`)
+    setSelectedIssue(issue)
+  }
+
+  const handleCreateIssue = async () => {
+    if (!projectId || !newIssueTitle.trim()) return
+    await RestProjectService.createIssue(projectId, {
+      title: newIssueTitle.trim(),
+      status: newIssueLane,
+      priority: newIssuePriority,
+    })
+    setNewIssueTitle('')
+    setNewIssuePriority('medium')
+    setNewIssueLane('backlog')
+    setShowCreateIssue(false)
+    loadBoardData()
   }
 
   const handleDrop = async (issueId: string, newStatus: string) => {
@@ -352,7 +414,7 @@ function ProjectCopilotContent({
           }}
           onCreateIssue={() => {
             setShowKanban(false)
-            sendMessage('Create a new issue for me')
+            setShowCreateIssue(true)
           }}
         />
       )}
@@ -370,6 +432,69 @@ function ProjectCopilotContent({
             setShowCreateTwin(false)
           }}
         />
+      )}
+
+      {/* Issue Detail Panel */}
+      {selectedIssue && (
+        <IssueDetailPanel
+          issue={selectedIssue}
+          projectId={projectId!}
+          onClose={() => setSelectedIssue(null)}
+          onStatusChange={async (status) => {
+            await RestProjectService.changeStatus(projectId!, selectedIssue.id, status)
+            loadBoardData()
+            setSelectedIssue({ ...selectedIssue, status })
+          }}
+          onExecute={async () => {
+            await RestProjectService.executeIssue(projectId!, selectedIssue.id)
+            loadBoardData()
+            setSelectedIssue({ ...selectedIssue, status: 'in_progress' })
+          }}
+          onUpdate={async (fields) => {
+            const updated = await RestProjectService.updateIssue(projectId!, selectedIssue.id, fields)
+            loadBoardData()
+            setSelectedIssue({ ...selectedIssue, ...updated })
+          }}
+          onAskCopilot={() => {
+            setSelectedIssue(null)
+            sendMessage(`Tell me about issue #${selectedIssue.issue_number}: ${selectedIssue.title}`)
+          }}
+          onStartTwin={() => {
+            setSelectedIssue(null)
+            handleOpenCreateTwin(selectedIssue.id)
+          }}
+        />
+      )}
+
+      {/* Create Issue Dialog */}
+      {showCreateIssue && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowCreateIssue(false)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-96 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-white mb-4">{t('project.newIssue')}</h3>
+            <div className="space-y-3">
+              <input value={newIssueTitle} onChange={e => setNewIssueTitle(e.target.value)} placeholder={t('project.issueTitlePlaceholder')} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500" autoFocus onKeyDown={e => e.key === 'Enter' && handleCreateIssue()} />
+              <div className="grid grid-cols-2 gap-2">
+                <select value={newIssueLane} onChange={e => setNewIssueLane(e.target.value)} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none">
+                  <option value="backlog">{t('project.backlog')}</option>
+                  <option value="todo">{t('project.todo')}</option>
+                  <option value="in_progress">{t('project.inProgress')}</option>
+                  <option value="in_review">{t('project.inReview')}</option>
+                  <option value="done">{t('project.done')}</option>
+                </select>
+                <select value={newIssuePriority} onChange={e => setNewIssuePriority(e.target.value)} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none">
+                  <option value="critical">{t('project.criticalPriority')}</option>
+                  <option value="high">{t('project.highPriority')}</option>
+                  <option value="medium">{t('project.mediumPriority')}</option>
+                  <option value="low">{t('project.lowPriority')}</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowCreateIssue(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white">{t('common.cancel')}</button>
+                <button onClick={handleCreateIssue} disabled={!newIssueTitle.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-xs rounded-lg transition-colors">{t('common.create')}</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -450,6 +575,238 @@ function ProjectMessageInput({
             {t('chat.send')}
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+const STATUS_FLOW: Record<string, string[]> = {
+  backlog: ['todo'],
+  todo: ['in_progress'],
+  in_progress: ['in_review', 'done'],
+  in_review: ['done', 'todo'],
+  done: [],
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  backlog: 'bg-gray-600/20 text-gray-400 border-gray-600/30',
+  todo: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
+  in_progress: 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30',
+  in_review: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
+  done: 'bg-green-600/20 text-green-400 border-green-600/30',
+}
+
+function IssueDetailPanel({
+  issue,
+  projectId,
+  onClose,
+  onStatusChange,
+  onExecute,
+  onUpdate,
+  onAskCopilot,
+  onStartTwin,
+}: {
+  issue: ProjectIssue
+  projectId: string
+  onClose: () => void
+  onStatusChange: (status: string) => Promise<void>
+  onExecute: () => Promise<void>
+  onUpdate: (fields: Partial<{ title: string; description: string; priority: string }>) => Promise<void>
+  onAskCopilot: () => void
+  onStartTwin: () => void
+}) {
+  const { t } = useTranslation()
+  const [comments, setComments] = useState<IssueComment[]>([])
+  const [isExecuting, setIsExecuting] = useState(false)
+  const [isTransitioning, setIsTransitioning] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(issue.title)
+  const [editDesc, setEditDesc] = useState(issue.description ?? '')
+  const [isSaving, setIsSaving] = useState(false)
+
+  useEffect(() => {
+    RestProjectService.listComments(projectId, issue.id)
+      .then(setComments)
+      .catch(() => setComments([]))
+  }, [projectId, issue.id])
+
+  const nextStatuses = STATUS_FLOW[issue.status] ?? []
+  const canExecute = issue.status === 'todo' || issue.status === 'backlog'
+
+  const handleExecute = async () => {
+    setIsExecuting(true)
+    try { await onExecute() } finally { setIsExecuting(false) }
+  }
+
+  const handleTransition = async (status: string) => {
+    setIsTransitioning(true)
+    try { await onStatusChange(status) } finally { setIsTransitioning(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex justify-end z-50" onClick={onClose}>
+      <div className="w-[440px] h-full bg-gray-900 border-l border-gray-700 flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">#{issue.issue_number}</span>
+            <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUS_COLORS[issue.status] ?? STATUS_COLORS.backlog}`}>
+              {issue.status.replace(/_/g, ' ')}
+            </span>
+            <span className={`text-xs px-1.5 py-0.5 rounded ${
+              issue.priority === 'critical' ? 'bg-red-600/20 text-red-400' :
+              issue.priority === 'high' ? 'bg-orange-600/20 text-orange-400' :
+              issue.priority === 'medium' ? 'bg-yellow-600/20 text-yellow-400' :
+              'bg-gray-600/20 text-gray-400'
+            }`}>{issue.priority}</span>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-gray-500 hover:text-white rounded transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {isEditing ? (
+            <>
+              <input
+                value={editTitle}
+                onChange={e => setEditTitle(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white outline-none focus:border-blue-500"
+              />
+              <textarea
+                value={editDesc}
+                onChange={e => setEditDesc(e.target.value)}
+                rows={8}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 outline-none focus:border-blue-500 resize-y"
+                placeholder={t('project.description')}
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    setIsSaving(true)
+                    try {
+                      await onUpdate({ title: editTitle.trim(), description: editDesc.trim() })
+                      setIsEditing(false)
+                    } finally { setIsSaving(false) }
+                  }}
+                  disabled={isSaving || !editTitle.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
+                >
+                  {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                  {t('common.save')}
+                </button>
+                <button
+                  onClick={() => { setIsEditing(false); setEditTitle(issue.title); setEditDesc(issue.description ?? '') }}
+                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <h2 className="text-sm font-semibold text-white">{issue.title}</h2>
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="p-1 text-gray-500 hover:text-white rounded transition-colors flex-shrink-0"
+                  title={t('common.edit')}
+                >
+                  <Pencil size={12} />
+                </button>
+              </div>
+              {issue.description && (
+                <p className="text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">{issue.description}</p>
+              )}
+            </>
+          )}
+
+          {/* Status Actions */}
+          <div className="space-y-2">
+            {canExecute && (
+              <button
+                onClick={handleExecute}
+                disabled={isExecuting}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                {isExecuting ? t('projectCopilot.executing') : t('projectCopilot.executeIssue')}
+              </button>
+            )}
+
+            {nextStatuses.length > 0 && (
+              <div className="flex gap-2">
+                {nextStatuses.map(status => (
+                  <button
+                    key={status}
+                    onClick={() => handleTransition(status)}
+                    disabled={isTransitioning}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
+                  >
+                    <ChevronRight size={12} />
+                    {status.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Acceptance Criteria */}
+          {issue.acceptance_criteria && issue.acceptance_criteria.length > 0 && (
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
+              <span className="text-[10px] font-medium text-blue-400 mb-1 block">{t('project.acceptanceCriteria')}</span>
+              <ul className="space-y-1">
+                {issue.acceptance_criteria.map((ac, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-xs text-gray-300">
+                    <span className={ac.verified ? 'text-green-400' : 'text-gray-600'}>{ac.verified ? '✓' : '○'}</span>
+                    {ac.criterion}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Readiness Score */}
+          {issue.readiness_score != null && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-500">{t('project.readinessScore')}</span>
+              <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full" style={{ width: `${issue.readiness_score}%` }} />
+              </div>
+              <span className="text-[10px] text-gray-400">{issue.readiness_score}%</span>
+            </div>
+          )}
+
+          {/* Activity / Comments */}
+          {comments.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-gray-800">
+              <span className="text-[10px] font-medium text-gray-500 uppercase">{t('projectCopilot.activity')}</span>
+              {comments.slice(-10).map(c => (
+                <div key={c.id} className="text-xs text-gray-400 pl-2 border-l-2 border-gray-700/50">
+                  <p className="whitespace-pre-wrap">{c.content}</p>
+                  <span className="text-[10px] text-gray-600">{new Date(c.created_at).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="border-t border-gray-800 px-4 py-3 flex gap-2">
+          <button
+            onClick={onAskCopilot}
+            className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors"
+          >
+            {t('projectCopilot.askAboutIssue')}
+          </button>
+          <button
+            onClick={onStartTwin}
+            className="flex-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-xs rounded-lg transition-colors"
+          >
+            {t('projectCopilot.startTwin')}
+          </button>
+        </div>
       </div>
     </div>
   )
