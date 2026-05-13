@@ -18,3 +18,4 @@ frontend/.env.production
 # Git worktrees
 .worktrees/
 .superpowers/
+.playwright-mcp/
