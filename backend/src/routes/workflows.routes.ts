@@ -18,6 +18,7 @@ import { workspaceManager } from '../services/workspace-manager.js';
 import { businessScopeService } from '../services/businessScope.service.js';
 import { mkdir, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
+import { safeParseJson } from '../utils/json-repair.js';
 import { agentCoreCommandService } from '../services/agentcore-command.service.js';
 import {
   createWorkflowSchema,
@@ -1183,9 +1184,11 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
       const workspacePath = workspaceManager.getSessionWorkspacePath(orgId, copilotScope.id, sessionId);
 
       const tryParse = (content: string) => {
-        const parsed = JSON.parse(content);
-        if (!parsed.title || !Array.isArray(parsed.tasks)) return null;
-        return parsed;
+        const parsed = safeParseJson(content);
+        if (!parsed || typeof parsed !== 'object') return null;
+        const obj = parsed as Record<string, unknown>;
+        if (!obj.title || !Array.isArray(obj.tasks)) return null;
+        return obj;
       };
 
       // 1. Local filesystem (non-AgentCore mode)

@@ -804,21 +804,32 @@ export class ChatService {
       // Flush any sub-agents still tracked as busy (handles interrupted sessions)
       flushActiveSubAgents(hookCtx);
 
-      // If the agent wrote a scope-config.json, emit it before [DONE]
-      // so the scope copilot frontend can pick it up regardless of how the
-      // agent wrote the file (Write tool, Bash + python, etc.).
-      if (!clientDisconnected && workspacePath && options.source === 'scope_copilot') {
+      // Emit workspace file content before [DONE] so the frontend can apply
+      // it immediately — avoids a separate fetch that may race with S3 sync.
+      if (!clientDisconnected && workspacePath) {
         try {
           const { readFile: rf } = await import('fs/promises');
           const { join: pjoin } = await import('path');
-          const configContent = await rf(pjoin(workspacePath, 'scope-config.json'), 'utf-8');
-          const parsed = JSON.parse(configContent);
-          if (parsed.scope && Array.isArray(parsed.agents)) {
-            reply.raw.write(formatSSEEvent({
-              data: JSON.stringify({ type: 'scope_config', content: configContent }),
-            }));
+
+          if (options.source === 'scope_copilot') {
+            const configContent = await rf(pjoin(workspacePath, 'scope-config.json'), 'utf-8');
+            const parsed = JSON.parse(configContent);
+            if (parsed.scope && Array.isArray(parsed.agents)) {
+              reply.raw.write(formatSSEEvent({
+                data: JSON.stringify({ type: 'scope_config', content: configContent }),
+              }));
+            }
+          } else if (options.source === 'workflow_copilot') {
+            const { safeParseJson } = await import('../utils/json-repair.js');
+            const rawContent = await rf(pjoin(workspacePath, 'workflow.json'), 'utf-8');
+            const parsed = safeParseJson(rawContent);
+            if (parsed && typeof parsed === 'object' && (parsed as any).title && Array.isArray((parsed as any).tasks)) {
+              reply.raw.write(formatSSEEvent({
+                data: JSON.stringify({ type: 'workflow_config', content: JSON.stringify(parsed) }),
+              }));
+            }
           }
-        } catch { /* no scope-config.json or invalid — skip */ }
+        } catch { /* file not found or invalid — skip */ }
       }
 
       // Send [DONE] immediately so the frontend can stop the loading indicator.

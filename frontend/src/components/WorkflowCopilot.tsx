@@ -74,7 +74,7 @@ interface WorkflowCopilotProps {
 // ---------------------------------------------------------------------------
 
 interface SSEChunk {
-  type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error'
+  type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'workflow_config'
   text?: string
   error?: string
   toolName?: string
@@ -83,6 +83,8 @@ interface SSEChunk {
   isError?: boolean
   durationMs?: number
   numTurns?: number
+  /** JSON string of the workflow plan, emitted by backend before [DONE] */
+  workflowConfigContent?: string
 }
 
 async function* streamSSE(
@@ -133,6 +135,10 @@ async function* streamSSE(
           yield { type: 'result', durationMs: event.durationMs, numTurns: event.numTurns }
           continue
         }
+        if (event.type === 'workflow_config' && event.content) {
+          yield { type: 'workflow_config', workflowConfigContent: event.content }
+          continue
+        }
         if ((event.type === 'assistant') && event.content && Array.isArray(event.content)) {
           for (const block of event.content) {
             if (block.type === 'text' && block.text) {
@@ -155,45 +161,55 @@ async function* streamSSE(
 // Parsers
 // ---------------------------------------------------------------------------
 
-function fixUnescapedControlChars(json: string): string {
-  // Walk the string character by character, tracking whether we're inside a JSON string value.
-  // Replace raw control characters (U+0000–U+001F) with their escaped forms.
-  // All characters in this range are illegal unescaped inside JSON strings.
+function isStringClose(raw: string, pos: number): boolean {
+  let j = pos + 1
+  const len = raw.length
+  while (j < len && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++
+  if (j >= len) return true
+  const next = raw[j]
+  return next === ',' || next === '}' || next === ']' || next === ':'
+}
+
+function repairJson(raw: string): string {
   const out: string[] = []
+  let i = 0
+  const len = raw.length
   let inString = false
-  let escaped = false
-  for (let i = 0; i < json.length; i++) {
-    const ch = json[i]
-    if (escaped) {
+  while (i < len) {
+    const ch = raw[i]
+    if (!inString) {
+      if (ch === '"') inString = true
       out.push(ch)
-      escaped = false
+      i++
       continue
     }
-    if (ch === '\\' && inString) {
+    if (ch === '\\') {
       out.push(ch)
-      escaped = true
+      i++
+      if (i < len) { out.push(raw[i]); i++ }
       continue
     }
     if (ch === '"') {
-      inString = !inString
-      out.push(ch)
+      if (isStringClose(raw, i)) {
+        inString = false
+        out.push(ch)
+      } else {
+        out.push('\\"')
+      }
+      i++
       continue
     }
-    if (inString) {
-      const code = ch.charCodeAt(0)
-      if (code < 0x20) {
-        // All control characters U+0000–U+001F must be escaped in JSON strings
-        if (ch === '\n') { out.push('\\n'); continue }
-        if (ch === '\r') { out.push('\\r'); continue }
-        if (ch === '\t') { out.push('\\t'); continue }
-        if (ch === '\b') { out.push('\\b'); continue }
-        if (ch === '\f') { out.push('\\f'); continue }
-        // Other control chars: use \uXXXX escape
-        out.push('\\u' + code.toString(16).padStart(4, '0'))
-        continue
-      }
+    const code = ch.charCodeAt(0)
+    if (code < 0x20) {
+      if (ch === '\n') { out.push('\\n') }
+      else if (ch === '\r') { out.push('\\r') }
+      else if (ch === '\t') { out.push('\\t') }
+      else { out.push('\\u' + code.toString(16).padStart(4, '0')) }
+      i++
+      continue
     }
     out.push(ch)
+    i++
   }
   return out.join('')
 }
@@ -207,9 +223,12 @@ function parseWorkflowPlan(text: string): WorkflowPlan {
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     jsonStr = jsonStr.substring(firstBrace, lastBrace + 1)
   }
-  // Fix unescaped control characters inside JSON string values
-  jsonStr = fixUnescapedControlChars(jsonStr)
-  const parsed = JSON.parse(jsonStr)
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(jsonStr)
+  } catch {
+    parsed = JSON.parse(repairJson(jsonStr))
+  }
   if (!parsed.title || !Array.isArray(parsed.tasks)) {
     throw new Error('Invalid workflow plan: missing title or tasks')
   }
@@ -387,14 +406,10 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
           }
           return { id: m.id, role: 'assistant' as const, content: displayText, status: 'done' as const, steps: [] as IntermediateStep[], timestamp: new Date(m.created_at).getTime() }
         }))
-        if (latestWorkflowJson && onGenerateWorkflow) {
-          try {
-            const plan = parseWorkflowPlan(latestWorkflowJson)
-            const canvasData = workflowPlanToCanvasData(plan)
-            onGenerateWorkflow(canvasData, plan.title, plan.variables)
-          } catch { /* plan parse failed — skip */ }
-        } else if (onGenerateWorkflow && data.messages.length > 0) {
-          // No workflow.json found in chat messages — try workspace fallback (AgentCore mode)
+        if (onGenerateWorkflow && data.messages.length > 0) {
+          // Always prefer workspace-config (ground truth) over message-embedded Write content,
+          // because the agent may use Edit to modify workflow.json without a full Write.
+          let applied = false
           try {
             const cfgRes = await fetch(
               `${API_BASE_URL}/api/workflows/copilot/workflow-config?workflow_id=${workflowId}&version=${encodeURIComponent(version)}`,
@@ -405,8 +420,17 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
               const plan = parseWorkflowPlan(JSON.stringify(cfgData.data))
               const canvasData = workflowPlanToCanvasData(plan)
               onGenerateWorkflow(canvasData, plan.title, plan.variables)
+              applied = true
             }
-          } catch { /* workspace fallback failed */ }
+          } catch { /* workspace fetch failed */ }
+          // Fallback to last Write content in messages if workspace unavailable
+          if (!applied && latestWorkflowJson) {
+            try {
+              const plan = parseWorkflowPlan(latestWorkflowJson)
+              const canvasData = workflowPlanToCanvasData(plan)
+              onGenerateWorkflow(canvasData, plan.title, plan.variables)
+            } catch { /* plan parse failed — skip */ }
+          }
         }
       } catch {
         // non-fatal
@@ -544,7 +568,13 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
 
     try {
       let accumulatedText = ''
-      let workflowJsonContent: string | null = null
+      // Data resolution layers (highest priority first):
+      // 1. workflow_config SSE event (backend reads file + repairs JSON, emitted before [DONE])
+      // 2. Write tool_use content captured during stream (immediate, no network)
+      // 3. GET /copilot/workflow-config API (covers Edit-only cases, stale S3)
+      let workflowConfigFromSSE: string | null = null
+      let workflowJsonFromToolUse: string | null = null
+      let sawWorkflowFileTouch = false
 
       const version = workflowVersion ?? '1'
 
@@ -561,84 +591,66 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
         }
         if (chunk.type === 'tool_use') {
           appendStep(assistantId, { type: 'tool_use', name: chunk.toolName!, input: chunk.toolInput! })
-          // Capture Write tool_use for workflow.json
           if (chunk.toolInput) {
             const input = chunk.toolInput as Record<string, unknown>
-            if (
-              typeof input.file_path === 'string' &&
-              input.file_path.includes('workflow.json') &&
-              typeof input.content === 'string'
-            ) {
-              workflowJsonContent = input.content
+            if (typeof input.file_path === 'string' && input.file_path.includes('workflow.json')) {
+              sawWorkflowFileTouch = true
+              if (typeof input.content === 'string') {
+                workflowJsonFromToolUse = input.content
+              }
             }
           }
         }
         if (chunk.type === 'tool_result') {
           appendStep(assistantId, { type: 'tool_result', content: chunk.toolContent ?? null, isError: chunk.isError ?? false })
         }
-      }
-
-      // Try to apply the workflow plan from the Write tool_use content
-      let applied = false
-      if (workflowJsonContent && onGenerateWorkflow) {
-        try {
-          const plan = parseWorkflowPlan(workflowJsonContent)
-          const newCanvasData = workflowPlanToCanvasData(plan)
-          onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
-          applied = true
-
-          updateMessage(assistantId, {
-            content: accumulatedText || `${hasNodes ? 'Updated' : 'Generated'} workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
-            status: 'done',
-          })
-        } catch {
-          // workflow.json parse failed — show text as-is
-          updateMessage(assistantId, { content: accumulatedText, status: 'done' })
+        if (chunk.type === 'workflow_config' && chunk.workflowConfigContent) {
+          workflowConfigFromSSE = chunk.workflowConfigContent
         }
       }
 
-      // Fallback: if no workflow.json captured from SSE stream, try loading from workspace (AgentCore writes to /workspace/workflow.json)
-      if (!applied && onGenerateWorkflow) {
-        try {
-          const token = getAuthToken()
-          const cfgRes = await fetch(
-            `${API_BASE_URL}/api/workflows/copilot/workflow-config?workflow_id=${workflowId ?? ''}&version=${encodeURIComponent(version)}`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-          )
-          if (cfgRes.ok) {
-            const cfgData = await cfgRes.json() as { data: { title: string; tasks: unknown[]; variables?: unknown[] } }
-            const plan = parseWorkflowPlan(JSON.stringify(cfgData.data))
+      // --- Apply workflow data using layered resolution ---
+      let applied = false
+      if (onGenerateWorkflow && sawWorkflowFileTouch) {
+        // Layer 1: workflow_config SSE event (pre-parsed by backend with JSON repair)
+        const sources = [workflowConfigFromSSE, workflowJsonFromToolUse]
+        for (const src of sources) {
+          if (applied || !src) continue
+          try {
+            const plan = parseWorkflowPlan(src)
             const newCanvasData = workflowPlanToCanvasData(plan)
             onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
             applied = true
-            updateMessage(assistantId, {
-              content: accumulatedText || `${hasNodes ? 'Updated' : 'Generated'} workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
-              status: 'done',
-            })
-          }
-        } catch {
-          // workspace fallback failed — continue to text-based fallback
+          } catch { /* try next source */ }
+        }
+
+        // Layer 3: API fetch (handles cases where neither SSE nor tool_use had valid content)
+        if (!applied) {
+          try {
+            const token = getAuthToken()
+            const cfgRes = await fetch(
+              `${API_BASE_URL}/api/workflows/copilot/workflow-config?workflow_id=${workflowId ?? ''}&version=${encodeURIComponent(version)}`,
+              { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+            )
+            if (cfgRes.ok) {
+              const cfgData = await cfgRes.json() as { data: { title: string; tasks: unknown[]; variables?: unknown[] } }
+              const plan = parseWorkflowPlan(JSON.stringify(cfgData.data))
+              const newCanvasData = workflowPlanToCanvasData(plan)
+              onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
+              applied = true
+            }
+          } catch { /* API fallback failed */ }
         }
       }
 
-      if (!applied) {
-        // No workflow.json written — conversational reply (clarification, etc.)
-        // Also try fallback: parse accumulated text as JSON plan directly
-        if (onGenerateWorkflow && accumulatedText.trim()) {
-          try {
-            const plan = parseWorkflowPlan(accumulatedText)
-            const newCanvasData = workflowPlanToCanvasData(plan)
-            onGenerateWorkflow(newCanvasData, plan.title, plan.variables)
-            updateMessage(assistantId, {
-              content: `${hasNodes ? 'Updated' : 'Generated'} workflow "${plan.title}" with ${plan.tasks.length} tasks.`,
-              status: 'done',
-            })
-          } catch {
-            updateMessage(assistantId, { content: accumulatedText, status: 'done' })
-          }
-        } else {
-          updateMessage(assistantId, { content: accumulatedText, status: 'done' })
-        }
+      // Final message update
+      if (applied) {
+        updateMessage(assistantId, {
+          content: accumulatedText || `${hasNodes ? 'Updated' : 'Generated'} workflow.`,
+          status: 'done',
+        })
+      } else {
+        updateMessage(assistantId, { content: accumulatedText, status: 'done' })
       }
     } catch (err) {
       console.error('Copilot error:', err)
