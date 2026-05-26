@@ -1,14 +1,19 @@
 /**
  * Workspace Manager
- * Manages per-session isolated workspace directories following the canonical
+ * Manages scope-level shared workspace directories following the canonical
  * Claude Code workspace structure:
  *
- *   {baseDir}/{orgId}/{scopeId}/sessions/{sessionId}/
+ *   {baseDir}/{orgId}/{scopeId}/workspace/
  *     CLAUDE.md
  *     .claude/
  *       settings.json
  *       skills/{name}/SKILL.md
  *       agents/{name}.md
+ *
+ * Multiple chat sessions within the same scope share a single workspace
+ * directory, enabling cross-session file visibility. Each session maintains
+ * its own Claude SDK session ID (conversation context isolation) while
+ * operating on the same filesystem.
  *
  * Supports config-version-based lazy refresh so active sessions pick up
  * scope/agent/skill changes on the next conversation turn.
@@ -17,7 +22,7 @@
 import { mkdir, rm, readFile, writeFile, access, readdir, stat, cp, symlink } from 'fs/promises';
 import { join, relative, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createWriteStream } from 'fs';
+import { createWriteStream, existsSync } from 'fs';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
@@ -131,9 +136,27 @@ export class WorkspaceManager {
   // Path helpers
   // =========================================================================
 
-  /** Per-session workspace: {baseDir}/{orgId}/{scopeId}/sessions/{sessionId}/ */
-  getSessionWorkspacePath(orgId: string, scopeId: string, sessionId: string): string {
+  /** Scope-level shared workspace: {baseDir}/{orgId}/{scopeId}/workspace/ */
+  getScopeWorkspacePath(orgId: string, scopeId: string): string {
+    return join(this.baseDir, orgId, scopeId, 'workspace');
+  }
+
+  /** Legacy per-session workspace path. */
+  private getLegacySessionPath(orgId: string, scopeId: string, sessionId: string): string {
     return join(this.baseDir, orgId, scopeId, 'sessions', sessionId);
+  }
+
+  /**
+   * Workspace path for a session. Resolves to the scope-level shared workspace
+   * if it exists, otherwise falls back to the legacy per-session path for
+   * backward compatibility with sessions created before the shared workspace migration.
+   */
+  getSessionWorkspacePath(orgId: string, scopeId: string, sessionId: string): string {
+    const scopePath = this.getScopeWorkspacePath(orgId, scopeId);
+    if (existsSync(scopePath)) return scopePath;
+    const legacyPath = this.getLegacySessionPath(orgId, scopeId, sessionId);
+    if (existsSync(legacyPath)) return legacyPath;
+    return scopePath;
   }
 
   /** Legacy per-agent workspace path (kept for backward compat). */
@@ -146,12 +169,14 @@ export class WorkspaceManager {
   }
 
   // =========================================================================
-  // Session workspace provisioning
+  // Scope workspace provisioning (shared across sessions)
   // =========================================================================
 
   /**
-   * Provision a brand-new session workspace with all scope artifacts.
-   * Called once when a chat session is first created.
+   * Ensure the scope-level shared workspace exists with all scope artifacts.
+   * Multiple sessions share this workspace — provisioning is idempotent.
+   * The sessionId parameter is retained for backward compatibility but only
+   * used in log messages; the actual path is scope-level.
    */
   async ensureSessionWorkspace(
     orgId: string,
@@ -159,9 +184,9 @@ export class WorkspaceManager {
     scope: ScopeForWorkspace,
     selectedAgentId: string | null,
   ): Promise<{ workspacePath: string; pluginPaths: string[] }> {
-    const workspacePath = this.getSessionWorkspacePath(orgId, scope.id, sessionId);
+    const workspacePath = this.getScopeWorkspacePath(orgId, scope.id);
 
-    // Create directory structure
+    // Create directory structure (idempotent — mkdir recursive is safe)
     await mkdir(join(workspacePath, '.claude', 'skills'), { recursive: true });
     await mkdir(join(workspacePath, '.claude', 'agents'), { recursive: true });
 
@@ -266,7 +291,7 @@ export class WorkspaceManager {
   // =========================================================================
 
   /**
-   * Check if the session workspace is up-to-date with the scope's config_version.
+   * Check if the scope workspace is up-to-date with the scope's config_version.
    * If stale, refresh the workspace files. Returns true if a refresh happened.
    */
   async ensureWorkspaceUpToDate(
@@ -1042,11 +1067,11 @@ export class WorkspaceManager {
   async listWorkspaceFilesFromS3(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    _sessionId: string,
     bucket?: string,
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    const prefix = `${orgId}/${scopeId}/${sessionId}/`;
+    const prefix = `${orgId}/${scopeId}/workspace/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -1132,11 +1157,11 @@ export class WorkspaceManager {
   async listClaudeHomeFromS3(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    _sessionId: string,
     bucket?: string,
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    const prefix = `${orgId}/${scopeId}/${sessionId}/__claude_home__/`;
+    const prefix = `${orgId}/${scopeId}/workspace/__claude_home__/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -1246,7 +1271,7 @@ export class WorkspaceManager {
       // In agentcore mode, also delete from S3
       if (config.agentRuntime === 'agentcore') {
         await this.deleteS3Prefix(
-          `${orgId}/${scopeId}/${sessionId}/.claude/skills/${skillName}/`,
+          `${orgId}/${scopeId}/workspace/.claude/skills/${skillName}/`,
         ).catch(err => console.warn('[workspace-manager] S3 delete failed:', err));
       }
 
@@ -1320,11 +1345,11 @@ export class WorkspaceManager {
   async readWorkspaceFileFromS3(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    _sessionId: string,
     filePath: string,
   ): Promise<string | null> {
     const s3Bucket = config.agentcore.workspaceS3Bucket;
-    const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+    const key = `${orgId}/${scopeId}/workspace/${filePath}`;
     try {
       const { GetObjectCommand } = await import('@aws-sdk/client-s3');
       const response = await this.s3Client.send(new GetObjectCommand({
@@ -1347,11 +1372,11 @@ export class WorkspaceManager {
   async readWorkspaceFileFromS3Raw(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    _sessionId: string,
     filePath: string,
   ): Promise<Buffer | null> {
     const s3Bucket = config.agentcore.workspaceS3Bucket;
-    const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+    const key = `${orgId}/${scopeId}/workspace/${filePath}`;
     try {
       const { GetObjectCommand } = await import('@aws-sdk/client-s3');
       const response = await this.s3Client.send(new GetObjectCommand({
@@ -1399,7 +1424,7 @@ export class WorkspaceManager {
       // In agentcore mode, also upload to S3 so the container picks it up
       if (config.agentRuntime === 'agentcore') {
         const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-        const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+        const key = `${orgId}/${scopeId}/workspace/${filePath}`;
         await this.s3Client.send(new PutObjectCommand({
           Bucket: config.agentcore.workspaceS3Bucket,
           Key: key,
@@ -1421,11 +1446,11 @@ export class WorkspaceManager {
   async writeWorkspaceFileRaw(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    _sessionId: string,
     filePath: string,
     content: Buffer,
   ): Promise<boolean> {
-    const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
+    const workspacePath = this.getScopeWorkspacePath(orgId, scopeId);
     const resolved = join(workspacePath, filePath);
     if (!resolved.startsWith(workspacePath)) return false;
     try {
@@ -1435,7 +1460,7 @@ export class WorkspaceManager {
       // In agentcore mode, also upload to S3 so the container picks it up
       if (config.agentRuntime === 'agentcore') {
         const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-        const key = `${orgId}/${scopeId}/${sessionId}/${filePath}`;
+        const key = `${orgId}/${scopeId}/workspace/${filePath}`;
         await this.s3Client.send(new PutObjectCommand({
           Bucket: config.agentcore.workspaceS3Bucket,
           Key: key,

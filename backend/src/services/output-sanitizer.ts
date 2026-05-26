@@ -22,7 +22,12 @@ function buildPatterns(): { pattern: RegExp; replacement: string }[] {
   // Workspace base dir (most specific — must come first)
   const wsBase = config.claude.workspaceBaseDir;
   if (wsBase) {
-    // Match the full session workspace path: base/orgId/scopeId/sessions/sessionId
+    // Match the scope workspace path: base/orgId/scopeId/workspace
+    patterns.push({
+      pattern: new RegExp(escapeRegex(wsBase) + '/[a-f0-9-]+/[a-f0-9-]+/workspace', 'g'),
+      replacement: '/workspace',
+    });
+    // Legacy: match old session-level paths for backward compat
     patterns.push({
       pattern: new RegExp(escapeRegex(wsBase) + '/[a-f0-9-]+/[a-f0-9-]+/sessions/[a-f0-9-]+', 'g'),
       replacement: '/workspace',

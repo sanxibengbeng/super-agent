@@ -328,6 +328,15 @@ export function SkillsPanel({ open, onClose, sessionId }: SkillsPanelProps) {
 
   const installedNames = new Set(installedSkills.map(s => s.name))
 
+  useEffect(() => {
+    if (!open) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   if (!open) return null
 
   return (

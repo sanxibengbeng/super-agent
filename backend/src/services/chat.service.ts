@@ -812,11 +812,12 @@ export class ChatService {
           const { join: pjoin } = await import('path');
 
           if (options.source === 'scope_copilot') {
+            const { safeParseJson: safeParse } = await import('../utils/json-repair.js');
             const configContent = await rf(pjoin(workspacePath, 'scope-config.json'), 'utf-8');
-            const parsed = JSON.parse(configContent);
-            if (parsed.scope && Array.isArray(parsed.agents)) {
+            const parsed = safeParse(configContent) as Record<string, unknown> | null;
+            if (parsed && parsed.scope && Array.isArray(parsed.agents)) {
               reply.raw.write(formatSSEEvent({
-                data: JSON.stringify({ type: 'scope_config', content: configContent }),
+                data: JSON.stringify({ type: 'scope_config', content: JSON.stringify(parsed) }),
               }));
             }
           } else if (options.source === 'workflow_copilot') {

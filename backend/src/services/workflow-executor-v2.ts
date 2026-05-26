@@ -217,6 +217,13 @@ function buildResumeBrief(
     lines.push('Use the EXACT task IDs listed above.');
   }
 
+  // Parallel execution (same as initial brief)
+  lines.push('');
+  lines.push('## Parallel Execution', '');
+  lines.push('Read `workflow.json` in workspace root for the DAG with `executionLayers`.');
+  lines.push('Nodes within the same layer have NO dependencies on each other — execute them');
+  lines.push('concurrently using the Task tool (subagents). Single-node layers run directly.');
+
   return lines.join('\n');
 }
 
@@ -332,9 +339,81 @@ function serializePlanToMissionBrief(
   lines.push('  and no integration exists to monitor that event, report the step failed with a clear explanation.');
   lines.push('- Only use tools and skills that are actually available in the workspace.');
   lines.push('');
-  lines.push('Please proceed through the steps in dependency order.');
+
+  // Parallel execution instructions
+  lines.push('## Parallel Execution', '');
+  lines.push('A `workflow.json` file in the workspace root contains the DAG with `executionLayers`.');
+  lines.push('Nodes within the same layer have NO dependencies on each other and MUST be executed');
+  lines.push('concurrently using the Task tool (subagents). For each layer:');
+  lines.push('1. Read the layer from `workflow.json` → `executionLayers[i]`');
+  lines.push('2. Launch one Task (subagent) per node ID in that layer, running them in parallel');
+  lines.push('3. Wait for all tasks in the layer to complete before starting the next layer');
+  lines.push('4. Pass outputs from completed nodes to dependent nodes in subsequent layers');
+  lines.push('');
+  lines.push('If a layer has only one node, execute it directly without spawning a subagent.');
+  lines.push('');
+  lines.push('Please proceed through the execution layers in order, parallelizing within each layer.');
 
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Workflow DAG JSON builder
+// ---------------------------------------------------------------------------
+
+interface WorkflowDagNode {
+  id: string;
+  title: string;
+  type: string;
+  dependencies: string[];
+  prompt: string;
+  agentId?: string;
+}
+
+interface WorkflowDag {
+  title: string;
+  parallelizable: boolean;
+  nodes: WorkflowDagNode[];
+  edges: Array<{ source: string; target: string }>;
+  executionLayers: string[][];
+}
+
+function buildWorkflowDag(segment: Segment, plan: WorkflowV2Plan): WorkflowDag {
+  const nodes: WorkflowDagNode[] = segment.nodes.map(n => ({
+    id: n.id,
+    title: n.title,
+    type: n.type,
+    dependencies: n.dependentTasks || [],
+    prompt: n.prompt,
+    agentId: n.agentId,
+  }));
+
+  const segmentNodeIds = new Set(segment.nodes.map(n => n.id));
+  const edges = plan.edges.filter(e => segmentNodeIds.has(e.source) && segmentNodeIds.has(e.target));
+
+  // Topological layering — nodes in same layer have no mutual dependencies
+  const layers: string[][] = [];
+  const completed = new Set<string>();
+  const remaining = new Map(nodes.map(n => [n.id, n.dependencies.filter(d => segmentNodeIds.has(d))]));
+
+  while (remaining.size > 0) {
+    const layer: string[] = [];
+    for (const [id, deps] of remaining) {
+      if (deps.every(d => completed.has(d))) {
+        layer.push(id);
+      }
+    }
+    if (layer.length === 0) break; // cycle guard
+    for (const id of layer) {
+      remaining.delete(id);
+      completed.add(id);
+    }
+    layers.push(layer);
+  }
+
+  const parallelizable = layers.some(l => l.length > 1);
+
+  return { title: plan.title, parallelizable, nodes, edges, executionLayers: layers };
 }
 
 // ---------------------------------------------------------------------------
@@ -857,7 +936,7 @@ export class WorkflowExecutorV2 {
       return;
     }
 
-    const { workspacePath, agents, skills, scopeSkillNames } = workspace;
+    const { workspacePath, pluginPaths, agents, skills, scopeSkillNames } = workspace;
 
     // Build node title map for this segment
     const nodeTitleMap = new Map<string, string>();
@@ -905,6 +984,10 @@ export class WorkflowExecutorV2 {
       : serializePlanToMissionBrief(segmentPlan, agents, scopeSkillNames, supportsProgressTools);
 
     await writeFile(join(workspacePath, 'CLAUDE.md'), missionBrief, 'utf-8');
+
+    // Write workflow DAG as JSON for parallel subagent dispatch
+    const workflowDag = buildWorkflowDag(segment, plan);
+    await writeFile(join(workspacePath, 'workflow.json'), JSON.stringify(workflowDag, null, 2), 'utf-8');
 
     // Use the chat session ID (if available) so agentcore routes to a
     // persistent microVM and the conversation can be resumed later.
@@ -962,7 +1045,7 @@ export class WorkflowExecutorV2 {
         },
         agentConfig,
         skills,
-        undefined,
+        pluginPaths,
         mcpServers as Record<string, import('./claude-agent.service.js').MCPServerSDKConfig> | undefined,
       );
 

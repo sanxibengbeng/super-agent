@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useContext, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, RefreshCw, Brain, Download, Users } from 'lucide-react'
+import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, RefreshCw, Brain, Download, Users, MessageCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from 'highlight.js'
@@ -10,6 +10,7 @@ import { MessageList, QuickQuestions, WorkspaceExplorer } from '@/components'
 import type { FileNode } from '@/components/WorkspaceExplorer'
 import { SessionHistoryPanel } from '@/components/chat/SessionHistoryPanel'
 import { SaveToMemoryModal } from '@/components/chat/SaveToMemoryModal'
+import { ByTheWay } from '@/components/ByTheWay'
 import { ChatProvider, ChatContext } from '@/services/ChatContext'
 import { AgentService } from '@/services/agentService'
 import { BusinessScopeService, type BusinessScope } from '@/services/businessScopeService'
@@ -1624,6 +1625,7 @@ function ChatInterfaceContent() {
   useEffect(() => {
     if (backendSessionId && backendSessionId !== prevBackendSessionId.current) {
       setSessionRefreshKey(k => k + 1)
+      setShowByTheWay(false)
     }
     prevBackendSessionId.current = backendSessionId
   }, [backendSessionId])
@@ -1635,6 +1637,7 @@ function ChatInterfaceContent() {
   const [fileTabs, setFileTabs] = useState<FileTab[]>([])
   const [activeTab, setActiveTab] = useState<string>('chat')
   const [showSaveMemory, setShowSaveMemory] = useState(false)
+  const [showByTheWay, setShowByTheWay] = useState(false)
   const [showCreateRoom, setShowCreateRoom] = useState(false)
 
   const handleFileOpen = useCallback((path: string, name: string) => {
@@ -1690,6 +1693,7 @@ function ChatInterfaceContent() {
   const handleSelectSession = useCallback((sessionId: string) => {
     setFileTabs([])
     setActiveTab('chat')
+    setShowByTheWay(false)
     loadSession(sessionId)
   }, [loadSession])
 
@@ -1759,7 +1763,7 @@ function ChatInterfaceContent() {
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header with unified selector */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 relative z-10">
           <div className="flex items-center gap-3">
             <UnifiedChatSelector
               selectedScopeId={selectedBusinessScopeId}
@@ -1785,14 +1789,24 @@ function ChatInterfaceContent() {
           </div>
           <div className="flex items-center gap-1">
             {backendSessionId && selectedBusinessScopeId && (
-              <button
-                onClick={() => setShowSaveMemory(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg transition-colors"
-                title={t('chat.saveToMemoryHint')}
-              >
-                <Brain className="w-3.5 h-3.5" />
-                <span>{t('chat.saveToMemory')}</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setShowByTheWay(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
+                  title="Open a side conversation sharing this workspace"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>By the Way</span>
+                </button>
+                <button
+                  onClick={() => setShowSaveMemory(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg transition-colors"
+                  title={t('chat.saveToMemoryHint')}
+                >
+                  <Brain className="w-3.5 h-3.5" />
+                  <span>{t('chat.saveToMemory')}</span>
+                </button>
+              </>
             )}
             <button
               onClick={clearConversation}
@@ -1917,6 +1931,17 @@ function ChatInterfaceContent() {
           scopeId={selectedBusinessScopeId}
           sessionId={backendSessionId}
           onClose={() => setShowSaveMemory(false)}
+        />
+      )}
+
+      {/* By the Way side panel */}
+      {showByTheWay && selectedBusinessScopeId && backendSessionId && (
+        <ByTheWay
+          key={backendSessionId}
+          businessScopeId={selectedBusinessScopeId}
+          sessionId={backendSessionId}
+          agentId={selectedAgentId ?? undefined}
+          onClose={() => setShowByTheWay(false)}
         />
       )}
 

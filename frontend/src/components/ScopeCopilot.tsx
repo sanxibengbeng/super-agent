@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Send, Loader2, User, Bot } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { parseScopeConfig, parseIntegrations, type GeneratedScopeConfig, type ScopeIntegrations } from '@/services/scopeGeneratorService'
 import type { ChatMessageDraft } from '@/hooks/useScopeDraft'
 import { getAuthToken } from '@/services/api/restClient'
@@ -114,7 +115,7 @@ export function ScopeCopilot({
           return { id: m.id, role: 'assistant' as const, content: displayText, status: 'done' as const, timestamp: new Date(m.created_at).getTime() }
         })
 
-        onChatHistoryChange(chatMsgs)
+        onChatHistoryChange(chatMsgs.filter(m => m.role === 'user' || m.content))
 
         // Apply the latest scope config found in history to the workspace
         if (latestConfigJson) {
@@ -279,11 +280,12 @@ export function ScopeCopilot({
         // No config in response — treat as conversational reply
       }
 
+      const finalContent = accumulated || (applied ? 'Scope configuration updated.' : '')
       onChatHistoryChange(
         newHistory.map(m => m.id === assistantId
-          ? { ...m, content: accumulated || (applied ? 'Scope configuration updated.' : ''), status: 'done' }
+          ? { ...m, content: finalContent, status: 'done' }
           : m
-        )
+        ).filter(m => m.role === 'user' || m.content || m.status === 'streaming')
       )
     } catch (err) {
       onChatHistoryChange(
@@ -317,7 +319,7 @@ export function ScopeCopilot({
           </div>
         )}
 
-        {chatHistory.map((msg) => (
+        {chatHistory.filter(m => m.role === 'user' || m.content || m.status === 'streaming').map((msg) => (
           <div key={msg.id} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {msg.role === 'assistant' && (
               <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center mt-0.5">
@@ -335,12 +337,13 @@ export function ScopeCopilot({
                 <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
               )}
               {msg.content && (
-                <div className="prose prose-invert prose-sm max-w-none
+                <div className="prose prose-invert prose-sm max-w-none overflow-x-auto
                   prose-p:text-inherit prose-p:text-xs prose-p:my-1 prose-p:leading-relaxed
                   prose-li:text-inherit prose-li:text-xs
                   prose-strong:text-gray-200
-                  prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:rounded prose-code:text-[11px]">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:rounded prose-code:text-[11px]
+                  prose-table:text-[10px] prose-th:text-gray-300 prose-td:text-gray-400 prose-th:px-1.5 prose-th:py-0.5 prose-td:px-1.5 prose-td:py-0.5 prose-th:border-b prose-th:border-gray-700">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                   {msg.status === 'streaming' && <Loader2 className="w-3 h-3 animate-spin text-purple-400 mt-1" />}
                 </div>
               )}

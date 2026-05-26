@@ -118,15 +118,18 @@ services/agent-runtime-openclaw.ts  # OpenClaw adapter
 6. Emits events for real-time WebSocket updates
 7. Triggers memory distillation for scope learning
 
-**Workspace Structure:**
+**Workspace Structure (Scope-Level Shared):**
 ```
-/tmp/workspaces/{sessionId}/
+/tmp/workspaces/{orgId}/{scopeId}/workspace/
 ├── CLAUDE.md              # Task context and instructions
+├── workflow.json           # DAG with executionLayers (workflow runs)
 ├── .claude/
 │   └── settings.json      # MCP servers, permissions
 ├── skills/                # Loaded skill definitions
 └── plugins/               # Git-cloned plugins
 ```
+
+All sessions within the same scope share a single workspace directory, enabling cross-session artifact visibility.
 
 ### Workflow Execution Engine
 
@@ -142,6 +145,8 @@ DAG-based workflow engine in `services/workflow-*.ts`:
 **Node Types:** `start`, `end`, `agent`, `action`, `condition`, `document`, `codeArtifact`, `humanApproval`
 
 **Execution Features:**
+- Parallel execution via DAG layers (nodes in same layer run concurrently as subagents)
+- `workflow.json` written to workspace with `executionLayers` for Task tool dispatch
 - Retry logic with exponential backoff (2s, 4s, 8s...)
 - Checkpoint/pause/resume for human approval
 - Real-time WebSocket progress updates
@@ -374,6 +379,13 @@ Located in `backend/skills/`:
 | `app-publisher` | Preview and deploy apps to platform marketplace |
 | `skill-creator` | Create new reusable skills for agents |
 
+### Seed Copilots
+
+System copilots are auto-provisioned per organization on startup via `seed-copilot.service.ts`. Templates live in `backend/seeds/system-copilots/`:
+- `workflow-copilot.json` — Workflow design assistant
+- `scope-copilot.json` — Business scope configuration assistant
+- `claude-code-agent.json` — General coding agent
+
 **Skill Structure:**
 ```
 backend/skills/{skill-name}/
@@ -397,6 +409,9 @@ When AI copilots (scope copilot, workflow copilot) create resources like agents 
 
 ### Workspace File Persistence
 Copilot sessions should persist generated artifacts (scope configs, workflow definitions) to workspace files, not just chat output. This enables history tracking, version comparison, and resumption across sessions.
+
+### Scope-Level Shared Workspace
+All chat sessions within a scope share a single workspace directory (`{orgId}/{scopeId}/workspace/`). This means file artifacts from one session are visible to all others in the same scope. The `sessionId` parameter in workspace APIs is retained for backward compatibility but is not used in paths.
 
 ---
 

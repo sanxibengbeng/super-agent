@@ -822,12 +822,19 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
             files = buildTreeFromEntries(entries);
           } catch (cmdErr) {
             // Expected when session has no active microVM (idle >15min or no messages yet).
-            // Silently fall back to S3.
+            // Try S3, then fall back to local disk.
             files = await workspaceManager.listWorkspaceFilesFromS3(
               request.user!.orgId,
               scopeIdForPath,
               session.id,
             );
+            if (!files || files.length === 0) {
+              files = await workspaceManager.listWorkspaceFiles(
+                request.user!.orgId,
+                scopeIdForPath,
+                session.id,
+              );
+            }
           }
         } else {
           files = await workspaceManager.listWorkspaceFiles(

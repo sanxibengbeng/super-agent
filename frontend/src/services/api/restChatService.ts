@@ -399,6 +399,9 @@ export const RestChatService = {
       );
       return response.map(mapApiMessageToMessage);
     } catch (error) {
+      if (error instanceof ServiceError && error.statusCode === 404) {
+        return [];
+      }
       console.warn('Failed to fetch session history:', error);
       return [];
     }

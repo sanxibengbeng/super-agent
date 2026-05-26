@@ -131,6 +131,15 @@ export function PluginsPanel({ open, onClose, businessScopeId }: PluginsPanelPro
 
   const installedNames = new Set(plugins.map(p => p.name))
 
+  useEffect(() => {
+    if (!open) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   if (!open) return null
 
   return (

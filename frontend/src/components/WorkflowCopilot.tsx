@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useImperativeHandle, forwardRef } from 'react'
 import { Send, Loader2, User, Bot, CheckCircle2, AlertCircle, Wrench, ChevronDown, ChevronRight, Play } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   workflowPlanToCanvasData,
 } from '@/lib/workflow-plan'
@@ -722,15 +723,16 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
                   <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
                 )}
                 {msg.status === 'streaming' && msg.content && (
-                  <div className="prose prose-invert prose-sm max-w-none max-h-64 overflow-y-auto
+                  <div className="prose prose-invert prose-sm max-w-none max-h-64 overflow-y-auto overflow-x-auto
                     prose-headings:text-gray-200 prose-headings:text-sm prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
                     prose-p:text-gray-300 prose-p:text-xs prose-p:my-1 prose-p:leading-relaxed
                     prose-li:text-gray-300 prose-li:text-xs prose-li:my-0
                     prose-strong:text-gray-200
                     prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
                     prose-pre:bg-gray-900/50 prose-pre:rounded-lg prose-pre:p-2 prose-pre:text-[11px]
-                    prose-hr:border-gray-700 prose-hr:my-2">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    prose-hr:border-gray-700 prose-hr:my-2
+                    prose-table:text-[10px] prose-th:text-gray-300 prose-td:text-gray-400 prose-th:px-1.5 prose-th:py-0.5 prose-td:px-1.5 prose-td:py-0.5 prose-th:border-b prose-th:border-gray-700">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     <Loader2 className="w-3 h-3 animate-spin text-purple-400 mt-1" />
                   </div>
                 )}
@@ -740,15 +742,16 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
                 {msg.status === 'done' && (
                   <div className="flex items-start gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mt-0.5 flex-shrink-0" />
-                    <div className="prose prose-invert prose-sm max-w-none
+                    <div className="prose prose-invert prose-sm max-w-none overflow-x-auto
                       prose-headings:text-green-200 prose-headings:text-sm prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
                       prose-p:text-green-300 prose-p:text-xs prose-p:my-1 prose-p:leading-relaxed
                       prose-li:text-green-300 prose-li:text-xs prose-li:my-0
                       prose-strong:text-green-200
                       prose-code:text-green-200 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
                       prose-pre:bg-gray-900/50 prose-pre:rounded-lg prose-pre:p-2 prose-pre:text-[11px]
-                      prose-hr:border-gray-700 prose-hr:my-2">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      prose-hr:border-gray-700 prose-hr:my-2
+                      prose-table:text-[10px] prose-th:text-green-200 prose-td:text-green-300 prose-th:px-1.5 prose-th:py-0.5 prose-td:px-1.5 prose-td:py-0.5 prose-th:border-b prose-th:border-gray-700">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
                   </div>
                 )}
@@ -759,12 +762,13 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
                   </div>
                 )}
                 {!msg.status && (
-                  <div className="prose prose-invert prose-sm max-w-none
+                  <div className="prose prose-invert prose-sm max-w-none overflow-x-auto
                     prose-p:text-gray-300 prose-p:text-xs prose-p:my-1
                     prose-li:text-gray-300 prose-li:text-xs
                     prose-strong:text-gray-200
-                    prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+                    prose-table:text-[10px] prose-th:text-gray-300 prose-td:text-gray-400 prose-th:px-1.5 prose-th:py-0.5 prose-td:px-1.5 prose-td:py-0.5 prose-th:border-b prose-th:border-gray-700">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                   </div>
                 )}
               </div>

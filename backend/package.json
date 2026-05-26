@@ -46,6 +46,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "^7.2.0",
+    "@rollup/rollup-linux-x64-gnu": "^4.60.3",
     "@types/js-yaml": "^4.0.9",
     "archiver": "^7.0.1",
     "aws-jwt-verify": "^5.1.1",

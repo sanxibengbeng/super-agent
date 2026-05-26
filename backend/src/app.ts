@@ -32,6 +32,7 @@ import { redisService } from './services/redis.service.js';
 import { workspaceWebSocketGateway } from './websocket/workspace.gateway.js';
 import { workspaceEventBus } from './services/workspace-event-bus.js';
 import { executionReconciler } from './services/execution-reconciler.service.js';
+import { seedCopilotService } from './services/seed-copilot.service.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   // Configure logger based on environment
@@ -286,6 +287,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ── Claude session management (api + all — needs to be co-located with HTTP) ──
   if (role === 'api' || role === 'all') {
     claudeAgentService.startCleanupTimer();
+
+    // Ensure seed copilots exist for all orgs (non-blocking)
+    seedCopilotService.ensureAllOrgs().catch((err) => {
+      console.error('[startup] Failed to ensure seed copilots:', err);
+    });
   }
 
   // ── Graceful shutdown for Claude sessions (api + all) ──

@@ -3,6 +3,7 @@ import { User } from 'lucide-react'
 import type { Message } from '@/types'
 import type { ContentBlock } from '@/services/chatStreamService'
 import { ChatMessage } from './chat/ChatMessage'
+import { TextContentBlock } from './chat/TextContentBlock'
 import { useTranslation } from '@/i18n'
 
 interface MessageListProps {
@@ -35,6 +36,7 @@ function tryParseContentBlocks(content: string): ContentBlock[] | null {
 }
 
 function UserBubble({ message }: { message: Message }) {
+  const isLong = message.content.length > 200 || message.content.includes('\n#') || message.content.includes('\n|')
   return (
     <div className="flex gap-3 flex-row-reverse">
       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-600/15 border border-blue-500/25">
@@ -42,7 +44,11 @@ function UserBubble({ message }: { message: Message }) {
       </div>
       <div className="flex flex-col max-w-[70%] items-end">
         <div className="px-4 py-2 rounded-2xl bg-blue-600/15 border border-blue-500/20 text-white rounded-br-md">
-          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+          {isLong ? (
+            <TextContentBlock block={{ type: 'text', text: message.content }} />
+          ) : (
+            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+          )}
         </div>
         <span className="text-xs text-gray-500 mt-1 px-1">
           {formatTime(message.timestamp)}
@@ -83,15 +89,13 @@ function AIBubble({ message, isStreaming }: { message: Message; isStreaming?: bo
           />
         </div>
       ) : (
-        // Fallback: plain text rendering
+        // Fallback: markdown rendering for plain text messages
         <div className="flex gap-3">
           <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-purple-600">
             <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
           </div>
-          <div className="flex flex-col max-w-[70%] items-start">
-            <div className="px-4 py-2 rounded-2xl bg-gray-800 text-gray-100 rounded-bl-md">
-              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-            </div>
+          <div className="flex-1 min-w-0">
+            <TextContentBlock block={{ type: 'text', text: message.content }} />
           </div>
         </div>
       )}

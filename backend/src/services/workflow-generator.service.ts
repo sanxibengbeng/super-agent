@@ -187,7 +187,7 @@ function fixUnescapedControlChars(json: string): string {
   let inString = false;
   let escaped = false;
   for (let i = 0; i < json.length; i++) {
-    const ch = json[i];
+    const ch = json[i]!;
     if (escaped) { out.push(ch); escaped = false; continue; }
     if (ch === '\\' && inString) { out.push(ch); escaped = true; continue; }
     if (ch === '"') { inString = !inString; out.push(ch); continue; }
@@ -246,7 +246,7 @@ export class WorkflowGeneratorService {
     // Build conversation with history
     if (history && history.length > 0) {
       // Prepend agent context to the first user message in history
-      let firstUserMsg = history[0];
+      let firstUserMsg = history[0]!;
       if (firstUserMsg.role === 'user' && availableAgents && availableAgents.length > 0) {
         let agentContext = '\n\n## Available Agents (only assign if role is a strong match)\n';
         for (const agent of availableAgents) {
@@ -261,7 +261,7 @@ export class WorkflowGeneratorService {
 
       // Build the full conversation as a single message with context
       const conversationParts: string[] = [];
-      const allMessages = [firstUserMsg, ...history.slice(1)];
+      const allMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [firstUserMsg, ...history.slice(1)];
       for (const msg of allMessages) {
         conversationParts.push(`[${msg.role.toUpperCase()}]: ${msg.content}`);
       }

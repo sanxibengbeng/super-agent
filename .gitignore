@@ -19,3 +19,4 @@ frontend/.env.production
 .worktrees/
 .superpowers/
 .playwright-mcp/
+.test-artifacts/

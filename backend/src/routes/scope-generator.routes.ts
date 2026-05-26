@@ -16,6 +16,7 @@ import { prisma } from '../config/database.js';
 import { computeScopeCopilotSessionId } from '../utils/deterministic-session.js';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
+import { safeParseJson } from '../utils/json-repair.js';
 
 function formatSSEEvent(payload: { event?: string; data: string }): string {
   let result = '';
@@ -810,9 +811,14 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
       }
 
       const sessionId = computeScopeCopilotSessionId(scope_id);
-      const messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
+      let messages: unknown[] = [];
+      try {
+        messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
+      } catch {
+        // Session doesn't exist yet — return empty history
+      }
 
-      return reply.send({ session_id: sessionId, messages: messages ?? [] });
+      return reply.send({ session_id: sessionId, messages });
     },
   );
 
@@ -848,13 +854,17 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
 
       try {
         const content = await readFile(join(workspacePath, 'scope-config.json'), 'utf-8');
-        const parsed = JSON.parse(content);
-        if (!parsed.scope || !Array.isArray(parsed.agents)) {
-          return reply.status(404).send({ error: 'scope-config.json is not a valid scope config' });
+        const parsed = safeParseJson(content) as Record<string, unknown> | null;
+        if (!parsed || !parsed.scope || !Array.isArray(parsed.agents)) {
+          return reply.status(422).send({ error: 'scope-config.json exists but contains invalid JSON that could not be repaired' });
         }
         return reply.send({ data: parsed });
-      } catch {
-        return reply.status(404).send({ error: 'No scope-config.json found in workspace' });
+      } catch (err: unknown) {
+        const isNotFound = err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'ENOENT';
+        if (isNotFound) {
+          return reply.status(404).send({ error: 'No scope-config.json found in workspace' });
+        }
+        return reply.status(500).send({ error: 'Failed to read scope-config.json from workspace' });
       }
     },
   );

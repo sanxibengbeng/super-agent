@@ -224,7 +224,18 @@ export function AgentProfile({ agent, onConfigure, onRemove, onToggleStatus }: A
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white">{tool.name}</p>
                 <p className="text-xs text-gray-400 truncate" title={tool.skillMd}>
-                  {tool.skillMd ? tool.skillMd.split('\n')[0].replace(/^#\s*/, '') : t('agentProfile.noDescription')}
+                  {tool.skillMd ? (() => {
+                    const lines = tool.skillMd.split('\n')
+                    if (lines[0]?.trim() === '---') {
+                      const endIdx = lines.indexOf('---', 1)
+                      const frontmatter = lines.slice(1, endIdx === -1 ? 1 : endIdx).join('\n')
+                      const descMatch = frontmatter.match(/description:\s*(.+)/)
+                      if (descMatch) return descMatch[1].trim()
+                      const afterFrontmatter = lines.slice(endIdx + 1).find(l => l.trim() && !l.startsWith('#'))
+                      if (afterFrontmatter) return afterFrontmatter.trim().replace(/^#\s*/, '')
+                    }
+                    return lines[0].replace(/^#\s*/, '')
+                  })() : t('agentProfile.noDescription')}
                 </p>
               </div>
             </div>

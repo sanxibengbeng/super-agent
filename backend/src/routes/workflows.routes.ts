@@ -1149,9 +1149,14 @@ export async function workflowRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const sessionId = computeWorkflowCopilotSessionId(workflow_id, version);
-      const messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
+      let messages: unknown[] = [];
+      try {
+        messages = await chatService.getChatHistory(orgId, { sessionId, limit: 200 });
+      } catch {
+        // Session doesn't exist yet — return empty history
+      }
 
-      return reply.send({ session_id: sessionId, messages: messages ?? [] });
+      return reply.send({ session_id: sessionId, messages });
     },
   );
 
