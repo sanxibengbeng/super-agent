@@ -138,6 +138,7 @@ model business_scopes {
   deleted_at      DateTime? @db.Timestamptz
 
   visibility String @default("open")
+  workspace_access_point_arn String?
 
   organization              organizations               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   agents                    agents[]
