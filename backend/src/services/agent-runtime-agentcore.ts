@@ -1,24 +1,20 @@
 /**
  * AgentCore Agent Runtime — runs Claude Agent SDK inside Bedrock AgentCore
- * containers with a single shared runtime ARN.
+ * containers with S3 Files filesystem mounts.
  *
- * Before invoking AgentCore, the backend prepares the workspace (skills,
- * Claude config, agent files) and uploads it to S3. The container then
- * pulls everything from S3 — no need to call back to the backend API.
+ * S3 Files mounts the workspace directory directly into the container at /mnt/ws,
+ * so no S3 upload/download is needed. The container reads and writes directly
+ * to the mounted filesystem.
  *
- * Required env var:
- *   AGENTCORE_RUNTIME_ARN — the single runtime ARN to invoke
+ * Required env vars:
+ *   AGENTCORE_RUNTIME_ARN — the runtime ARN to invoke
+ *   AGENTCORE_S3FILES_FILESYSTEM_ID — the S3 Files filesystem ID
  */
 
 import { config } from '../config/index.js';
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
 import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig, AnyMCPServerConfig } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
-import { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
-import { createReadStream, statSync, createWriteStream } from 'fs';
-import { readdir, mkdir } from 'fs/promises';
-import { join, relative, dirname } from 'path';
-import { pipeline } from 'stream/promises';
 
 interface AgentCoreEvent {
   type: 'session_start' | 'assistant' | 'result' | 'error';
@@ -48,14 +44,9 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
   private InvokeCommand: any;
   private StopSessionCommand: any;
   private sdkLoaded = false;
-  private s3Client: S3Client;
-  private readonly workspaceBucket: string;
-  /** Tracks configVersion already uploaded per session to skip redundant S3 uploads. */
-  private uploadedConfigVersions = new Map<string, number>();
 
   constructor() {
-    this.s3Client = new S3Client({ region: config.aws.region });
-    this.workspaceBucket = config.agentcore.workspaceS3Bucket;
+    // No S3 client needed — S3 Files handles filesystem mounting
   }
 
   private async ensureSDK(): Promise<void> {
@@ -91,17 +82,17 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
   ): AsyncGenerator<ConversationEvent> {
     await this.ensureSDK();
 
-    // --- Upload workspace to S3 (if needed) and load chat history in parallel ---
+    // --- Get or create S3 Files access point for this scope ---
     const chatSessionId = options.sessionId;
     const scopeId = options.scopeId ?? 'default';
-    const s3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
 
-    const [history] = await Promise.all([
-      this.loadChatHistory(options.organizationId, options.sessionId),
-      (chatSessionId && options.workspacePath)
-        ? this.uploadWorkspaceIfNeeded(chatSessionId, options.workspacePath, s3Prefix)
-        : Promise.resolve(),
-    ]);
+    const { s3FilesService } = await import('./s3files.service.js');
+    const accessPoint = await s3FilesService.getOrCreateAccessPoint(
+      options.organizationId, scopeId,
+    );
+
+    // Load chat history
+    const history = await this.loadChatHistory(options.organizationId, options.sessionId);
 
     // Filter out in-process SDK MCP servers — they can't be serialized or
     // forwarded to a remote AgentCore container. Only keep config-based servers.
@@ -129,14 +120,12 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       system_prompt: agentConfig.systemPrompt ?? undefined,
       model: agentConfig.model ?? undefined,
       mcp_servers: serializableMcpServers,
-      workspace_s3_bucket: this.workspaceBucket,
-      workspace_s3_region: config.agentcore.workspaceS3Region,
-      workspace_s3_prefix: s3Prefix,
+      workspace_access_point_arn: accessPoint.arn,
       execution_task_id: options.executionTaskId ?? undefined,
     });
 
-    console.log(`[agentcore-runtime] S3 workspace: s3://${this.workspaceBucket}/${s3Prefix}`);
-    console.log(`[agentcore-runtime] History count: ${history.length}, workspacePath: ${options.workspacePath ?? 'none'}`);
+    console.log(`[agentcore-runtime] S3 Files access point: ${accessPoint.arn}`);
+    console.log(`[agentcore-runtime] History count: ${history.length}`);
 
     // Use the chat session ID as runtimeSessionId so the same conversation
     // always routes to the same AgentCore microVM. This keeps Claude Code's
@@ -216,56 +205,23 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
 
     const contentType: string = response.contentType ?? '';
     console.log(`[agentcore-runtime] Response contentType: ${contentType}`);
-    try {
-      if (contentType.includes('text/event-stream')) {
-        let eventCount = 0;
-        for await (const event of this.parseSSEStream(response.response)) {
-          eventCount++;
-          if (eventCount <= 3 || event.type === 'error') {
-            console.log(`[agentcore-runtime] Event ${eventCount}: type=${event.type}`);
-          }
-          yield event;
+    if (contentType.includes('text/event-stream')) {
+      let eventCount = 0;
+      for await (const event of this.parseSSEStream(response.response)) {
+        eventCount++;
+        if (eventCount <= 3 || event.type === 'error') {
+          console.log(`[agentcore-runtime] Event ${eventCount}: type=${event.type}`);
         }
-        console.log(`[agentcore-runtime] Total events received: ${eventCount}`);
-      } else {
-        const body = await this.readBody(response.response);
-        console.log(`[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`);
-        try {
-          yield this.mapEvent(JSON.parse(body));
-        } catch {
-          yield { type: 'error', code: 'PARSE_ERROR', message: `Failed to parse response: ${body.slice(0, 200)}` };
-        }
+        yield event;
       }
-    } finally {
-      // --- S3 sync-back: pull container changes back to local workspace ---
-      // Runs in finally so sync-back happens even when the consumer breaks early (e.g. timeout).
-      if (options.workspacePath && chatSessionId) {
-        const syncS3Prefix = `${options.organizationId}/${scopeId}/${chatSessionId ?? 'ephemeral'}/`;
-        try {
-          const count = await this.syncBackFromS3(syncS3Prefix, options.workspacePath);
-          if (count > 0) {
-            console.log(`[agentcore-runtime] Synced back ${count} files from S3 to local workspace`);
-            // Emit files_changed event so frontend knows workspace has updated files
-            try {
-              const { executionTaskRepository } = await import('../repositories/execution-task.repository.js');
-              const { workspaceEventBus } = await import('./workspace-event-bus.js');
-              const tasks = await executionTaskRepository.findBySessionId(chatSessionId);
-              const activeTask = tasks.find((t: { status: string }) => t.status === 'running');
-              if (activeTask) {
-                await workspaceEventBus.emit({
-                  task_id: activeTask.id,
-                  session_id: chatSessionId,
-                  type: 'files_changed',
-                  payload: { source: 'sync_back', file_count: count },
-                });
-              }
-            } catch {
-              // Best effort — don't fail the main flow
-            }
-          }
-        } catch (err) {
-          console.warn('[agentcore-runtime] S3 sync-back failed:', err instanceof Error ? err.message : err);
-        }
+      console.log(`[agentcore-runtime] Total events received: ${eventCount}`);
+    } else {
+      const body = await this.readBody(response.response);
+      console.log(`[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`);
+      try {
+        yield this.mapEvent(JSON.parse(body));
+      } catch {
+        yield { type: 'error', code: 'PARSE_ERROR', message: `Failed to parse response: ${body.slice(0, 200)}` };
       }
     }
   }
@@ -274,48 +230,6 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
   async disconnectAll(): Promise<number> { return 0; }
   get activeSessionCount(): number { return 0; }
   hasSession(_sessionId: string): boolean { return false; }
-
-  // ---------------------------------------------------------------------------
-  // Workspace upload (skip if unchanged)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Upload workspace to S3 only when the local config has changed since the
-   * last upload for this session. Reads the workspace manifest to get the
-   * current configVersion and compares against a cached value.
-   */
-  private async uploadWorkspaceIfNeeded(
-    sessionId: string,
-    workspacePath: string,
-    s3Prefix: string,
-  ): Promise<void> {
-    try {
-      // Read manifest to get current configVersion
-      let configVersion = -1;
-      try {
-        const { readFile: readFileAsync } = await import('fs/promises');
-        const { join } = await import('path');
-        const manifest = JSON.parse(
-          await readFileAsync(join(workspacePath, '.workspace-manifest.json'), 'utf-8'),
-        );
-        configVersion = manifest.configVersion ?? -1;
-      } catch {
-        // No manifest (first provision) — always upload
-      }
-
-      const lastUploaded = this.uploadedConfigVersions.get(sessionId);
-      if (lastUploaded !== undefined && lastUploaded >= configVersion && configVersion >= 0) {
-        console.log(`[agentcore-runtime] Skipping S3 upload for session ${sessionId} (configVersion ${configVersion} already uploaded)`);
-        return;
-      }
-
-      const count = await this.uploadDirToS3(workspacePath, s3Prefix);
-      this.uploadedConfigVersions.set(sessionId, configVersion);
-      console.log(`[agentcore-runtime] Uploaded ${count} files to s3://${this.workspaceBucket}/${s3Prefix}`);
-    } catch (err) {
-      console.warn('[agentcore-runtime] Failed to upload workspace to S3:', err);
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // Chat history loading
@@ -372,121 +286,6 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       // Not JSON — return as-is (user messages are plain text)
     }
     return content;
-  }
-
-  // ---------------------------------------------------------------------------
-  // S3 workspace upload
-  // ---------------------------------------------------------------------------
-
-  private async uploadDirToS3(localDir: string, s3Prefix: string): Promise<number> {
-    let count = 0;
-    const SKIP = new Set(['node_modules', '.git', 'dist', '__pycache__']);
-
-    const walk = async (dir: string): Promise<void> => {
-      let entries;
-      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
-      for (const entry of entries) {
-        if (SKIP.has(entry.name)) continue;
-        const fullPath = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await walk(fullPath);
-        } else if (entry.isSymbolicLink()) {
-          // Follow symlink — if it points to a directory, walk it; if file, upload
-          try {
-            const linkStat = statSync(fullPath); // follows symlink
-            if (linkStat.isDirectory()) {
-              await walk(fullPath);
-            } else if (linkStat.isFile() && linkStat.size <= 50 * 1024 * 1024) {
-              const relPath = relative(localDir, fullPath);
-              const key = `${s3Prefix}${relPath}`;
-              await this.s3Client.send(new PutObjectCommand({
-                Bucket: this.workspaceBucket,
-                Key: key,
-                Body: createReadStream(fullPath),
-                ContentLength: linkStat.size,
-              }));
-              count++;
-            }
-          } catch {
-            // Broken symlink or permission error — skip silently
-          }
-        } else {
-          const relPath = relative(localDir, fullPath);
-          const key = `${s3Prefix}${relPath}`;
-          try {
-            const fileStat = statSync(fullPath);
-            if (fileStat.size > 50 * 1024 * 1024) continue; // skip >50MB
-            await this.s3Client.send(new PutObjectCommand({
-              Bucket: this.workspaceBucket,
-              Key: key,
-              Body: createReadStream(fullPath),
-              ContentLength: fileStat.size,
-            }));
-            count++;
-          } catch (err) {
-            console.warn(`[agentcore-runtime] Upload failed: ${key}`, err);
-          }
-        }
-      }
-    };
-
-    await walk(localDir);
-    return count;
-  }
-
-  // ---------------------------------------------------------------------------
-  // S3 → local sync (pull container changes back to local workspace)
-  // ---------------------------------------------------------------------------
-
-  private async syncBackFromS3(s3Prefix: string, localDir: string): Promise<number> {
-    let downloaded = 0;
-    let continuationToken: string | undefined;
-
-    do {
-      const result = await this.s3Client.send(new ListObjectsV2Command({
-        Bucket: this.workspaceBucket,
-        Prefix: s3Prefix,
-        ContinuationToken: continuationToken,
-      }));
-
-      for (const obj of result.Contents ?? []) {
-        if (!obj.Key) continue;
-        const relativePath = obj.Key.slice(s3Prefix.length);
-        if (!relativePath || relativePath.endsWith('/')) continue;
-        // Skip container-internal ~/.claude state — not relevant to local workspace
-        if (relativePath.startsWith('__claude_home__/')) continue;
-
-        const localPath = join(localDir, relativePath);
-        const localDirPath = dirname(localPath);
-
-        try {
-          await mkdir(localDirPath, { recursive: true });
-          // Skip if localPath is already a directory
-          try {
-            const s = await import('fs/promises').then(m => m.stat(localPath));
-            if (s.isDirectory()) continue;
-          } catch { /* doesn't exist yet, fine */ }
-          const response = await this.s3Client.send(new GetObjectCommand({
-            Bucket: this.workspaceBucket,
-            Key: obj.Key,
-          }));
-          if (response.Body) {
-            await pipeline(response.Body as NodeJS.ReadableStream, createWriteStream(localPath));
-            downloaded++;
-          }
-        } catch (err) {
-          // Non-critical — local workspace is a cache
-          console.warn(`[agentcore-runtime] syncBack failed for ${relativePath}:`, err instanceof Error ? err.message : err);
-        }
-      }
-
-      continuationToken = result.NextContinuationToken;
-    } while (continuationToken);
-
-    if (downloaded > 0) {
-      console.log(`[agentcore-runtime] Synced back ${downloaded} files from S3 to local`);
-    }
-    return downloaded;
   }
 
   private async *parseSSEStream(stream: any): AsyncGenerator<ConversationEvent> {
