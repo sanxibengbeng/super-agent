@@ -1,37 +1,19 @@
 /**
  * AgentCore Runtime Entry Point
  *
- * Implements the AgentCore HTTP protocol contract:
+ * Simple HTTP server implementing the AgentCore protocol:
  *   POST /invocations  — run agent, return SSE stream
  *   GET  /ping         — health check
  *
- * Data flow:
- *   1. Backend prepares full workspace locally and uploads to S3
- *   2. Backend invokes AgentCore with S3 bucket/prefix in payload
- *   3. Container downloads entire workspace from S3 → /workspace/
- *   4. Runs Claude Agent SDK with cwd=/workspace
- *   5. SDK hooks (PostToolUse + Stop) sync /workspace changes back to S3
- *
- * Sync strategy:
- *   - /workspace/ writes: SDK hooks (PostToolUse + Stop) in agent-runner.ts
- *   - ~/.claude/ writes: fs.watch in file-watcher.ts (SDK hooks can't see these)
+ * S3 Files mounts the workspace at /mnt/ws (configured via access point ARN in payload).
+ * No S3 restore/sync needed — the filesystem is already mounted when container starts.
  */
 
 import http from 'http';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { runAgent } from './agent-runner.js';
-import { restoreWorkspaceFromS3, restoreClaudeHomeFromS3 } from './workspace-sync.js';
-import { startClaudeHomeWatcher } from './file-watcher.js';
-import { createGitBaseline } from './agent-runner.js';
 import type { AgentPayload, AgentEvent } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
-
-const DEFAULT_S3_REGION = process.env.WORKSPACE_S3_REGION ?? 'us-east-1';
-
-function createS3Client(region?: string): S3Client {
-  return new S3Client({ region: region ?? DEFAULT_S3_REGION });
-}
 
 // ---------------------------------------------------------------------------
 // /invocations
@@ -53,39 +35,9 @@ async function handleInvocations(
     return;
   }
 
-  const bucket = payload.workspace_s3_bucket;
-  const prefix = payload.workspace_s3_prefix;
-  const s3 = createS3Client(payload.workspace_s3_region);
+  console.log(`[index] Received invocation: session=${payload.session_id}, workspace_access_point=${payload.workspace_access_point_arn?.slice(0, 50)}...`);
 
-  // --- Restore full workspace from S3 → /workspace/ ---
-  if (bucket && prefix) {
-    try {
-      const count = await restoreWorkspaceFromS3(s3, bucket, prefix);
-      console.log(`[index] Restored ${count} files from s3://${bucket}/${prefix}`);
-    } catch (err) {
-      console.error('[index] Workspace restore failed:', err);
-    }
-
-    // Restore ~/.claude (session resume data, projects state)
-    try {
-      const homeCount = await restoreClaudeHomeFromS3(s3, bucket, prefix);
-      if (homeCount > 0) {
-        console.log(`[index] Restored ${homeCount} ~/.claude files from S3`);
-      }
-    } catch (err) {
-      console.warn('[index] ~/.claude restore failed:', err);
-    }
-
-    // Start watching ~/.claude for near-real-time sync to S3
-    startClaudeHomeWatcher(s3, bucket, prefix);
-
-    // Create git baseline snapshot for diff tracking
-    createGitBaseline();
-  }
-
-  // --- SSE streaming response ---
-  // /workspace/ sync: SDK hooks (PostToolUse + Stop) in agent-runner.ts
-  // ~/.claude/ sync: fs.watch in file-watcher.ts (near-real-time)
+  // SSE streaming response
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -103,26 +55,6 @@ async function handleInvocations(
       message: err instanceof Error ? err.message : String(err),
     };
     res.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
-
-    // Layer 1 fallback: write failed execution status if Stop hook didn't fire
-    if (bucket && prefix && payload.execution_task_id) {
-      try {
-        const statusKey = `${prefix}__executions__/${payload.execution_task_id}.json`;
-        await s3.send(new PutObjectCommand({
-          Bucket: bucket,
-          Key: statusKey,
-          Body: JSON.stringify({
-            task_id: payload.execution_task_id,
-            status: 'failed',
-            started_at: new Date().toISOString(),
-            finished_at: new Date().toISOString(),
-            error: err instanceof Error ? err.message : String(err),
-            files_modified: [],
-          }, null, 2),
-          ContentType: 'application/json',
-        }));
-      } catch { /* best effort */ }
-    }
   }
 
   res.end();
@@ -165,4 +97,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[agentcore-runner] Listening on 0.0.0.0:${PORT}`);
+  console.log(`[agentcore-runner] WORKSPACE_DIR=${process.env.WORKSPACE_DIR ?? '/mnt/ws'}`);
 });

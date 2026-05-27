@@ -1,18 +1,13 @@
 /**
  * Agent Runner — wraps Claude Agent SDK query() for AgentCore invocations.
  *
- * Yields AgentEvent objects that get serialized as SSE `data:` lines.
+ * S3 Files mounts the workspace directly at /mnt/ws (via WORKSPACE_DIR env var).
+ * No S3 sync needed — all file operations happen on the mounted filesystem.
  *
- * S3 sync strategy (replaces file-watcher.ts):
- *   - PostToolUse hook (Write|Edit): incremental sync of modified file to S3
- *   - Stop hook: full diff sync to S3 as safety net
+ * Yields AgentEvent objects that get serialized as SSE `data:` lines.
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk'; 
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { syncWorkspaceToS3, syncClaudeHomeToS3 } from './workspace-sync.js';
-import fs from 'fs';
-import { execSync } from 'child_process';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentPayload, AgentEvent, ContentBlock } from './types.js';
 
 const DEFAULT_TOOLS = [
@@ -21,311 +16,7 @@ const DEFAULT_TOOLS = [
   'TodoWrite', 'ToolSearch', 'NotebookEdit',
 ];
 
-const DEFAULT_S3_REGION = process.env.WORKSPACE_S3_REGION ?? 'us-east-1';
-let s3: S3Client = new S3Client({ region: DEFAULT_S3_REGION });
-
-// ---------------------------------------------------------------------------
-// SDK Hooks for S3 sync (replaces file-watcher.ts)
-// ---------------------------------------------------------------------------
-
-/**
- * PostToolUse hook: after agent writes/edits a file, sync that single file to S3.
- * The hook input contains tool_input.file_path with the exact file modified.
- */
-function createFileChangeHook(bucket: string, prefix: string) {
-  return async (input: any, _toolUseId: string | undefined) => {
-    const filePath: string | undefined = input?.tool_input?.file_path
-      ?? input?.tool_input?.path;
-
-    if (!filePath || !filePath.startsWith('/workspace/')) return {};
-
-    const relativePath = filePath.replace('/workspace/', '');
-    const key = `${prefix}${relativePath}`;
-
-    try {
-      if (!fs.existsSync(filePath)) return {};
-      const content = fs.readFileSync(filePath);
-      await s3.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        Body: content,
-        ContentLength: content.length,
-      }));
-      console.log(`[hook:PostToolUse] Synced ${relativePath} → s3://${bucket}/${key}`);
-    } catch (err) {
-      console.warn(`[hook:PostToolUse] Failed to sync ${relativePath}:`, err);
-    }
-
-    return {};
-  };
-}
-
-/**
- * PostToolUse hook for Bash: after a Bash command runs, do a full workspace
- * sync since Bash can create/modify/delete arbitrary files that we can't
- * track individually (mkdir, npm init, cp, mv, etc.).
- */
-function createBashSyncHook(bucket: string, prefix: string) {
-  let lastSyncTime = 0;
-  const MIN_INTERVAL_MS = 2000;
-
-  return async (_input: any, _toolUseId: string | undefined) => {
-    const now = Date.now();
-    if (now - lastSyncTime < MIN_INTERVAL_MS) return {};
-    lastSyncTime = now;
-
-    try {
-      const count = await syncWorkspaceToS3(s3, bucket, prefix);
-      if (count > 0) {
-        console.log(`[hook:PostBash] Synced ${count} files → s3://${bucket}/${prefix}`);
-      }
-    } catch (err) {
-      console.warn('[hook:PostBash] Workspace sync failed:', err);
-    }
-    return {};
-  };
-}
-
-function getModifiedFilesList(): string[] {
-  try {
-    const output = execSync('git diff --cached --name-only HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null', {
-      cwd: WORKSPACE_DIR,
-      encoding: 'utf-8',
-      maxBuffer: 1024 * 1024,
-    }).trim();
-    return output ? output.split('\n').filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Stop hook: after agent finishes, do a full workspace sync to S3.
- * Catches files created by Bash tool or other indirect means.
- * Also extracts git diff and uploads it as __diff__.json.
- * If execution_task_id is present, writes __executions__/{taskId}.json (Layer 1).
- */
-function createStopHook(bucket: string, prefix: string, executionTaskId?: string, startedAt?: string) {
-  return async () => {
-    try {
-      extractAndUploadDiff(bucket, prefix);
-    } catch (err) {
-      console.warn('[hook:Stop] Diff extraction failed:', err);
-    }
-
-    try {
-      const count = await syncWorkspaceToS3(s3, bucket, prefix);
-      if (count > 0) {
-        console.log(`[hook:Stop] Final sync: ${count} files → s3://${bucket}/${prefix}`);
-      }
-    } catch (err) {
-      console.warn('[hook:Stop] Final sync failed:', err);
-    }
-
-    try {
-      const count = await syncClaudeHomeToS3(s3, bucket, prefix);
-      if (count > 0) {
-        console.log(`[hook:Stop] ~/.claude sync: ${count} files → S3`);
-      }
-    } catch (err) {
-      console.warn('[hook:Stop] ~/.claude sync failed:', err);
-    }
-
-    // Layer 1: Write execution status file to S3
-    if (executionTaskId) {
-      try {
-        const statusKey = `${prefix}__executions__/${executionTaskId}.json`;
-        const modifiedFiles = getModifiedFilesList();
-        const statusData = {
-          task_id: executionTaskId,
-          status: 'completed',
-          started_at: startedAt ?? new Date().toISOString(),
-          finished_at: new Date().toISOString(),
-          error: null,
-          files_modified: modifiedFiles,
-        };
-        await s3.send(new PutObjectCommand({
-          Bucket: bucket,
-          Key: statusKey,
-          Body: JSON.stringify(statusData, null, 2),
-          ContentType: 'application/json',
-        }));
-        console.log(`[hook:Stop] Wrote execution status → s3://${bucket}/${statusKey}`);
-      } catch (err) {
-        console.warn('[hook:Stop] Failed to write execution status:', err);
-      }
-    }
-
-    return {};
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Git baseline & diff extraction
-// ---------------------------------------------------------------------------
-
-const WORKSPACE_DIR = '/workspace';
-
-/**
- * Create a git baseline snapshot of the current workspace state.
- * Called BEFORE the agent runs so we can diff against it later.
- */
-export function createGitBaseline(): boolean {
-  try {
-    // Check if git is available
-    execSync('which git', { stdio: 'ignore' });
-  } catch {
-    console.warn('[git-diff] git not available in container, skipping baseline');
-    return false;
-  }
-
-  try {
-    // Configure git (required for commit)
-    execSync('git config user.email "agent@superagent.local"', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-    execSync('git config user.name "Agent"', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-
-    // Init repo if not already (idempotent)
-    execSync('git init', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-
-    // Stage everything and commit as baseline
-    execSync('git add -A', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-
-    // Check if there's anything to commit
-    try {
-      execSync('git diff --cached --quiet', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-      // No changes staged — either empty workspace or already committed
-      // Try committing anyway (might be initial commit)
-      try {
-        execSync('git commit -m "baseline" --allow-empty', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-      } catch { /* already committed, fine */ }
-    } catch {
-      // There are staged changes, commit them
-      execSync('git commit -m "baseline"', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-    }
-
-    console.log('[git-diff] Baseline snapshot created');
-    return true;
-  } catch (err) {
-    console.warn('[git-diff] Failed to create baseline:', err instanceof Error ? err.message : err);
-    return false;
-  }
-}
-
-/**
- * Extract diff between baseline and current state, upload as __diff__.json to S3.
- */
-function extractAndUploadDiff(bucket: string, prefix: string): void {
-  // Check if git repo exists
-  if (!fs.existsSync(`${WORKSPACE_DIR}/.git`)) {
-    console.log('[git-diff] No git repo found, skipping diff extraction');
-    return;
-  }
-
-  try {
-    // Stage all current changes
-    execSync('git add -A', { cwd: WORKSPACE_DIR, stdio: 'ignore' });
-
-    // Get diff stat (structured)
-    let diffStatOutput = '';
-    try {
-      diffStatOutput = execSync('git diff --cached --numstat HEAD', {
-        cwd: WORKSPACE_DIR,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-      }).trim();
-    } catch { /* no changes */ }
-
-    if (!diffStatOutput) {
-      console.log('[git-diff] No changes detected');
-      return;
-    }
-
-    // Parse numstat: "insertions\tdeletions\tfilepath"
-    const files: Array<{ path: string; status: string; insertions: number; deletions: number }> = [];
-    for (const line of diffStatOutput.split('\n')) {
-      if (!line.trim()) continue;
-      const [ins, del, filePath] = line.split('\t');
-      // Binary files show as "-\t-\tfilepath"
-      const insertions = ins === '-' ? 0 : parseInt(ins, 10) || 0;
-      const deletions = del === '-' ? 0 : parseInt(del, 10) || 0;
-      files.push({ path: filePath, status: 'modified', insertions, deletions });
-    }
-
-    // Get name-status to determine add/modify/delete
-    let nameStatusOutput = '';
-    try {
-      nameStatusOutput = execSync('git diff --cached --name-status HEAD', {
-        cwd: WORKSPACE_DIR,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-      }).trim();
-    } catch { /* ignore */ }
-
-    const statusMap = new Map<string, string>();
-    for (const line of nameStatusOutput.split('\n')) {
-      if (!line.trim()) continue;
-      const [status, ...pathParts] = line.split('\t');
-      const filePath = pathParts.join('\t'); // handle paths with tabs (unlikely but safe)
-      const statusLabel = status.startsWith('A') ? 'added'
-        : status.startsWith('D') ? 'deleted'
-        : status.startsWith('R') ? 'renamed'
-        : 'modified';
-      statusMap.set(filePath, statusLabel);
-    }
-
-    // Merge status into files
-    for (const f of files) {
-      f.status = statusMap.get(f.path) ?? f.status;
-    }
-
-    const totalInsertions = files.reduce((sum, f) => sum + f.insertions, 0);
-    const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
-
-    const diffStat = {
-      files_changed: files.length,
-      insertions: totalInsertions,
-      deletions: totalDeletions,
-      files,
-    };
-
-    // Get full unified diff (capped at 1MB to avoid huge diffs)
-    let diffPatch = '';
-    try {
-      diffPatch = execSync('git diff --cached HEAD', {
-        cwd: WORKSPACE_DIR,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-      });
-    } catch { /* ignore if too large */ }
-
-    // Cap patch size at 1MB
-    if (diffPatch.length > 1024 * 1024) {
-      diffPatch = diffPatch.substring(0, 1024 * 1024) + '\n\n... (diff truncated, exceeded 1MB)';
-    }
-
-    const diffData = {
-      diff_stat: diffStat,
-      diff_patch: diffPatch,
-      created_at: new Date().toISOString(),
-    };
-
-    // Upload to S3 as __diff__.json
-    const key = `${prefix}__diff__.json`;
-    s3.send(new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: JSON.stringify(diffData),
-      ContentType: 'application/json',
-    })).then(() => {
-      console.log(`[git-diff] Uploaded diff (${files.length} files, +${totalInsertions}/-${totalDeletions}) → s3://${bucket}/${key}`);
-    }).catch(err => {
-      console.warn('[git-diff] Failed to upload diff to S3:', err);
-    });
-
-  } catch (err) {
-    console.warn('[git-diff] Diff extraction failed:', err instanceof Error ? err.message : err);
-  }
-}
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR ?? '/mnt/ws';
 
 // ---------------------------------------------------------------------------
 // Agent execution
@@ -337,7 +28,7 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
   const baseOptions: Record<string, unknown> = {
     systemPrompt: payload.system_prompt ?? undefined,
     allowedTools: payload.allowed_tools ?? DEFAULT_TOOLS,
-    cwd: '/workspace',
+    cwd: WORKSPACE_DIR,
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     settingSources: ['project'],
@@ -348,34 +39,8 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
     baseOptions.mcpServers = payload.mcp_servers;
   }
 
-  // Update S3 client if payload specifies a region
-  if (payload.workspace_s3_region) {
-    s3 = new S3Client({ region: payload.workspace_s3_region });
-  }
-
-  // Register S3 sync hooks (replaces file-watcher)
-  const bucket = payload.workspace_s3_bucket;
-  const prefix = payload.workspace_s3_prefix;
-  if (bucket && prefix) {
-    baseOptions.hooks = {
-      PostToolUse: [
-        {
-          matcher: 'Write|Edit',
-          hooks: [createFileChangeHook(bucket, prefix)],
-        },
-        {
-          matcher: 'Bash',
-          hooks: [createBashSyncHook(bucket, prefix)],
-        },
-      ],
-      Stop: [
-        {
-          hooks: [createStopHook(bucket, prefix, payload.execution_task_id, new Date().toISOString())],
-        },
-      ],
-    };
-    console.log(`[agent-runner] S3 sync hooks registered for s3://${bucket}/${prefix}`);
-  }
+  console.log(`[agent-runner] Working directory: ${WORKSPACE_DIR}`);
+  console.log(`[agent-runner] Access point: ${payload.workspace_access_point_arn?.slice(0, 60)}...`);
 
   // Strategy: try Claude Code session resume first (fast, native history).
   // If resume fails (microVM was recycled), fallback to history-injected prompt.

@@ -19,13 +19,9 @@ export interface AgentPayload {
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   /** Claude model ID to use (e.g. us.anthropic.claude-sonnet-4-6) */
   model?: string;
-  /** S3 bucket where the backend uploaded the full workspace */
-  workspace_s3_bucket?: string;
-  /** S3 region for the workspace bucket */
-  workspace_s3_region?: string;
-  /** S3 prefix — workspace files are at s3://{bucket}/{prefix}{relativePath} */
-  workspace_s3_prefix?: string;
-  /** Execution task ID for writing __executions__/{taskId}.json status files */
+  /** S3 Files Access Point ARN for workspace filesystem mount */
+  workspace_access_point_arn?: string;
+  /** Execution task ID for Layer 1 reconciliation */
   execution_task_id?: string;
 }
 

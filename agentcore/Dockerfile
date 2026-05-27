@@ -19,7 +19,7 @@ RUN npm install -g @anthropic-ai/claude-code
 # Claude Code Bedrock configuration
 ENV CLAUDE_CODE_USE_BEDROCK=1 \
     ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-6 \
-    WORKSPACE_S3_REGION=us-east-1
+    WORKSPACE_DIR=/mnt/ws
 
 # Install Node.js dependencies (include dev for TypeScript build)
 COPY package*.json ./
@@ -33,14 +33,12 @@ RUN npx tsc
 # Remove dev dependencies after build
 RUN npm prune --omit=dev
 
-# Create workspace and user directories (node user is UID 1000 in base image)
-RUN mkdir -p /workspace
-RUN mkdir -p /home/node/.claude/skills
-RUN chown -R node:node /workspace /home/node/.claude /app
+# Create mount points and Claude home (node user is UID 1000 in base image)
+RUN mkdir -p /mnt/ws /mnt/session /home/node/.claude/skills
+RUN chown -R node:node /mnt/ws /mnt/session /home/node/.claude /app
 
 # Run as non-root
 USER node
-WORKDIR /workspace
 
 # AgentCore protocol requires port 8080
 EXPOSE 8080
