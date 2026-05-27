@@ -175,9 +175,9 @@ export async function deleteAccessPoint(scopeId: string): Promise<void> {
  * Get AWS account ID from STS (for constructing ARNs).
  */
 async function getAccountId(): Promise<string> {
-  const { STSClient, GetCallerIdentityCommand } = await import('@aws-sdk/client-sts');
-  const sts = new STSClient({ region: config.aws.region });
-  const response = await sts.send(new GetCallerIdentityCommand({}));
+  const mod = await import('@aws-sdk/client-sts' as string);
+  const sts = new mod.STSClient({ region: config.aws.region });
+  const response = await sts.send(new mod.GetCallerIdentityCommand({}));
   return response.Account!;
 }
 
