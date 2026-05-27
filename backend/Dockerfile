@@ -1,104 +1,49 @@
-# =============================================================================
-# Dockerfile for Super Agent Backend
-# Multi-stage build for optimized production image
-# Requirements: 1.5
-# =============================================================================
+# Super Agent Backend — Production Dockerfile for ECS Fargate
+# Multi-stage build: builder → production runtime
 
-# -----------------------------------------------------------------------------
-# Stage 1: Dependencies
-# Install all dependencies including devDependencies for building
-# -----------------------------------------------------------------------------
-FROM node:22-alpine AS deps
-
+FROM public.ecr.aws/docker/library/node:22-slim AS builder
 WORKDIR /app
 
-# Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
-
-# Copy package files
-COPY package.json package-lock.json ./
-
-# Install all dependencies (including devDependencies for build)
+# Install dependencies
+COPY package*.json ./
 RUN npm ci
 
-# -----------------------------------------------------------------------------
-# Stage 2: Builder
-# Build the TypeScript application and generate Prisma client
-# -----------------------------------------------------------------------------
-FROM node:22-alpine AS builder
+# Copy source and build
+COPY tsconfig.json ./
+COPY src/ ./src/
+COPY prisma/ ./prisma/
 
-WORKDIR /app
-
-# Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
-
-# Copy dependencies from deps stage
-COPY --from=deps /app/node_modules ./node_modules
-
-# Copy source files
-COPY package.json package-lock.json tsconfig.json ./
-COPY prisma ./prisma
-COPY src ./src
-
-# Generate Prisma client
+# Generate Prisma Client and compile TypeScript
 RUN npx prisma generate
+RUN npx tsc
 
-# Build TypeScript
-RUN npm run build
+# ---------------------------------------------------------------------------
+# Production stage
+# ---------------------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# Stage 3: Production
-# Minimal production image with only runtime dependencies
-# -----------------------------------------------------------------------------
-FROM node:22-alpine AS production
-
+FROM public.ecr.aws/docker/library/node:22-slim
 WORKDIR /app
 
-# Install OpenSSL for Prisma and curl for health checks
-RUN apk add --no-cache openssl curl
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 backend
+# Copy package files and install production dependencies
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-# Copy package files
-COPY package.json package-lock.json ./
-
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
-
-# Install Claude Code CLI globally so the binary is available on PATH
-# Required by ClaudeAgentService to spawn Claude Code subprocesses
-RUN npm install -g @anthropic-ai/claude-code
-
-# Create workspace directory for agent workspaces
-RUN mkdir -p /app/workspaces && chown backend:nodejs /app/workspaces
-
-# Copy Prisma schema and generated client
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-
-# Copy built application
+# Copy compiled code and Prisma artifacts from builder
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
-# Set ownership to non-root user
-RUN chown -R backend:nodejs /app
+# Copy Prisma schema and migrations (needed for prisma migrate deploy)
+COPY prisma/ ./prisma/
 
-# Switch to non-root user
-USER backend
+# Copy built-in skills
+COPY skills/ ./skills/
 
-# Expose application port
+# Run as non-root node user (UID 1000)
+USER node
+
 EXPOSE 3000
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV PORT=3000
-ENV HOST=0.0.0.0
-
-# Health check - uses the /health endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
-
-# Start the application
 CMD ["node", "dist/index.js"]
