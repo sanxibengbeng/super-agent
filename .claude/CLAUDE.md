@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Progressive Disclosure:** Each subdirectory has its own CLAUDE.md with deeper operational context:
+> - [`backend/CLAUDE.md`](../backend/CLAUDE.md) — Request flow, service/repository patterns, streaming, testing
+> - [`frontend/CLAUDE.md`](../frontend/CLAUDE.md) — Components, state management, path aliases, styling
+> - [`infra/CLAUDE.md`](../infra/CLAUDE.md) — CDK constructs, resource details, deployment scripts
+> - [`agentcore/CLAUDE.md`](../agentcore/CLAUDE.md) — Container runtime, SDK integration, build process
+
 ## Project Overview
 
 Super Agent is an enterprise-grade multi-agent platform for transforming business knowledge into AI Agents. Core workflow: **Business Domain → SOP → Agent → Workflow → Automation**.
@@ -23,8 +29,11 @@ Key capabilities:
 ```bash
 npm run dev                    # Start dev server (tsx watch, port 3000)
 npm run build                  # TypeScript compile
+npm run start                  # Run compiled output (node dist/index.js)
 npm run lint                   # ESLint check
 npm run lint:fix               # ESLint auto-fix
+npm run format                 # Prettier format all src
+npm run format:check           # Prettier check (CI)
 npm run test                   # Run all tests (vitest)
 npm run test -- path/to/file   # Run single test file
 npm run test:watch             # Watch mode
@@ -38,7 +47,10 @@ npm run prisma:migrate:prod    # Run migrations (production)
 ```bash
 npm run dev                    # Start dev server (Vite, port 5173)
 npm run build                  # Production build (tsc + vite)
+npm run preview                # Preview production build locally
 npm run lint                   # ESLint check
+npm run format                 # Prettier format all src
+npm run format:check           # Prettier check (CI)
 npm run test                   # Run all tests (vitest)
 npm run test -- path/to/file   # Run single test file
 npm run test:watch             # Watch mode
@@ -187,20 +199,27 @@ frontend/src/
 
 ### Infrastructure (AWS CDK)
 
-**Core Resources (Always Created):**
-- EC2 (m7g.medium, Ubuntu 22.04, Graviton3) with Elastic IP
-- RDS PostgreSQL 16.6 (t4g.micro, Aurora-compatible)
-- ElastiCache Redis 7.1 (cache.t4g.micro)
-- S3 Buckets: avatars, skills, workspaces
-- IAM Role with Bedrock, S3, Secrets Manager permissions
+Construct-based composition in `infra/lib/constructs/`:
 
-**Optional Resources:**
-- Cognito User Pool (when `authMode=cognito`)
-- CloudFront CDN + Route53 (when `enableCdn=true`)
+| Construct | File | Purpose |
+|-----------|------|---------|
+| VPC | `vpc.ts` | 3-tier VPC (public, private, isolated subnets) with security groups |
+| Data Layer | `data-layer.ts` | Aurora PostgreSQL 16 + ElastiCache Redis 7 |
+| Secrets | `secrets.ts` | Secrets Manager for DB and app secrets |
+| AgentCore | `agentcore.ts` | Bedrock AgentCore runtime + S3 Files filesystem |
+| ECS Cluster | `ecs-cluster.ts` | Fargate services (api, worker, gateway) behind internal ALB |
+| CDN | `cdn.ts` | CloudFront distribution + WAF → ALB origin; S3 frontend bucket |
+
+**S3 Buckets:** `super-agent-workspace-{account}`, `super-agent-assets-{account}`, `super-agent-frontend-{account}`
+**ECR Repos:** `super-agent-backend`, `super-agent-agentcore`
+
+> **Maintenance:** When adding S3 buckets or ECR repos in `super-agent-stack.ts`, update this list.
 
 ---
 
 ## Database Schema
+
+> **Maintenance:** After running `prisma:migrate` or modifying `schema.prisma`, verify the model count and update the tree/tables below if models were added, removed, or relationships changed.
 
 ### Multi-Tenancy Model
 
@@ -245,99 +264,35 @@ organizations (root tenant)
 
 ## Environment Variables
 
-### Backend Configuration (`backend/.env`)
+> **Maintenance:** After adding env vars to `backend/src/config/index.ts` or `docker-compose.yml`, update the list below if the var is non-obvious or has side effects.
 
-**Server:**
+See `docker-compose.yml` for the full set of env vars used in local development. Key non-obvious ones:
+
 ```bash
-PORT=3000
-HOST=0.0.0.0
-NODE_ENV=development|production|test
-LOG_LEVEL=info|debug|trace
-CORS_ORIGIN=*  # Comma-separated for production
-```
+# Backend - runtime selection
+AUTH_MODE=local|cognito              # Auth strategy
+AGENT_RUNTIME=claude|agentcore|openclaw  # Which agent backend
+PROCESS_ROLE=all|api|worker|gateway  # Process mode for scaling
+CLAUDE_CODE_USE_BEDROCK=1            # Use Bedrock instead of direct API
 
-**Database & Cache:**
-```bash
-DATABASE_URL=postgresql://user:pass@host:5432/super_agent
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
-```
+# Backend - AgentCore
+AGENTCORE_RUNTIME_ARN=               # Bedrock AgentCore runtime
+AGENTCORE_WORKSPACE_S3_BUCKET=       # S3 workspace for AgentCore containers
 
-**Authentication:**
-```bash
-AUTH_MODE=local|cognito
-
-# Local mode
-JWT_SECRET=your-secret-key
-
-# Cognito mode
-COGNITO_USER_POOL_ID=
-COGNITO_CLIENT_ID=
-COGNITO_REGION=us-west-2
-COGNITO_DOMAIN=
-```
-
-**AWS & Storage:**
-```bash
-AWS_REGION=us-west-2
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-S3_BUCKET_NAME=super-agent-files
-SKILLS_S3_BUCKET=super-agent-skills
-S3_PRESIGNED_URL_EXPIRES=3600
-```
-
-**AI/LLM:**
-```bash
-ANTHROPIC_API_KEY=           # Direct Anthropic API
-CLAUDE_CODE_USE_BEDROCK=1    # Use AWS Bedrock instead
-CLAUDE_MODEL=claude-sonnet-4-5-20250929
-AGENT_RUNTIME=claude|agentcore|openclaw
-AGENT_WORKSPACE_BASE_DIR=/tmp/workspaces
-CLAUDE_SESSION_TIMEOUT_MS=1800000
-CLAUDE_MAX_CONCURRENT_SESSIONS=10
-```
-
-**AgentCore (Container Isolation):**
-```bash
-AGENTCORE_RUNTIME_ARN=
-AGENTCORE_EXECUTION_ROLE_ARN=
-AGENTCORE_BACKEND_API_URL=
-AGENTCORE_WORKSPACE_S3_BUCKET=
-```
-
-**Observability:**
-```bash
-LANGFUSE_SECRET_KEY=
+# Backend - observability
+LANGFUSE_SECRET_KEY=                 # Langfuse tracing (optional)
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_BASE_URL=
-```
 
-**Process Scaling:**
-```bash
-PROCESS_ROLE=all|api|worker|gateway
-```
-
-### Frontend Configuration (`frontend/.env`)
-
-```bash
+# Frontend
 VITE_API_BASE_URL=http://localhost:3000
-VITE_USE_MOCK=false
-
-# Cognito mode
-VITE_COGNITO_USER_POOL_ID=
-VITE_COGNITO_CLIENT_ID=
-VITE_COGNITO_DOMAIN=
-VITE_COGNITO_REGION=
 ```
 
 ---
 
 ## API Structure
 
-### Route Prefixes
+### Route Prefixes (non-exhaustive — 41 route files total)
 
 | Prefix | Purpose | Auth |
 |--------|---------|------|
@@ -352,7 +307,15 @@ VITE_COGNITO_REGION=
 | `/api/mcp/*` | MCP server config | JWT |
 | `/api/webhooks/*` | Webhook management | JWT |
 | `/api/apps/*` | Published apps | JWT |
+| `/api/projects/*` | Kanban project boards | JWT |
+| `/api/documents/*` | Document management | JWT |
+| `/api/tasks/*` | Task audit/execution | JWT |
+| `/api/schedules/*` | Cron/trigger schedules | JWT |
+| `/api/rag/*` | RAG retrieval | JWT |
+| `/api/token-usage/*` | LLM token tracking | JWT |
 | `/v1/chat/completions` | OpenAI-compatible proxy | API Key |
+
+> **Maintenance:** When adding a route file, update the count above and add to this table if user-facing.
 
 ### Request Validation
 
@@ -396,13 +359,58 @@ Skills are stored in S3 with metadata in PostgreSQL. Loaded into agent workspace
 
 ---
 
+## Tool & MCP Routing
+
+When a task requires external tooling, use this table to select the correct tool:
+
+| Scenario | Route To | When NOT to use |
+|----------|----------|-----------------|
+| Query/inspect database schema or data | `mcp:postgres` | Schema changes (use Prisma CLI) |
+| Look up AWS service docs, limits, API details | `mcp:aws` | Already documented in `infra/CLAUDE.md` |
+| Look up library APIs (npm packages, SDKs) | `mcp:context7` | Standard Node/TS stdlib |
+| Fetch a specific URL or API response | `mcp:fetch` | Already have the data locally |
+| Multi-step reasoning / complex planning | `mcp:sequential-thinking` | Simple linear tasks |
+| GitHub PRs, issues, actions | `mcp:github` | Local git operations (use Bash) |
+| Infrastructure changes (CDK constructs) | `skill:cdk-infra` | Reading infra code (just use Read) |
+| Database migrations, seeding, Prisma ops | `skill:prisma-ops` | Querying data (use mcp:postgres) |
+| Start/stop/check dev servers | `skill:dev-server` | Production deployments |
+| Run tests, check coverage | `skill:test-runner` | Manual verification at localhost:8080 |
+| Lint and auto-fix code | `skill:lint-fix` | Already running in watch mode |
+| Commit, push, create PRs | `skill:smart-commit` | Exploratory/uncommitted work |
+
+**Default path:** If no row matches, use Bash directly or Read the relevant source.
+
+---
+
+## Behavioral Rules
+
+- Always show design proposal before implementing. Wait for user confirmation.
+- Do not refactor beyond what the task requires. No speculative abstractions.
+- All chat UIs must reuse `components/chat/` and `ChatContext` — never create standalone chat implementations.
+- When creating entities by name that may already exist, upsert — do not throw on collision.
+- For UI verification, test at `localhost:8080` (Docker Compose) — not raw ports 3000/5173.
+- If a command fails twice, report the error and ask — do not keep retrying silently.
+- Do not use Playwright MCP for browser testing — use Puppeteer or AgentCore browser use.
+- Never assume AWS service versions or features from training data — verify against `infra/` source or docs.
+
+---
+
+## Subdirectory Protocol
+
+When operating in a subdirectory (`backend/`, `frontend/`, `infra/`, `agentcore/`):
+1. Check for local `CLAUDE.md` — its patterns override root conventions for that scope
+2. Run commands from that directory (not project root) unless explicitly cross-cutting
+3. Root **Architecture Principles** and **Behavioral Rules** always apply regardless of subdirectory
+
+---
+
 ## Architecture Principles
 
 ### Chat Component Reuse (Critical)
 All chat-like UIs in the app MUST reuse the shared components from `frontend/src/components/chat/` and `ChatContext.tsx`. This includes: scope copilot, workflow copilot, project twin sessions, and any future conversational UIs. Never create standalone chat implementations — styling, file preview, streaming, and message rendering must all come from the shared base.
 
 ### Source-Based Session Types
-Chat sessions use a `source` enum to differentiate business contexts (chat, workflow, project, scope-copilot, etc.). Don't modify existing source values. Add new enum values for new features. Business logic routes from the source to determine which external entity table to join.
+Chat sessions use a `source` field (VARCHAR(20)) to differentiate business contexts (chat, workflow, project, scope-copilot, etc.). Don't modify existing source values. Add new values for new features. Business logic routes from the source to determine which external entity table to join.
 
 ### Upsert Pattern for Copilot-Created Entities
 When AI copilots (scope copilot, workflow copilot) create resources like agents or skills, use upsert-by-name within the scope rather than failing on name collision. Users iterate via copilot and expect saves to work repeatedly.
@@ -567,16 +575,18 @@ DOCKER_BUILDKIT=0 docker build --platform linux/arm64 -t 873543029686.dkr.ecr.us
 docker push 873543029686.dkr.ecr.us-east-1.amazonaws.com/superagenteks-agentcore:latest
 ```
 
-### Production (AWS)
+### Production (AWS ECS Fargate)
 ```bash
-# Deploy infrastructure
-cd infra && npx cdk deploy -c stackName=SuperAgent
+# Deploy all infrastructure (VPC, Aurora, Redis, ECS, CDN)
+cd infra && npx cdk deploy --all
 
-# Deploy application
-./infra/scripts/deploy.sh --stack SuperAgent
+# View pending changes before deploying
+cd infra && npx cdk diff
 ```
+
+Architecture: CloudFront → internal ALB → ECS Fargate services (api, worker, gateway). Frontend served from S3 via CloudFront.
 
 ### CI/CD (GitHub Actions)
 - Push to `main` triggers automatic deployment
 - Jobs: Build/Test → Infrastructure (CDK) → Deploy Application → Smoke Test
-- Artifacts: backend (compiled), frontend/dist
+- Artifacts: backend Docker image → ECR, frontend/dist → S3

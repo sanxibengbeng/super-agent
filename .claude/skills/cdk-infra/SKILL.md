@@ -1,13 +1,13 @@
 ---
 name: cdk-infra
-description: AWS CDK infrastructure operations for Super Agent - deploy, diff, synth, destroy stacks, manage CloudFormation resources. Use this skill whenever the user mentions: cdk, deploy, infrastructure, aws, cloudformation, stack, cdk diff, cdk deploy, cdk synth, cdk destroy, infra, provision, ec2, rds, cognito, s3, cloudfront, route53, or any variation of infrastructure/deployment operations. Also use when user wants to check deployment status, modify infrastructure config, or troubleshoot AWS resource issues.
+description: AWS CDK infrastructure operations for Super Agent - deploy, diff, synth, destroy stacks, manage ECS Fargate services, Aurora PostgreSQL, ElastiCache Redis, CloudFront CDN, AgentCore runtime. Use this skill whenever the user mentions: cdk, deploy, infrastructure, aws, cloudformation, stack, cdk diff, cdk deploy, cdk synth, cdk destroy, infra, provision, ecs, fargate, rds, aurora, elasticache, redis, s3, cloudfront, waf, vpc, agentcore, ecr, or any variation of infrastructure/deployment operations. Also use when user wants to check deployment status, modify infrastructure config, or troubleshoot AWS resource issues.
 ---
 
 # CDK Infra - AWS Infrastructure Operations
 
 ## Purpose
 
-Manage AWS CDK infrastructure for Super Agent. The stack provisions EC2, RDS PostgreSQL, S3, Cognito (optional), CloudFront CDN (optional), and related networking resources.
+Manage AWS CDK infrastructure for Super Agent. The stack provisions a 3-tier VPC, ECS Fargate cluster (api/worker/gateway), Aurora PostgreSQL, ElastiCache Redis, CloudFront CDN with WAF, Bedrock AgentCore runtime, and S3 storage.
 
 ## Stack Overview
 
@@ -15,21 +15,25 @@ Manage AWS CDK infrastructure for Super Agent. The stack provisions EC2, RDS Pos
 
 **Main Stack**: `SuperAgentStack` in `lib/super-agent-stack.ts`
 
-### Core Resources (Always Created)
-- VPC (default)
-- Security Groups (EC2, RDS)
-- EC2 Instance (m7g.medium ARM64, Graviton3)
-- Elastic IP
-- RDS PostgreSQL (Aurora Serverless v2)
-- S3 Bucket (avatars, documents)
-- IAM Role (EC2 instance profile)
-- Redis (on EC2)
-- Nginx reverse proxy
-- systemd service
+### Constructs (in `lib/constructs/`)
 
-### Optional Resources
-- **Cognito** (authMode=cognito): User Pool, App Client, Admin User
-- **CDN** (enableCdn=true): S3 frontend bucket, CloudFront, ACM cert, Route53
+| Construct | File | Resources |
+|-----------|------|-----------|
+| VPC | `vpc.ts` | 3-tier VPC (public/private/isolated), 2 NAT GWs, VPC endpoints, security groups |
+| Data Layer | `data-layer.ts` | Aurora PostgreSQL 16 (t4g.medium writer+reader), ElastiCache Redis 7.1 (multi-AZ) |
+| Secrets | `secrets.ts` | Secrets Manager (app config, JWT, API keys) |
+| AgentCore | `agentcore.ts` | Bedrock AgentCore runtime, S3 Files filesystem, IAM roles |
+| ECS Cluster | `ecs-cluster.ts` | Fargate services (api/worker/gateway), internal ALB, auto-scaling |
+| CDN | `cdn.ts` | CloudFront distribution, WAF (rate limit + AWS managed rules), S3 frontend origin |
+
+### S3 Buckets
+- `super-agent-workspace-{account}` — Agent workspaces, S3 Files mount
+- `super-agent-assets-{account}` — Avatars, skills, uploads
+- `super-agent-frontend-{account}` — Built SPA (CloudFront origin)
+
+### ECR Repositories
+- `super-agent-backend` — ECS Fargate task image
+- `super-agent-agentcore` — AgentCore microVM image (ARM64 only)
 
 ## Common Operations
 
@@ -39,21 +43,16 @@ Manage AWS CDK infrastructure for Super Agent. The stack provisions EC2, RDS Pos
 cd infra && npx cdk diff
 ```
 
-Shows what will change without deploying.
-
-### Deploy Stack
+### Deploy All Stacks
 
 ```bash
-# Basic deploy
-cd infra && npx cdk deploy
+cd infra && npx cdk deploy --all
+```
 
-# With parameters
-cd infra && npx cdk deploy \
-  --parameters KeyPairName=my-keypair \
-  --parameters AllowedCidr=10.0.0.0/8
+### Deploy with Context Parameters
 
-# With context (enable CDN)
-cd infra && npx cdk deploy \
+```bash
+cd infra && npx cdk deploy --all \
   -c enableCdn=true \
   -c domainName=app.example.com \
   -c hostedZoneId=Z1234567890
@@ -65,15 +64,13 @@ cd infra && npx cdk deploy \
 cd infra && npx cdk synth
 ```
 
-Outputs CloudFormation YAML to `cdk.out/`.
-
-### Destroy Stack
+### Destroy All Stacks
 
 ```bash
-cd infra && npx cdk destroy
+cd infra && npx cdk destroy --all
 ```
 
-**Warning**: Destroys all resources. Data in RDS/S3 will be lost.
+**Warning**: Data resources (S3, RDS, ECR) have `RemovalPolicy.RETAIN` — they survive stack deletion.
 
 ### Bootstrap (First Time Only)
 
@@ -81,118 +78,94 @@ cd infra && npx cdk destroy
 cd infra && npx cdk bootstrap aws://ACCOUNT_ID/REGION
 ```
 
-Required once per account/region before first deploy.
-
 ## Context Parameters
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
-| `enableCdn` | true/false | false | Enable CloudFront CDN |
+| `stackName` | string | SuperAgent | CloudFormation stack name |
+| `enableCdn` | true/false | false | Enable CloudFront + WAF |
 | `domainName` | string | - | Custom domain (required if CDN) |
-| `hostedZoneId` | string | - | Route53 hosted zone ID (required if CDN) |
+| `hostedZoneId` | string | - | Route53 zone (required if CDN) |
 | `authMode` | cognito/local | local | Authentication mode |
 
-### Example: Deploy with Cognito Auth
+## ECS Service Details
 
-```bash
-cd infra && npx cdk deploy -c authMode=cognito \
-  --parameters AdminEmail=admin@company.com \
-  --parameters CognitoDomainPrefix=myapp-auth
-```
+| Service | Role | CPU | Memory | Scaling |
+|---------|------|-----|--------|---------|
+| api | HTTP routes | 512 | 1024 MiB | 2-6 tasks, 70% CPU |
+| worker | BullMQ + AgentCore | 1024 | 2048 MiB | 1-4 tasks, 70% CPU |
+| gateway | WebSocket/IM | 256 | 512 MiB | 2-4 tasks, 70% CPU |
 
-### Example: Deploy with CDN
-
-```bash
-cd infra && npx cdk deploy \
-  -c enableCdn=true \
-  -c domainName=app.mycompany.com \
-  -c hostedZoneId=Z0123456789ABCDEFGHIJ
-```
-
-## Stack Parameters
-
-| Parameter | Description |
-|-----------|-------------|
-| `KeyPairName` | EC2 key pair for SSH access |
-| `AllowedCidr` | CIDR range for HTTP/HTTPS access (default: 0.0.0.0/0) |
-| `AdminEmail` | Initial admin email (Cognito mode) |
-| `CognitoDomainPrefix` | Cognito hosted UI domain prefix |
+ALB routing: `/api/*`, `/v1/*`, `/health` → api; `/ws/*` → gateway (sticky sessions)
 
 ## Checking Deployment Status
 
 ### View Stack Outputs
 
 ```bash
-cd infra && aws cloudformation describe-stacks \
-  --stack-name SuperAgentStack \
+aws cloudformation describe-stacks \
+  --stack-name SuperAgent \
   --query 'Stacks[0].Outputs' \
   --output table
 ```
 
-### View Stack Events (Deployment Progress)
+### View ECS Services
 
 ```bash
-aws cloudformation describe-stack-events \
-  --stack-name SuperAgentStack \
-  --query 'StackEvents[0:10].[Timestamp,ResourceStatus,ResourceType,LogicalResourceId]' \
+aws ecs list-services --cluster super-agent-cluster --output table
+aws ecs describe-services --cluster super-agent-cluster \
+  --services super-agent-api super-agent-worker super-agent-gateway \
+  --query 'services[].[serviceName,runningCount,desiredCount,status]' \
   --output table
 ```
 
-### Check EC2 Instance Status
+### Check CloudFront Distribution
 
 ```bash
-aws ec2 describe-instances \
-  --filters "Name=tag:aws:cloudformation:stack-name,Values=SuperAgentStack" \
-  --query 'Reservations[].Instances[].[InstanceId,State.Name,PublicIpAddress]' \
+aws cloudfront list-distributions \
+  --query 'DistributionList.Items[].[Id,DomainName,Status]' \
   --output table
 ```
 
 ## Troubleshooting
 
-### Deploy Fails: "CDK bootstrap required"
+### ECS Task Failing to Start
 
 ```bash
-cd infra && npx cdk bootstrap
+# Check task stopped reason
+aws ecs describe-tasks --cluster super-agent-cluster \
+  --tasks $(aws ecs list-tasks --cluster super-agent-cluster --service-name super-agent-api --query 'taskArns[0]' --output text) \
+  --query 'tasks[].{status:lastStatus,reason:stoppedReason}'
+
+# Check CloudWatch logs
+aws logs tail /super-agent/ecs --follow
 ```
 
-### Deploy Fails: Missing Context
+### Database Connection Issues
 
-```
-Error: enableCdn=true requires domainName and hostedZoneId
-```
+- ECS tasks run in private subnets; DB is in isolated subnets
+- Security group `DbSecurityGroup` must allow port 5432 from `EcsSecurityGroup`
+- Check `DATABASE_URL` secret is correctly referenced in task definition
 
-Provide all required context values:
-```bash
-npx cdk deploy -c enableCdn=true -c domainName=X -c hostedZoneId=Y
-```
+### AgentCore Runtime Issues
 
-### Stack Rollback
-
-Check CloudFormation console or:
-```bash
-aws cloudformation describe-stack-events \
-  --stack-name SuperAgentStack \
-  --query 'StackEvents[?ResourceStatus==`CREATE_FAILED` || ResourceStatus==`UPDATE_FAILED`]'
-```
-
-### Force Delete Stuck Stack
-
-```bash
-aws cloudformation delete-stack --stack-name SuperAgentStack
-aws cloudformation wait stack-delete-complete --stack-name SuperAgentStack
-```
+- Images MUST be `linux/arm64` — AgentCore microVMs are Graviton-based
+- Use `DOCKER_BUILDKIT=0` — BuildKit attestation manifests break microVM startup
+- S3 Files mount at `/mnt/ws` — verify filesystem ID matches stack output
 
 ## File Structure
 
 ```
 infra/
-├── bin/
-│   └── app.ts              # CDK app entry point
+├── bin/app.ts                  # CDK app entry point
 ├── lib/
-│   └── super-agent-stack.ts # Main stack definition
-├── lambda/
-│   └── connectors/         # Lambda handlers for connectors
-├── cdk.json                # CDK configuration
+│   ├── super-agent-stack.ts    # Main stack (S3, ECR, construct composition)
+│   └── constructs/             # 6 construct files (vpc, data-layer, secrets, agentcore, ecs-cluster, cdn)
+├── scripts/
+│   ├── deploy.sh              # Application deployment orchestrator
+│   └── deploy-full.sh         # Full infra + app + AgentCore deployment
+├── lambda/connectors/         # Lambda handlers for data connectors
+├── cdk.json                   # CDK config (context defaults)
 ├── package.json
 └── tsconfig.json
 ```
@@ -202,8 +175,9 @@ infra/
 | Action | Command |
 |--------|---------|
 | View changes | `cd infra && npx cdk diff` |
-| Deploy | `cd infra && npx cdk deploy` |
+| Deploy all | `cd infra && npx cdk deploy --all` |
 | Synth template | `cd infra && npx cdk synth` |
-| Destroy | `cd infra && npx cdk destroy` |
+| Destroy all | `cd infra && npx cdk destroy --all` |
 | Bootstrap | `cd infra && npx cdk bootstrap` |
 | List stacks | `cd infra && npx cdk list` |
+| Full deploy | `cd infra && ./scripts/deploy-full.sh` |
