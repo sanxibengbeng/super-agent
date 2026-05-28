@@ -9,9 +9,15 @@ import { AgentCoreConstruct } from './constructs/agentcore';
 import { EcsClusterConstruct } from './constructs/ecs-cluster';
 import { CdnConstruct } from './constructs/cdn';
 
+export interface SuperAgentStackProps extends cdk.StackProps {
+  envName: string;
+}
+
 export class SuperAgentStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: SuperAgentStackProps) {
     super(scope, id, props);
+
+    const env = props.envName;
 
     // =========================================================================
     // VPC (3-tier: public, private, isolated)
@@ -22,7 +28,7 @@ export class SuperAgentStack extends cdk.Stack {
     // S3 Buckets
     // =========================================================================
     const workspaceBucket = new s3.Bucket(this, 'WorkspaceBucket', {
-      bucketName: `super-agent-workspace-${this.account}`,
+      bucketName: `super-agent-workspace-${env}-${this.account}`,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -40,7 +46,7 @@ export class SuperAgentStack extends cdk.Stack {
     });
 
     const assetsBucket = new s3.Bucket(this, 'AssetsBucket', {
-      bucketName: `super-agent-assets-${this.account}`,
+      bucketName: `super-agent-assets-${env}-${this.account}`,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -49,7 +55,7 @@ export class SuperAgentStack extends cdk.Stack {
     });
 
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
-      bucketName: `super-agent-frontend-${this.account}`,
+      bucketName: `super-agent-frontend-${env}-${this.account}`,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -60,13 +66,13 @@ export class SuperAgentStack extends cdk.Stack {
     // ECR Repositories
     // =========================================================================
     const backendRepo = new ecr.Repository(this, 'BackendRepo', {
-      repositoryName: 'super-agent-backend',
+      repositoryName: `super-agent-backend-${env}`,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       lifecycleRules: [{ maxImageCount: 10 }],
     });
 
     const agentcoreRepo = new ecr.Repository(this, 'AgentCoreRepo', {
-      repositoryName: 'super-agent-agentcore',
+      repositoryName: `super-agent-agentcore-${env}`,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       lifecycleRules: [{ maxImageCount: 10 }],
     });
@@ -115,6 +121,7 @@ export class SuperAgentStack extends cdk.Stack {
       s3FilesFileSystemId: agentCore.fileSystem.ref,
       region: this.region,
       account: this.account,
+      envName: env,
     });
 
     // =========================================================================
@@ -128,6 +135,7 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     // Outputs
     // =========================================================================
+    new cdk.CfnOutput(this, 'Environment', { value: env });
     new cdk.CfnOutput(this, 'CloudFrontDomain', { value: cdn.distribution.distributionDomainName });
     new cdk.CfnOutput(this, 'AlbDnsName', { value: ecsCluster.alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'DbClusterEndpoint', { value: dataLayer.dbCluster.clusterEndpoint.hostname });

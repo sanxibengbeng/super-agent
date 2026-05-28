@@ -22,6 +22,7 @@ export interface EcsClusterConstructProps {
   s3FilesFileSystemId: string;
   region: string;
   account: string;
+  envName: string;
 }
 
 export class EcsClusterConstruct extends Construct {
@@ -37,7 +38,7 @@ export class EcsClusterConstruct extends Construct {
     // ECS Cluster
     this.cluster = new ecs.Cluster(this, 'Cluster', {
       vpc: props.vpc,
-      clusterName: 'super-agent-cluster',
+      clusterName: `super-agent-${props.envName}`,
     });
 
     // Internal Application Load Balancer (private subnets)
@@ -61,7 +62,7 @@ export class EcsClusterConstruct extends Construct {
 
     // CloudWatch Log Group
     const logGroup = new logs.LogGroup(this, 'LogGroup', {
-      logGroupName: '/super-agent/ecs',
+      logGroupName: `/super-agent/${props.envName}/ecs`,
       retention: logs.RetentionDays.THREE_MONTHS,
     });
 
@@ -102,7 +103,7 @@ export class EcsClusterConstruct extends Construct {
 
     // Container image URI
     const containerImage = ecs.ContainerImage.fromRegistry(
-      `${props.account}.dkr.ecr.${props.region}.amazonaws.com/super-agent-backend:latest`
+      `${props.account}.dkr.ecr.${props.region}.amazonaws.com/super-agent-backend-${props.envName}:latest`
     );
 
     // ============================================

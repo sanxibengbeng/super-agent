@@ -15,6 +15,10 @@ frontend/.env.production
 **/cdk.out/
 **/cdk.context.json
 
+# Deploy script outputs
+scripts/.cdk-outputs-*.json
+scripts/deployments.log
+
 # Git worktrees
 .worktrees/
 .superpowers/
