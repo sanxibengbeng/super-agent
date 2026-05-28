@@ -144,7 +144,8 @@ function CategoryIcon({ category }: { category: string }) {
 // ---------------------------------------------------------------------------
 
 export function ConnectorPanel({ open, onClose, scopeId }: ConnectorPanelProps) {
-  const { t, language } = useTranslation()
+  const { t, currentLanguage } = useTranslation()
+  const language = currentLanguage
   const { bindings, loading, error: loadError, reload } = useScopeConnectors(scopeId)
   const [searchQuery, setSearchQuery] = useState('')
   const [error, setError] = useState<string | null>(null)

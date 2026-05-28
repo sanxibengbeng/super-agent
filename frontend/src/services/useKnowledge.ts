@@ -61,7 +61,7 @@ export function useKnowledge(): UseKnowledgeReturn {
   const createKnowledgeBase = useCallback(async (config: KnowledgeBaseConfig) => {
     setError(null)
     try {
-      await KnowledgeService.createKnowledgeBase(config)
+      await KnowledgeService.createKnowledgeBase?.(config)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create knowledge base'
       setError(message)
@@ -72,9 +72,9 @@ export function useKnowledge(): UseKnowledgeReturn {
   const syncAll = useCallback(async () => {
     setError(null)
     try {
-      await KnowledgeService.syncAll()
+      await KnowledgeService.syncAll?.()
       // Refresh documents after sync
-      await getDocuments()
+      await getDocuments?.()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to sync documents'
       setError(message)
@@ -83,7 +83,7 @@ export function useKnowledge(): UseKnowledgeReturn {
   }, [getDocuments])
 
   const getSupportedFileTypes = useCallback(() => {
-    return KnowledgeService.getSupportedFileTypes()
+    return KnowledgeService.getSupportedFileTypes?.() ?? []
   }, [])
 
   // Load documents on mount

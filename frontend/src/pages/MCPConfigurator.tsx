@@ -162,7 +162,6 @@ export function MCPConfigurator() {
     validation.clearAllErrors()
   }
 
-  const handleNewServer = () => { resetForm(); setIsFormOpen(true) }
 
   /** Set of server names already in the org list (for catalog "Installed" badges) */
   const installedNames = useMemo(

@@ -10,16 +10,13 @@ import type {
   CanvasNodeType 
 } from '@/types/canvas';
 import type { WorkflowVariableDefinition } from '@/types/canvas/metadata';
-import { 
-  createCanvasNode, 
-  getRootNodes 
+import {
+  createCanvasNode
 } from '@/lib/canvas/nodes';
-import { 
-  createEdge, 
+import {
+  createEdge,
   removeNode as removeNodeUtil,
   updateNodeData,
-  generateNodeId,
-  generateEntityId,
 } from '@/lib/canvas/utils';
 import { calculateNewNodePosition } from '@/lib/canvas/layout';
 

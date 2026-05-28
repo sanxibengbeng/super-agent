@@ -3,15 +3,14 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { 
-  X, 
-  Copy, 
-  Check, 
-  Plus, 
-  Trash2, 
-  ToggleLeft, 
+import {
+  X,
+  Copy,
+  Check,
+  Plus,
+  Trash2,
+  ToggleLeft,
   ToggleRight,
-  ExternalLink,
   Clock,
   Loader2,
   AlertCircle,

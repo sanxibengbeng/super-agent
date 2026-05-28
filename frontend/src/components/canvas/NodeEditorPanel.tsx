@@ -140,53 +140,48 @@ export function NodeEditorPanel({
 
         {/* Type-specific editors */}
         {node.type === 'agent' && (
-          <AgentNodeEditor 
-            node={node} 
+          <AgentNodeEditor
+            node={node}
             agents={agents}
             onUpdate={(updates) => {
               onUpdate(node.id, updates);
-              setIsDirty(false);
-            }} 
+            }}
           />
         )}
 
         {node.type === 'start' && (
-          <StartNodeEditor 
-            node={node} 
+          <StartNodeEditor
+            node={node}
             onUpdate={(updates) => {
               onUpdate(node.id, updates);
-              setIsDirty(false);
-            }} 
+            }}
           />
         )}
 
         {node.type === 'action' && (
-          <ActionNodeEditor 
-            node={node} 
+          <ActionNodeEditor
+            node={node}
             onUpdate={(updates) => {
               onUpdate(node.id, updates);
-              setIsDirty(false);
-            }} 
+            }}
           />
         )}
 
         {(node.type === 'document' || node.type === 'codeArtifact') && (
-          <ActionNodeEditor 
-            node={node} 
+          <ActionNodeEditor
+            node={node}
             onUpdate={(updates) => {
               onUpdate(node.id, updates);
-              setIsDirty(false);
-            }} 
+            }}
           />
         )}
 
         {node.type === 'condition' && (
-          <ConditionNodeEditor 
-            node={node} 
+          <ConditionNodeEditor
+            node={node}
             onUpdate={(updates) => {
               onUpdate(node.id, updates);
-              setIsDirty(false);
-            }} 
+            }}
           />
         )}
       </div>
@@ -435,22 +430,22 @@ function StartNodeEditor({
 }
 
 // Action Node Editor
-function ActionNodeEditor({ 
-  node, 
-  onUpdate 
-}: { 
-  node: CanvasNode; 
+function ActionNodeEditor({
+  node,
+  onUpdate
+}: {
+  node: CanvasNode;
   onUpdate: (updates: Partial<CanvasNode['data']>) => void;
 }) {
   const metadata = node.data.metadata as ActionNodeMeta | undefined;
   const [description, setDescription] = useState(
-    (metadata as Record<string, unknown>)?.prompt as string || node.data.contentPreview || ''
+    ((metadata as unknown as Record<string, unknown>)?.prompt as string) || node.data.contentPreview || ''
   );
   const { t } = useTranslation();
 
   // Sync local state when a different node is selected
   useEffect(() => {
-    const meta = node.data.metadata as Record<string, unknown> | undefined;
+    const meta = node.data.metadata as unknown as Record<string, unknown> | undefined;
     setDescription((meta?.prompt as string) || node.data.contentPreview || '');
   }, [node.id]);
 
@@ -486,22 +481,22 @@ function ActionNodeEditor({
 }
 
 // Condition Node Editor
-function ConditionNodeEditor({ 
-  node, 
-  onUpdate 
-}: { 
-  node: CanvasNode; 
+function ConditionNodeEditor({
+  node,
+  onUpdate
+}: {
+  node: CanvasNode;
   onUpdate: (updates: Partial<CanvasNode['data']>) => void;
 }) {
   const metadata = node.data.metadata as ConditionNodeMeta | undefined;
   const [description, setDescription] = useState(
-    (metadata as Record<string, unknown>)?.prompt as string || node.data.contentPreview || ''
+    ((metadata as unknown as Record<string, unknown>)?.prompt as string) || node.data.contentPreview || ''
   );
   const { t } = useTranslation();
 
   // Sync local state when a different node is selected
   useEffect(() => {
-    const meta = node.data.metadata as Record<string, unknown> | undefined;
+    const meta = node.data.metadata as unknown as Record<string, unknown> | undefined;
     setDescription((meta?.prompt as string) || node.data.contentPreview || '');
   }, [node.id]);
 

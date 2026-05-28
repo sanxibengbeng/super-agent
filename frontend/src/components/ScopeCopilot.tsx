@@ -285,7 +285,7 @@ export function ScopeCopilot({
         newHistory.map(m => m.id === assistantId
           ? { ...m, content: finalContent, status: 'done' }
           : m
-        ).filter(m => m.role === 'user' || m.content || m.status === 'streaming')
+        ).filter(m => m.role === 'user' || m.content || m.status === 'streaming') as ChatMessageDraft[]
       )
     } catch (err) {
       onChatHistoryChange(

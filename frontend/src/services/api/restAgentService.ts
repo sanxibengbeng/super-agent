@@ -276,7 +276,7 @@ export const RestAgentService = {
    * This is a no-op that returns an empty unsubscribe function.
    * For real-time updates, consider using WebSocket or polling.
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: Agent; old?: Agent }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: Agent; old?: Agent }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

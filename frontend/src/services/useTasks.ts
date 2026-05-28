@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useSyncExternalStore, useEffect } from 'react'
 import { TaskService, TaskServiceError } from './taskService'
-import type { Task, TaskFilters, AgentSummary, TaskStatus } from '@/types'
+import type { Task, TaskFilters } from '@/types'
 
 export interface UseTasksState {
   tasks: Task[]

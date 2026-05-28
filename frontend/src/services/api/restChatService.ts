@@ -151,7 +151,7 @@ export const RestChatService = {
   /**
    * Sends a message and receives AI response via SSE streaming
    */
-  async sendMessage(sessionId: string, content: string, sopContext: string): Promise<Message> {
+  async sendMessage(_sessionId: string, content: string, sopContext: string): Promise<Message> {
     if (!content.trim()) {
       throw new ServiceError('Message content cannot be empty', 'VALIDATION_ERROR');
     }

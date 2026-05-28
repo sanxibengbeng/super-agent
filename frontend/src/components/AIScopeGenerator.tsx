@@ -172,7 +172,7 @@ function AgentCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
-  const { t } = useTranslation();
+  const { t: _t } = useTranslation();
 
   return (
     <div className={`rounded-xl border transition-all ${agent._removed ? 'border-gray-700/50 bg-gray-800/30 opacity-50' : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'}`}>
@@ -366,6 +366,9 @@ export function AIScopeGenerator() {
         setContentBlocks(prev => {
           const next = [...prev];
           for (const block of event.content!) {
+            // Type guard: skip if block is a string
+            if (typeof block === 'string') continue;
+
             if (block.type === 'text' && block.text) {
               const lastIdx = next.length - 1;
               if (lastIdx >= 0 && next[lastIdx].type === 'text') {

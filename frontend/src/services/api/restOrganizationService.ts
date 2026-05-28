@@ -267,7 +267,7 @@ export const RestOrganizationService = {
   /**
    * Subscribes to real-time organization changes (no-op for REST)
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: Organization; old?: Organization }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: Organization; old?: Organization }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

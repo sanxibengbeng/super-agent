@@ -3,17 +3,15 @@
  */
 
 import { useState } from 'react';
-import { 
-  X, 
-  Plus, 
-  Trash2, 
-  Copy, 
+import {
+  X,
+  Plus,
+  Trash2,
+  Copy,
   Check,
   Key,
   Loader2,
   AlertCircle,
-  Eye,
-  EyeOff,
   Shield,
   Clock,
 } from 'lucide-react';

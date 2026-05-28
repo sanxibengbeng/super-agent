@@ -11,7 +11,6 @@ import {
   getCachedAuthMode,
   getValidToken,
   getLocalToken,
-  clearLocalToken,
   localLogin,
   localRegister,
   localLogout,

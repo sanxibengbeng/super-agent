@@ -183,7 +183,7 @@ export const RestMCPService = {
   /**
    * Subscribes to real-time MCP server changes (no-op for REST)
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: MCPServer; old?: MCPServer }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: MCPServer; old?: MCPServer }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

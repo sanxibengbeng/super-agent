@@ -3,11 +3,10 @@
  * Floating popup that appears when user types '@' in the chat input.
  * Shows agents in the current business scope for @mention routing.
  */
-import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react'
 import { Bot } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { AgentService } from '@/services/agentService'
-import type { Agent } from '@/types'
 import { getAvatarDisplayUrl, getAvatarFallback, shouldShowAvatarImage } from '@/utils/avatarUtils'
 
 export interface MentionAgent {
@@ -42,7 +41,7 @@ interface AgentMentionPopupProps {
 }
 
 export const AgentMentionPopup = forwardRef<AgentMentionPopupHandle, AgentMentionPopupProps>(
-  function AgentMentionPopup({ scopeId, query, onSelect, anchorRect }, ref) {
+  function AgentMentionPopup({ scopeId, query, onSelect, anchorRect: _anchorRect }, ref) {
     const { t } = useTranslation()
     const [agents, setAgents] = useState<MentionAgent[]>([])
     const [selectedIndex, setSelectedIndex] = useState(0)

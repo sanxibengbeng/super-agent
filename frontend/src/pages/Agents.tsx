@@ -12,7 +12,7 @@ export function Agents() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { agents, isLoading, error, getAgentById, updateAgent, deleteAgent } = useAgents({ pollInterval: 5000 })
-  const { businessScopes, deleteBusinessScope, refetch: refetchScopes } = useBusinessScopes()
+  const { businessScopes, deleteBusinessScope } = useBusinessScopes()
 
   // Get agent ID and scope ID from URL params
   const selectedAgentId = useMemo(() => searchParams.get('id'), [searchParams])

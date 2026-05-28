@@ -333,10 +333,10 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
         setBackendSessionId(validSessionId)
 
         sessionStreamManager.sendMessage(validSessionId, content, {
-          businessScopeId: selectedBusinessScopeId || undefined,
-          agentId: selectedAgentId || undefined,
-          mentionAgentId: mentionAgentId || undefined,
-          sopContext: activeSop,
+          businessScopeId: selectedBusinessScopeId ?? '',
+          agentId: selectedAgentId ?? undefined,
+          mentionAgentId: mentionAgentId ?? undefined,
+          sopContext: activeSop ?? '',
         })
 
         return {

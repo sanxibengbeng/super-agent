@@ -210,7 +210,7 @@ export const RestDocumentService = {
   /**
    * Subscribes to real-time document changes (no-op for REST)
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: KnowledgeDocument; old?: KnowledgeDocument }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: KnowledgeDocument; old?: KnowledgeDocument }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

@@ -4,12 +4,11 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { 
-  ChevronDown, 
-  Check, 
-  Loader2, 
-  Upload, 
-  Plus, 
+import {
+  ChevronDown,
+  Check,
+  Loader2,
+  Plus,
   X,
   Play,
   Square,
@@ -202,24 +201,22 @@ export function WorkflowEditor() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { 
-    workflows, 
-    isLoading: workflowsLoading, 
-    error, 
-    updateWorkflow, 
-    createWorkflow, 
+  const {
+    workflows,
+    isLoading: workflowsLoading,
+    error,
+    updateWorkflow,
+    createWorkflow,
     deleteWorkflow,
-    applyNaturalLanguageChanges,
     importFromImage,
   } = useWorkflows();
   const { businessScopes, isLoading: scopesLoading } = useBusinessScopes();
   const { agents } = useAgents();
   const {
-    execution,
-    isExecuting,
+    isExecuting: _isExecuting,
     nodeStates,
     error: executionError,
-    execute,
+    execute: _execute,
     abort,
     loadHistory,
     history,
@@ -473,13 +470,13 @@ export function WorkflowEditor() {
   const getStartNodeVariables = useCallback(() => {
     const startNode = canvasData.nodes.find(n => n.type === 'start');
     const meta = startNode?.data?.metadata as { inputVariables?: Array<Record<string, unknown>> } | undefined;
-    return (meta?.inputVariables || []) as import('@/types/canvas/metadata').WorkflowVariableDefinition[];
+    return (meta?.inputVariables || []) as unknown as import('@/types/canvas/metadata').WorkflowVariableDefinition[];
   }, [canvasData]);
 
   const handleRunClick = useCallback(() => {
     if (!selectedWorkflow || isRunningV2 || !activeScopeId) return;
-    const vars = getStartNodeVariables();
-    if (vars.length > 0) {
+    const vars = getStartNodeVariables() as unknown as import('@/types/canvas/metadata').WorkflowVariableDefinition[];
+    if ((vars as unknown[]).length > 0) {
       setShowRunModal(true);
     } else {
       // No variables — run immediately

@@ -809,7 +809,7 @@ interface BusinessScopeSelectorProps {
   onScopeChange: (scopeId: string) => void
 }
 
-function BusinessScopeSelector({ selectedScopeId, onScopeChange }: BusinessScopeSelectorProps) {
+export function _BusinessScopeSelector({ selectedScopeId, onScopeChange }: BusinessScopeSelectorProps) {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const [scopes, setScopes] = useState<BusinessScope[]>([])
@@ -926,7 +926,7 @@ interface AgentSelectorProps {
   onAgentChange: (agentId: string | null) => void
 }
 
-function AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: AgentSelectorProps) {
+export function _AgentSelector({ selectedAgentId, selectedScopeId, onAgentChange }: AgentSelectorProps) {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const [scopeAgents, setScopeAgents] = useState<Agent[]>([])

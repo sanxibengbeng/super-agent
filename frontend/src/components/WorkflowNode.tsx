@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react'
-import { Play, Bot, User, Zap, CheckCircle, GripVertical } from 'lucide-react'
+import { Play, Bot, User, Zap, CheckCircle, GripVertical, GitBranch, FileText, Code, RefreshCw } from 'lucide-react'
 import type { WorkflowNode as WorkflowNodeType, NodeType } from '@/types'
 
 interface WorkflowNodeProps {
@@ -44,6 +44,48 @@ const nodeTypeConfig: Record<NodeType, {
     bgColor: 'bg-gray-500/20',
     borderColor: 'border-gray-500/50',
     iconColor: 'text-gray-400',
+  },
+  start: {
+    icon: Play,
+    bgColor: 'bg-green-500/20',
+    borderColor: 'border-green-500/50',
+    iconColor: 'text-green-400',
+  },
+  condition: {
+    icon: GitBranch,
+    bgColor: 'bg-yellow-500/20',
+    borderColor: 'border-yellow-500/50',
+    iconColor: 'text-yellow-400',
+  },
+  document: {
+    icon: FileText,
+    bgColor: 'bg-cyan-500/20',
+    borderColor: 'border-cyan-500/50',
+    iconColor: 'text-cyan-400',
+  },
+  codeArtifact: {
+    icon: Code,
+    bgColor: 'bg-pink-500/20',
+    borderColor: 'border-pink-500/50',
+    iconColor: 'text-pink-400',
+  },
+  resource: {
+    icon: FileText,
+    bgColor: 'bg-gray-500/20',
+    borderColor: 'border-gray-500/50',
+    iconColor: 'text-gray-400',
+  },
+  loop: {
+    icon: RefreshCw,
+    bgColor: 'bg-indigo-500/20',
+    borderColor: 'border-indigo-500/50',
+    iconColor: 'text-indigo-400',
+  },
+  parallel: {
+    icon: GitBranch,
+    bgColor: 'bg-teal-500/20',
+    borderColor: 'border-teal-500/50',
+    iconColor: 'text-teal-400',
   },
 }
 

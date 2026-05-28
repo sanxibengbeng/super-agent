@@ -1,5 +1,4 @@
 import type { KnowledgeDocument, DocumentUpload, KnowledgeBaseConfig, DocumentFileType } from '@/types'
-import { getServiceConfig } from './api/createService'
 import { RestDocumentService } from './api/restDocumentService'
 import { shouldUseRestApi } from './api/index'
 
@@ -260,7 +259,6 @@ function selectKnowledgeService(): IKnowledgeService {
   if (shouldUseRestApi()) {
     return RestKnowledgeServiceAdapter
   }
-  const config = getServiceConfig()
   return MockKnowledgeService
 }
 

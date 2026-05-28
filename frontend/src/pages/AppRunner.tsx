@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Maximize2, Minimize2, ExternalLink, Star, Play, Clock, Tag, User, ChevronDown, Heart, Trash2 } from 'lucide-react'
+import { ArrowLeft, Maximize2, Minimize2, ExternalLink, Star, Play, Tag, User, Heart, Trash2 } from 'lucide-react'
 import { restClient } from '@/services/api/restClient'
 import { useFavorites } from '@/hooks/useFavorites'
 import { useTranslation } from '@/i18n'

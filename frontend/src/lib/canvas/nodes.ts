@@ -10,17 +10,6 @@ import type {
   CanvasNodeType,
   CanvasNode 
 } from '../../types/canvas';
-import type {
-  AgentNodeMeta,
-  DocumentNodeMeta,
-  CodeArtifactNodeMeta,
-  ResourceNodeMeta,
-  StartNodeMeta,
-  TriggerNodeMeta,
-  ActionNodeMeta,
-  ConditionNodeMeta,
-  EndNodeMeta,
-} from '../../types/canvas/metadata';
 import { DEFAULT_NODE_DIMENSIONS } from '../../types/canvas/layout';
 
 /**
@@ -41,13 +30,13 @@ export const getNodeDefaultMetadata = (nodeType: CanvasNodeType): Record<string,
         ...baseMetadata,
         status: 'waiting',
         version: 0,
-      } as AgentNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'document':
       return {
         ...baseMetadata,
         status: 'finish',
-      } as DocumentNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'codeArtifact':
       return {
@@ -55,13 +44,13 @@ export const getNodeDefaultMetadata = (nodeType: CanvasNodeType): Record<string,
         status: 'generating',
         language: 'typescript',
         activeTab: 'preview',
-      } as CodeArtifactNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'resource':
       return {
         ...baseMetadata,
         resourceType: 'weblink',
-      } as ResourceNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'humanApproval':
       return {
@@ -73,33 +62,33 @@ export const getNodeDefaultMetadata = (nodeType: CanvasNodeType): Record<string,
       return {
         ...baseMetadata,
         inputVariables: [],
-      } as StartNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'trigger':
       return {
         ...baseMetadata,
         triggerType: 'manual',
-      } as TriggerNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'action':
       return {
         ...baseMetadata,
         actionType: 'api_call',
         status: 'init',
-      } as ActionNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'condition':
       return {
         ...baseMetadata,
         rules: [],
         logic: 'and',
-      } as ConditionNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     case 'end':
       return {
         ...baseMetadata,
         status: 'success',
-      } as EndNodeMeta;
+      } as unknown as Record<string, unknown>;
 
     default:
       return baseMetadata;

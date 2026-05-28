@@ -193,7 +193,7 @@ function CanvasInner({
   }, [onNodeSelect]);
 
   // Validate connections: source handles can only connect to target handles, no self-loops
-  const isValidConnection = useCallback((connection: { source: string | null; target: string | null; sourceHandle: string | null; targetHandle: string | null }) => {
+  const isValidConnection = useCallback((connection: { source: string | null; target: string | null; sourceHandle?: string | null; targetHandle?: string | null }) => {
     if (!connection.source || !connection.target) return false;
     if (connection.source === connection.target) return false;
     return true;

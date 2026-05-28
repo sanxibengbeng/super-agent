@@ -321,7 +321,7 @@ export const RestTaskService = {
   /**
    * Subscribes to real-time task changes (no-op for REST)
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: Task; old?: Task }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: Task; old?: Task }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

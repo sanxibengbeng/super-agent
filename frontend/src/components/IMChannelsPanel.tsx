@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react'
-import { Plus, Trash2, Loader2, ToggleLeft, ToggleRight, MessageSquare, Hash, Globe, Copy, CheckCircle2 } from 'lucide-react'
+import { Plus, Trash2, Loader2, ToggleLeft, ToggleRight, MessageSquare, Hash, Copy, CheckCircle2 } from 'lucide-react'
 import { useIMChannels } from '@/services/useIMChannels'
 import type { CreateIMChannelRequest } from '@/services/useIMChannels'
 import { useTranslation } from '@/i18n'

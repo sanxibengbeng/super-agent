@@ -340,7 +340,7 @@ export const RestBusinessScopeService = {
   /**
    * Subscribes to real-time business scope changes (no-op for REST)
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: BusinessScope; old?: BusinessScope }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: BusinessScope; old?: BusinessScope }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

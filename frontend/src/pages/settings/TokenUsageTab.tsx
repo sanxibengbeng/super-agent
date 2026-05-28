@@ -15,20 +15,6 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
-function UsageBar({ used, label }: { used: number; label: string }) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="text-xs text-gray-400 w-16 shrink-0 text-right">{label}</span>
-      <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
-        <div
-          className="h-full bg-blue-500 rounded-full transition-all"
-          style={{ width: `${Math.min(100, (used / Math.max(used, 1)) * 100)}%` }}
-        />
-      </div>
-      <span className="text-xs text-gray-300 w-16 shrink-0">{formatTokens(used)}</span>
-    </div>
-  );
-}
 
 function UsageTable({ rows, t }: { rows: MonthlyUsage[]; t: (key: string) => string }) {
   if (rows.length === 0) {

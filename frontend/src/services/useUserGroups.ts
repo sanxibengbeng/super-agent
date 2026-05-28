@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { RestUserGroupService, type UserGroup, type UserGroupDetail } from './api/restUserGroupService';
+import { RestUserGroupService, type UserGroup } from './api/restUserGroupService';
 
 export function useUserGroups() {
   const [groups, setGroups] = useState<UserGroup[]>([]);

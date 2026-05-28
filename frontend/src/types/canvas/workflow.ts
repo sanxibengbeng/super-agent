@@ -4,17 +4,15 @@
  * Adapted from Refly's workflow.ts for workflow execution logic.
  */
 
-import type { 
-  CanvasNode, 
-  CanvasEdge, 
-  CanvasNodeType, 
+import type {
+  CanvasNode,
+  CanvasNodeType,
   CanvasNodeFilter,
   ActionStatus,
   CanvasData
 } from './node-types';
-import type { 
-  WorkflowVariableDefinition,
-  AgentNodeMeta 
+import type {
+  WorkflowVariableDefinition
 } from './metadata';
 
 // ============================================================================

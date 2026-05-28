@@ -6,8 +6,6 @@
  */
 
 // Cognito config — loaded from env vars or fetched from backend /api/auth/config
-const COGNITO_REGION = import.meta.env.VITE_COGNITO_REGION || 'us-east-1';
-const COGNITO_USER_POOL_ID = import.meta.env.VITE_COGNITO_USER_POOL_ID || '';
 const COGNITO_CLIENT_ID = import.meta.env.VITE_COGNITO_CLIENT_ID || '';
 const COGNITO_DOMAIN = import.meta.env.VITE_COGNITO_DOMAIN || '';
 

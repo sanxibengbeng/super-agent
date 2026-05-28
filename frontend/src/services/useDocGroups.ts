@@ -6,7 +6,6 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   restDocGroupService,
   type DocGroup,
-  type DocGroupFile,
   type ScopeDocGroupAssignment,
 } from './api/restDocGroupService'
 

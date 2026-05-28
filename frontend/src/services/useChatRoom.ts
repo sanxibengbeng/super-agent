@@ -13,7 +13,7 @@ import {
   type SuggestedAgent,
 } from './api/restChatRoomService';
 import { getAuthToken } from './api/restClient';
-import { parseSSEFrames, parseSSEData, type ContentBlock } from './chatStreamService';
+import { parseSSEFrames, type ContentBlock } from './chatStreamService';
 
 interface UseChatRoomOptions {
   roomId?: string;

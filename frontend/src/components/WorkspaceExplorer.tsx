@@ -183,7 +183,7 @@ export function WorkspaceExplorer({
   const [collapsed, setCollapsed] = useState(false)
   const [files, setFiles] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
-  const [workspacePath, setWorkspacePath] = useState<string | null>(null)
+  const [_workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [skillsPanelOpen, setSkillsPanelOpen] = useState(false)
   const [pluginsPanelOpen, setPluginsPanelOpen] = useState(false)

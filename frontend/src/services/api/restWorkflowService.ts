@@ -294,7 +294,7 @@ export const RestWorkflowService = {
   /**
    * Subscribes to real-time workflow changes (no-op for REST)
    */
-  subscribeToChanges(callback: (payload: { eventType: string; new?: Workflow; old?: Workflow }) => void) {
+  subscribeToChanges(_callback: (payload: { eventType: string; new?: Workflow; old?: Workflow }) => void) {
     console.warn('REST API does not support real-time subscriptions. Consider using polling.');
     return () => {};
   },

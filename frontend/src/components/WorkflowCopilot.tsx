@@ -235,21 +235,21 @@ function parseWorkflowPlan(text: string): WorkflowPlan {
   }
   const validTypes = new Set(['agent', 'action', 'condition', 'document', 'codeArtifact'])
   return {
-    title: parsed.title,
-    description: parsed.description,
+    title: (parsed.title as string) || '',
+    description: (parsed.description as string) || '',
     tasks: (parsed.tasks || []).map((t: Record<string, unknown>) => ({
-      id: t.id as string,
-      title: t.title as string,
+      id: (t.id as string) || '',
+      title: (t.title as string) || '',
       type: validTypes.has(t.type as string) ? t.type : 'agent',
       prompt: (t.prompt as string) || '',
       dependentTasks: Array.isArray(t.dependentTasks) ? t.dependentTasks : [],
       agentId: t.agentId as string | undefined,
       config: t.config as Record<string, unknown> | undefined,
     })) as WorkflowTask[],
-    variables: (parsed.variables || []).map((v: Record<string, unknown>) => ({
-      variableId: v.variableId as string,
+    variables: (Array.isArray(parsed.variables) ? parsed.variables : []).map((v: Record<string, unknown>) => ({
+      variableId: (v.variableId as string) || '',
       variableType: v.variableType === 'resource' ? 'resource' : 'string',
-      name: v.name as string,
+      name: (v.name as string) || '',
       description: (v.description as string) || '',
       required: (v.required as boolean) || false,
       value: Array.isArray(v.value) ? v.value : [],
@@ -482,8 +482,9 @@ export const WorkflowCopilot = forwardRef<WorkflowCopilotHandle, WorkflowCopilot
             )
             return { ...m, steps }
           }
-          // New node — append
-          return { ...m, steps: [...m.steps, { type: 'execution_node' as const, taskId: event.taskId, taskTitle: event.taskTitle, status: 'started' as const, message: event.message }] }
+          // New node — append (ensure taskId is not undefined)
+          const taskId = event.taskId || ''
+          return { ...m, steps: [...m.steps, { type: 'execution_node' as const, taskId, taskTitle: event.taskTitle, status: 'started' as const, message: event.message }] }
         }))
       } else if (event.type === 'step_complete' && event.taskId) {
         // Update the existing started step to completed instead of adding a new one

@@ -427,6 +427,7 @@ export function CommandCenter({ stats, businessScopes, agentsByScopeId }: Comman
           id: 'unassigned', organizationId: '', name: 'Unassigned',
           description: null, icon: '❓', color: '#6b7280',
           isDefault: false, createdAt: new Date(), updatedAt: new Date(),
+          visibility: 'restricted' as const,
         },
         agents: unassigned,
       })

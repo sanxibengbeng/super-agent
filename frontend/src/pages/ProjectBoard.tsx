@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, User, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp, Send, RefreshCw, FileCode } from 'lucide-react'
+import { ArrowLeft, Plus, LayoutGrid, List, Loader2, GripVertical, Bot, MessageSquare, Settings, Play, X, Sparkles, Terminal, ChevronDown, ChevronUp, Send, RefreshCw, FileCode } from 'lucide-react'
 import { RestProjectService, type Project, type ProjectIssue, type IssueComment, type IssueRelation, type TriageReport } from '@/services/api/restProjectService'
 import { useTranslation } from '@/i18n'
 import { useWorkspaceEvents } from '@/hooks/useWorkspaceEvents'
@@ -67,7 +67,6 @@ export function ProjectBoard() {
   // Code diff viewer
   const [showDiffPanel, setShowDiffPanel] = useState(false)
   const [diffPatch, setDiffPatch] = useState<string | null>(null)
-  const [diffStat, setDiffStat] = useState<import('@/services/api/restProjectService').DiffStat | null>(null)
   const [loadingDiff, setLoadingDiff] = useState(false)
 
   // Issue detail comments
@@ -347,7 +346,6 @@ export function ProjectBoard() {
     setIsRefining(false)
     setShowDiffPanel(false)
     setDiffPatch(null)
-    setDiffStat(null)
     // Load comments
     if (projectId) {
       setLoadingComments(true)
@@ -403,11 +401,6 @@ export function ProjectBoard() {
     loadData()
   }
 
-  const _handleDeleteIssue = async (issueId: string) => {
-    if (!projectId || !confirm(t('project.deleteIssueConfirm'))) return
-    await RestProjectService.deleteIssue(projectId, issueId)
-    loadData()
-  }
 
   // --- AI Governance handlers ---
 
@@ -1078,7 +1071,6 @@ export function ProjectBoard() {
                             try {
                               const result = await RestProjectService.getIssueDiff(projectId, selectedIssue.id)
                               setDiffPatch(result.diff_patch)
-                              setDiffStat(result.diff_stat)
                               setShowDiffPanel(true)
                             } catch (err) {
                               console.error('Failed to load diff:', err)

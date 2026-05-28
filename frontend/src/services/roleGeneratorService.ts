@@ -7,7 +7,7 @@
  * Requirements: 3.1, 3.2, 3.3, 3.4, 9.5
  */
 
-import { RestBusinessScopeService, type SuggestedAgent, type SuggestedTool } from './api/restBusinessScopeService';
+import { RestBusinessScopeService, type SuggestedAgent } from './api/restBusinessScopeService';
 import { shouldUseRestApi } from './api/index';
 
 // ============================================================================
