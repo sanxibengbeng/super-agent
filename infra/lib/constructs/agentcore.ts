@@ -20,15 +20,19 @@ export class AgentCoreConstruct extends Construct {
   constructor(scope: Construct, id: string, props: AgentCoreConstructProps) {
     super(scope, id);
 
-    // S3 Files Role - assumed by s3files.amazonaws.com
+    // S3 Files Role - assumed by s3files.amazonaws.com (with confused deputy protection)
     this.s3FilesRole = new iam.Role(this, 'S3FilesRole', {
-      assumedBy: new iam.ServicePrincipal('s3files.amazonaws.com'),
+      assumedBy: new iam.ServicePrincipal('s3files.amazonaws.com', {
+        conditions: {
+          StringEquals: {
+            'aws:SourceAccount': props.account,
+          },
+        },
+      }),
       description: 'Role for S3 Files to access workspace bucket',
     });
 
-    // Grant S3 Files role read/write access to workspace bucket
     props.workspaceBucket.grantReadWrite(this.s3FilesRole);
-    props.workspaceBucket.grantRead(this.s3FilesRole); // ListBucket
 
     // S3 Files FileSystem
     this.fileSystem = new CfnFileSystem(this, 'FileSystem', {
@@ -36,9 +40,15 @@ export class AgentCoreConstruct extends Construct {
       roleArn: this.s3FilesRole.roleArn,
     });
 
-    // AgentCore Execution Role - assumed by bedrock-agentcore.amazonaws.com
+    // AgentCore Execution Role - assumed by bedrock-agentcore.amazonaws.com (with confused deputy protection)
     this.executionRole = new iam.Role(this, 'ExecutionRole', {
-      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
+        conditions: {
+          StringEquals: {
+            'aws:SourceAccount': props.account,
+          },
+        },
+      }),
       description: 'Execution role for AgentCore runtime',
     });
 
@@ -50,8 +60,19 @@ export class AgentCoreConstruct extends Construct {
       })
     );
 
-    // Grant workspace bucket read/write access
-    props.workspaceBucket.grantReadWrite(this.executionRole);
+    // Grant workspace bucket read/write (no delete — S3 Files role handles filesystem ops)
+    this.executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:GetObject', 's3:PutObject'],
+        resources: [props.workspaceBucket.arnForObjects('*')],
+      })
+    );
+    this.executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:ListBucket'],
+        resources: [props.workspaceBucket.bucketArn],
+      })
+    );
 
     // Grant CloudWatch Logs write permissions
     this.executionRole.addToPolicy(
@@ -93,12 +114,11 @@ export class AgentCoreConstruct extends Construct {
         ANTHROPIC_MODEL: 'us.anthropic.claude-sonnet-4-6',
       },
       lifecycleConfiguration: {
-        idleRuntimeSessionTimeout: 900, // 15 minutes
-        maxLifetime: 28800, // 8 hours
+        idleRuntimeSessionTimeout: 900,
+        maxLifetime: 28800,
       },
     });
 
-    // Runtime depends on execution role and filesystem
     this.runtime.node.addDependency(this.executionRole);
     this.runtime.node.addDependency(this.fileSystem);
   }

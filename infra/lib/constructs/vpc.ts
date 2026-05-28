@@ -66,23 +66,30 @@ export class VpcConstruct extends Construct {
       privateDnsEnabled: true,
     });
 
+    // STS Interface Endpoint
+    this.vpc.addInterfaceEndpoint('StsEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.STS,
+      privateDnsEnabled: true,
+    });
+
+    // Bedrock Runtime Interface Endpoint
+    this.vpc.addInterfaceEndpoint('BedrockEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
+      privateDnsEnabled: true,
+    });
+
     // Security Groups
 
-    // ALB Security Group - ingress from anywhere on 443
+    // ALB Security Group - internal ALB, ingress from VPC only (CloudFront VPC Origin)
     this.albSecurityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
       vpc: this.vpc,
       description: 'Security group for Application Load Balancer',
       allowAllOutbound: true,
     });
     this.albSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(443),
-      'Allow HTTPS traffic from anywhere'
-    );
-    this.albSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
+      ec2.Peer.ipv4(this.vpc.vpcCidrBlock),
       ec2.Port.tcp(80),
-      'Allow HTTP traffic from anywhere'
+      'Allow HTTP traffic from VPC (CloudFront VPC Origin)'
     );
 
     // ECS Security Group - ingress from ALB on 3000
@@ -123,5 +130,11 @@ export class VpcConstruct extends Construct {
 
     // Tags
     cdk.Tags.of(this.vpc).add('Name', 'SuperAgentVpc');
+
+    // VPC Flow Logs
+    this.vpc.addFlowLog('FlowLog', {
+      destination: ec2.FlowLogDestination.toCloudWatchLogs(),
+      trafficType: ec2.FlowLogTrafficType.ALL,
+    });
   }
 }

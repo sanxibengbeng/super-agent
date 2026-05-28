@@ -1,12 +1,16 @@
+import * as path from 'path';
 import { Construct } from 'constructs';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import { Duration } from 'aws-cdk-lib';
 
 export interface CdnConstructProps {
   alb: elbv2.IApplicationLoadBalancer;
+  frontendBucket: s3.IBucket;
 }
 
 export class CdnConstruct extends Construct {
@@ -30,7 +34,7 @@ export class CdnConstruct extends Construct {
           priority: 1,
           statement: {
             rateBasedStatement: {
-              limit: 2000,
+              limit: 1000,
               aggregateKeyType: 'IP',
             },
           },
@@ -57,24 +61,125 @@ export class CdnConstruct extends Construct {
             metricName: 'AWSManagedRulesCommonRuleSet',
           },
         },
+        {
+          name: 'AWSManagedRulesSQLiRuleSet',
+          priority: 3,
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesSQLiRuleSet',
+            },
+          },
+          overrideAction: { none: {} },
+          visibilityConfig: {
+            sampledRequestsEnabled: true,
+            cloudWatchMetricsEnabled: true,
+            metricName: 'AWSManagedRulesSQLiRuleSet',
+          },
+        },
+        {
+          name: 'AWSManagedRulesKnownBadInputsRuleSet',
+          priority: 4,
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesKnownBadInputsRuleSet',
+            },
+          },
+          overrideAction: { none: {} },
+          visibilityConfig: {
+            sampledRequestsEnabled: true,
+            cloudWatchMetricsEnabled: true,
+            metricName: 'AWSManagedRulesKnownBadInputsRuleSet',
+          },
+        },
+        {
+          name: 'AWSManagedRulesAmazonIpReputationList',
+          priority: 5,
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesAmazonIpReputationList',
+            },
+          },
+          overrideAction: { none: {} },
+          visibilityConfig: {
+            sampledRequestsEnabled: true,
+            cloudWatchMetricsEnabled: true,
+            metricName: 'AWSManagedRulesAmazonIpReputationList',
+          },
+        },
       ],
     });
 
-    // CloudFront Distribution
+    // OAC for S3 frontend bucket
+    const oac = new cloudfront.S3OriginAccessControl(this, 'OAC', {
+      signing: cloudfront.Signing.SIGV4_ALWAYS,
+    });
+
+    // ALB origin (API/WebSocket)
+    const albOrigin = origins.VpcOrigin.withApplicationLoadBalancer(props.alb, {
+      readTimeout: Duration.seconds(60),
+      keepaliveTimeout: Duration.seconds(60),
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      httpPort: 80,
+    });
+
+    // CloudFront Distribution — S3 SPA as default, ALB for API paths
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       defaultBehavior: {
-        origin: new origins.HttpOrigin(props.alb.loadBalancerDnsName, {
-          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-          httpPort: 80,
+        origin: origins.S3BucketOrigin.withOriginAccessControl(props.frontendBucket, {
+          originAccessControl: oac,
         }),
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      additionalBehaviors: {
+        '/api/*': {
+          origin: albOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/v1/*': {
+          origin: albOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/ws/*': {
+          origin: albOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/health': {
+          origin: albOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
       },
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+      defaultRootObject: 'index.html',
       errorResponses: [
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: Duration.seconds(0),
+        },
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: Duration.seconds(0),
+        },
         {
           httpStatus: 502,
           ttl: Duration.seconds(5),
@@ -85,6 +190,35 @@ export class CdnConstruct extends Construct {
         },
       ],
       webAclId: webAcl.attrArn,
+    });
+
+    // Deploy frontend build output to S3 + invalidate CloudFront
+    new s3deploy.BucketDeployment(this, 'FrontendDeployment', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../../frontend/dist'))],
+      destinationBucket: props.frontendBucket,
+      distribution: this.distribution,
+      distributionPaths: ['/*'],
+      cacheControl: [
+        s3deploy.CacheControl.setPublic(),
+        s3deploy.CacheControl.maxAge(Duration.days(365)),
+        s3deploy.CacheControl.immutable(),
+      ],
+      exclude: ['index.html'],
+    });
+
+    // index.html — no cache (always fetch latest for SPA entry point)
+    new s3deploy.BucketDeployment(this, 'FrontendIndexDeployment', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../../frontend/dist'))],
+      destinationBucket: props.frontendBucket,
+      distribution: this.distribution,
+      distributionPaths: ['/index.html'],
+      cacheControl: [
+        s3deploy.CacheControl.noCache(),
+        s3deploy.CacheControl.noStore(),
+        s3deploy.CacheControl.mustRevalidate(),
+      ],
+      include: ['index.html'],
+      prune: false,
     });
   }
 }

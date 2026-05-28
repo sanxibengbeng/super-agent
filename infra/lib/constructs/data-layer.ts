@@ -16,6 +16,7 @@ export class DataLayerConstruct extends Construct {
   public readonly dbSecret: secretsmanager.ISecret;
   public readonly redisEndpoint: string;
   public readonly redisPort: number;
+  public readonly redisAuthSecret: secretsmanager.Secret;
 
   constructor(scope: Construct, id: string, props: DataLayerProps) {
     super(scope, id);
@@ -31,6 +32,7 @@ export class DataLayerConstruct extends Construct {
           ec2.InstanceSize.MEDIUM
         ),
         publiclyAccessible: false,
+        enablePerformanceInsights: true,
       }),
       readers: [
         rds.ClusterInstance.provisioned('Reader1', {
@@ -39,6 +41,7 @@ export class DataLayerConstruct extends Construct {
             ec2.InstanceSize.MEDIUM
           ),
           publiclyAccessible: false,
+          enablePerformanceInsights: true,
         }),
       ],
       vpc: props.vpc,
@@ -48,6 +51,8 @@ export class DataLayerConstruct extends Construct {
       securityGroups: [props.dbSecurityGroup],
       defaultDatabaseName: 'superagent',
       storageEncrypted: true,
+      deletionProtection: true,
+      cloudwatchLogsExports: ['postgresql'],
       backup: {
         retention: cdk.Duration.days(7),
         preferredWindow: '03:00-04:00',
@@ -56,6 +61,15 @@ export class DataLayerConstruct extends Construct {
     });
 
     this.dbSecret = this.dbCluster.secret!;
+
+    // Redis AUTH token stored in Secrets Manager
+    this.redisAuthSecret = new secretsmanager.Secret(this, 'RedisAuthSecret', {
+      description: 'AUTH token for ElastiCache Redis',
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 64,
+      },
+    });
 
     // ElastiCache Redis 7.1 Replication Group
     const redisSubnetGroup = new elasticache.CfnSubnetGroup(
@@ -83,13 +97,15 @@ export class DataLayerConstruct extends Construct {
         securityGroupIds: [props.redisSecurityGroup.securityGroupId],
         atRestEncryptionEnabled: true,
         transitEncryptionEnabled: true,
-        transitEncryptionMode: 'preferred',
+        transitEncryptionMode: 'required',
+        authToken: this.redisAuthSecret.secretValue.unsafeUnwrap(),
         snapshotRetentionLimit: 5,
         snapshotWindow: '03:00-05:00',
         preferredMaintenanceWindow: 'mon:05:00-mon:07:00',
       }
     );
     redisReplicationGroup.addDependency(redisSubnetGroup);
+    redisReplicationGroup.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
 
     // Export Redis connection details
     this.redisEndpoint = redisReplicationGroup.attrPrimaryEndPointAddress;
@@ -114,6 +130,11 @@ export class DataLayerConstruct extends Construct {
     new cdk.CfnOutput(this, 'RedisPort', {
       value: this.redisPort.toString(),
       description: 'ElastiCache Redis port',
+    });
+
+    new cdk.CfnOutput(this, 'RedisAuthSecretArn', {
+      value: this.redisAuthSecret.secretArn,
+      description: 'Redis AUTH token secret ARN',
     });
   }
 }

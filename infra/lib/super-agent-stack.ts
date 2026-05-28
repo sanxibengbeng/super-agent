@@ -27,6 +27,7 @@ export class SuperAgentStack extends cdk.Stack {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       versioned: true,
+      enforceSSL: true,
       lifecycleRules: [
         {
           noncurrentVersionTransitions: [{
@@ -44,6 +45,15 @@ export class SuperAgentStack extends cdk.Stack {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       versioned: true,
+      enforceSSL: true,
+    });
+
+    const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
+      bucketName: `super-agent-frontend-${this.account}`,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
     });
 
     // =========================================================================
@@ -96,6 +106,7 @@ export class SuperAgentStack extends cdk.Stack {
       albSecurityGroup: network.albSecurityGroup,
       dbSecret: dataLayer.dbSecret,
       appSecret: secrets.appSecret,
+      redisAuthSecret: dataLayer.redisAuthSecret,
       redisEndpoint: dataLayer.redisEndpoint,
       redisPort: dataLayer.redisPort,
       workspaceBucketName: workspaceBucket.bucketName,
@@ -111,6 +122,7 @@ export class SuperAgentStack extends cdk.Stack {
     // =========================================================================
     const cdn = new CdnConstruct(this, 'Cdn', {
       alb: ecsCluster.alb,
+      frontendBucket,
     });
 
     // =========================================================================
@@ -128,5 +140,6 @@ export class SuperAgentStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'BackendRepoUri', { value: backendRepo.repositoryUri });
     new cdk.CfnOutput(this, 'AgentCoreRepoUri', { value: agentcoreRepo.repositoryUri });
     new cdk.CfnOutput(this, 'AppSecretArn', { value: secrets.appSecret.secretArn });
+    new cdk.CfnOutput(this, 'FrontendBucketName', { value: frontendBucket.bucketName });
   }
 }

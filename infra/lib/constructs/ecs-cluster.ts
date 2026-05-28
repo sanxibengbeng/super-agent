@@ -13,6 +13,7 @@ export interface EcsClusterConstructProps {
   albSecurityGroup: ec2.ISecurityGroup;
   dbSecret: secretsmanager.ISecret;
   appSecret: secretsmanager.ISecret;
+  redisAuthSecret: secretsmanager.ISecret;
   redisEndpoint: string;
   redisPort: number;
   workspaceBucketName: string;
@@ -61,7 +62,7 @@ export class EcsClusterConstruct extends Construct {
     // CloudWatch Log Group
     const logGroup = new logs.LogGroup(this, 'LogGroup', {
       logGroupName: '/super-agent/ecs',
-      retention: logs.RetentionDays.TWO_WEEKS,
+      retention: logs.RetentionDays.THREE_MONTHS,
     });
 
     // Shared Execution Role (for pulling container images and reading secrets)
@@ -76,6 +77,7 @@ export class EcsClusterConstruct extends Construct {
     // Grant execution role permission to read secrets
     props.dbSecret.grantRead(executionRole);
     props.appSecret.grantRead(executionRole);
+    props.redisAuthSecret.grantRead(executionRole);
 
     // Shared environment variables
     const sharedEnvironment: Record<string, string> = {
@@ -95,6 +97,7 @@ export class EcsClusterConstruct extends Construct {
     const sharedSecrets: Record<string, ecs.Secret> = {
       DATABASE_URL: ecs.Secret.fromSecretsManager(props.dbSecret, 'connectionString'),
       JWT_SECRET: ecs.Secret.fromSecretsManager(props.appSecret),
+      REDIS_PASSWORD: ecs.Secret.fromSecretsManager(props.redisAuthSecret),
     };
 
     // Container image URI
@@ -111,12 +114,22 @@ export class EcsClusterConstruct extends Construct {
       executionRole,
     });
 
-    // Set task role with S3 access for workspace and assets
+    // Workspace bucket: full access (read, write, delete, list)
     apiTaskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({
-        actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+        actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:ListBucket'],
         resources: [
+          `arn:aws:s3:::${props.workspaceBucketName}`,
           `arn:aws:s3:::${props.workspaceBucketName}/*`,
+        ],
+      })
+    );
+
+    // Assets bucket: read and write only (no delete)
+    apiTaskDefinition.addToTaskRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:GetObject', 's3:PutObject'],
+        resources: [
           `arn:aws:s3:::${props.assetsBucketName}/*`,
         ],
       })
@@ -149,6 +162,7 @@ export class EcsClusterConstruct extends Construct {
       desiredCount: 2,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
+      circuitBreaker: { enable: true, rollback: true },
       securityGroups: [props.ecsSecurityGroup],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     });
@@ -158,9 +172,14 @@ export class EcsClusterConstruct extends Construct {
       port: 3000,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [this.apiService],
+      deregistrationDelay: Duration.seconds(30),
       healthCheck: {
         path: '/health',
         interval: Duration.seconds(30),
+        timeout: Duration.seconds(5),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
+        healthyHttpCodes: '200',
       },
       priority: 10,
       conditions: [
@@ -213,16 +232,19 @@ export class EcsClusterConstruct extends Construct {
 
     workerTaskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({
-        actions: ['s3:*'],
+        actions: [
+          's3:GetObject',
+          's3:PutObject',
+          's3:DeleteObject',
+          's3:ListBucket',
+          's3:GetBucketLocation',
+        ],
         resources: [
           `arn:aws:s3:::${props.workspaceBucketName}`,
           `arn:aws:s3:::${props.workspaceBucketName}/*`,
         ],
       })
     );
-
-    // Grant read access to app secret
-    props.appSecret.grantRead(workerTaskDefinition.taskRole);
 
     const workerContainer = workerTaskDefinition.addContainer('WorkerContainer', {
       image: containerImage,
@@ -241,6 +263,7 @@ export class EcsClusterConstruct extends Construct {
         timeout: Duration.seconds(5),
         retries: 3,
       },
+      stopTimeout: Duration.seconds(120),
     });
 
     workerContainer.addPortMappings({ containerPort: 3000 });
@@ -251,6 +274,7 @@ export class EcsClusterConstruct extends Construct {
       desiredCount: 2,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
+      circuitBreaker: { enable: true, rollback: true },
       securityGroups: [props.ecsSecurityGroup],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     });
@@ -293,6 +317,7 @@ export class EcsClusterConstruct extends Construct {
         timeout: Duration.seconds(5),
         retries: 3,
       },
+      stopTimeout: Duration.seconds(120),
     });
 
     gatewayContainer.addPortMappings({ containerPort: 3000 });
@@ -303,6 +328,7 @@ export class EcsClusterConstruct extends Construct {
       desiredCount: 2,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
+      circuitBreaker: { enable: true, rollback: true },
       securityGroups: [props.ecsSecurityGroup],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     });
@@ -312,9 +338,14 @@ export class EcsClusterConstruct extends Construct {
       port: 3000,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [this.gatewayService],
+      deregistrationDelay: Duration.seconds(120),
       healthCheck: {
         path: '/health',
         interval: Duration.seconds(30),
+        timeout: Duration.seconds(5),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
+        healthyHttpCodes: '200',
       },
       stickinessCookieDuration: Duration.hours(1),
       priority: 5,
