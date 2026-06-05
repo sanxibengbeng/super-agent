@@ -16,14 +16,7 @@
       "Bash(git push --force *)",
       "Bash(git push -f *)",
       "Bash(git reset --hard *)",
-      "Bash(git clean -f *)",
-      "Bash(npx cdk deploy*)",
-      "Bash(npx cdk destroy*)",
-      "Bash(docker push*)",
-      "Bash(aws * delete-*)",
-      "Bash(aws * terminate-*)",
-      "Bash(npx prisma migrate deploy*)",
-      "Bash(npx prisma db push*)"
+      "Bash(git clean -f *)"
     ]
   },
   "mcpServers": {

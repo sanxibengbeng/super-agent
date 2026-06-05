@@ -1,10 +1,13 @@
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Duration } from 'aws-cdk-lib';
 
 export interface EcsClusterConstructProps {
@@ -16,6 +19,8 @@ export interface EcsClusterConstructProps {
   redisAuthSecret: secretsmanager.ISecret;
   redisEndpoint: string;
   redisPort: number;
+  backendRepo: ecr.IRepository;
+  workspaceBucket: s3.IBucket;
   workspaceBucketName: string;
   assetsBucketName: string;
   agentCoreRuntimeArn: string;
@@ -39,6 +44,7 @@ export class EcsClusterConstruct extends Construct {
     this.cluster = new ecs.Cluster(this, 'Cluster', {
       vpc: props.vpc,
       clusterName: `super-agent-${props.envName}`,
+      containerInsights: true,
     });
 
     // Internal Application Load Balancer (private subnets)
@@ -49,6 +55,9 @@ export class EcsClusterConstruct extends Construct {
       securityGroup: props.albSecurityGroup,
       idleTimeout: Duration.seconds(3600), // For WebSocket connections
     });
+
+    // Enable ALB access logs to workspace bucket
+    this.alb.logAccessLogs(props.workspaceBucket, 'alb-logs');
 
     // HTTP Listener on port 80
     const listener = this.alb.addListener('HttpListener', {
@@ -88,6 +97,8 @@ export class EcsClusterConstruct extends Construct {
       REDIS_PORT: props.redisPort.toString(),
       REDIS_TLS: 'true',
       AWS_REGION: props.region,
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      CLAUDE_MODEL: 'global.anthropic.claude-sonnet-4-6',
       WORKSPACE_BUCKET_NAME: props.workspaceBucketName,
       ASSETS_BUCKET_NAME: props.assetsBucketName,
       AGENTCORE_RUNTIME_ARN: props.agentCoreRuntimeArn,
@@ -101,10 +112,7 @@ export class EcsClusterConstruct extends Construct {
       REDIS_PASSWORD: ecs.Secret.fromSecretsManager(props.redisAuthSecret),
     };
 
-    // Container image URI
-    const containerImage = ecs.ContainerImage.fromRegistry(
-      `${props.account}.dkr.ecr.${props.region}.amazonaws.com/super-agent-backend-${props.envName}:latest`
-    );
+    const containerImage = ecs.ContainerImage.fromEcrRepository(props.backendRepo, 'latest');
 
     // ============================================
     // API Service (PROCESS_ROLE=api)
@@ -114,6 +122,19 @@ export class EcsClusterConstruct extends Construct {
       memoryLimitMiB: 1024,
       executionRole,
     });
+
+    // Bedrock model invocation (for Claude Agent SDK)
+    apiTaskDefinition.addToTaskRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+        resources: [
+          `arn:aws:bedrock:${props.region}::foundation-model/anthropic.*`,
+          `arn:aws:bedrock:${props.region}::foundation-model/us.anthropic.*`,
+          `arn:aws:bedrock:${props.region}:${props.account}:inference-profile/*`,
+          `arn:aws:bedrock:*::foundation-model/*`,
+        ],
+      })
+    );
 
     // Workspace bucket: full access (read, write, delete, list)
     apiTaskDefinition.addToTaskRolePolicy(
@@ -126,11 +147,12 @@ export class EcsClusterConstruct extends Construct {
       })
     );
 
-    // Assets bucket: read and write only (no delete)
+    // Assets bucket: read, write, and list (no delete)
     apiTaskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({
-        actions: ['s3:GetObject', 's3:PutObject'],
+        actions: ['s3:GetObject', 's3:PutObject', 's3:ListBucket'],
         resources: [
+          `arn:aws:s3:::${props.assetsBucketName}`,
           `arn:aws:s3:::${props.assetsBucketName}/*`,
         ],
       })
@@ -160,7 +182,7 @@ export class EcsClusterConstruct extends Construct {
     this.apiService = new ecs.FargateService(this, 'ApiService', {
       cluster: this.cluster,
       taskDefinition: apiTaskDefinition,
-      desiredCount: 2,
+      desiredCount: 0, // Set to 2 after first container image push
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
       circuitBreaker: { enable: true, rollback: true },
@@ -207,29 +229,46 @@ export class EcsClusterConstruct extends Construct {
       executionRole,
     });
 
-    // Set task role with AgentCore, S3 Files, and S3 workspace access
+    // Bedrock model invocation (for Claude Agent SDK in worker)
     workerTaskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({
-        actions: [
-          'bedrock-agentcore:InvokeAgentRuntime',
-          'bedrock-agentcore:CreateAgentRuntimeSession',
-          'bedrock-agentcore:GetAgentRuntimeSession',
-          'bedrock-agentcore:DeleteAgentRuntimeSession',
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+        resources: [
+          `arn:aws:bedrock:${props.region}::foundation-model/anthropic.*`,
+          `arn:aws:bedrock:${props.region}::foundation-model/us.anthropic.*`,
+          `arn:aws:bedrock:${props.region}:${props.account}:inference-profile/*`,
+          `arn:aws:bedrock:*::foundation-model/*`,
         ],
-        resources: [props.agentCoreRuntimeArn],
       })
     );
 
-    workerTaskDefinition.addToTaskRolePolicy(
-      new iam.PolicyStatement({
-        actions: [
-          's3files:CreateAccessPoint',
-          's3files:DescribeAccessPoint',
-          's3files:DeleteAccessPoint',
-        ],
-        resources: [`arn:aws:s3files:${props.region}:${props.account}:filesystem/${props.s3FilesFileSystemId}`],
-      })
-    );
+    // Set task role with AgentCore, S3 Files, and S3 workspace access
+    if (props.agentCoreRuntimeArn) {
+      workerTaskDefinition.addToTaskRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            'bedrock-agentcore:InvokeAgentRuntime',
+            'bedrock-agentcore:CreateAgentRuntimeSession',
+            'bedrock-agentcore:GetAgentRuntimeSession',
+            'bedrock-agentcore:DeleteAgentRuntimeSession',
+          ],
+          resources: [props.agentCoreRuntimeArn],
+        })
+      );
+    }
+
+    if (props.s3FilesFileSystemId) {
+      workerTaskDefinition.addToTaskRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            's3files:CreateAccessPoint',
+            's3files:DescribeAccessPoint',
+            's3files:DeleteAccessPoint',
+          ],
+          resources: [`arn:aws:s3files:${props.region}:${props.account}:filesystem/${props.s3FilesFileSystemId}`],
+        })
+      );
+    }
 
     workerTaskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({
@@ -272,7 +311,7 @@ export class EcsClusterConstruct extends Construct {
     this.workerService = new ecs.FargateService(this, 'WorkerService', {
       cluster: this.cluster,
       taskDefinition: workerTaskDefinition,
-      desiredCount: 2,
+      desiredCount: 0, // Set to 2 after first container image push
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
       circuitBreaker: { enable: true, rollback: true },
@@ -326,7 +365,7 @@ export class EcsClusterConstruct extends Construct {
     this.gatewayService = new ecs.FargateService(this, 'GatewayService', {
       cluster: this.cluster,
       taskDefinition: gatewayTaskDefinition,
-      desiredCount: 2,
+      desiredCount: 0, // Set to 2 after first container image push
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
       circuitBreaker: { enable: true, rollback: true },
@@ -363,6 +402,52 @@ export class EcsClusterConstruct extends Construct {
 
     gatewayScaling.scaleOnCpuUtilization('GatewayCpuScaling', {
       targetUtilizationPercent: 70,
+    });
+
+    // ============================================
+    // CloudWatch Alarms
+    // ============================================
+
+    // API Service CPU utilization > 80% for 3 minutes
+    new cloudwatch.Alarm(this, 'ApiCpuAlarm', {
+      alarmName: `super-agent-${props.envName}-api-cpu-high`,
+      alarmDescription: 'API service CPU utilization exceeds 80% for 3 minutes',
+      metric: this.apiService.metricCpuUtilization({
+        period: Duration.minutes(1),
+        statistic: 'Average',
+      }),
+      threshold: 80,
+      evaluationPeriods: 3,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+    });
+
+    // API 5xx responses > 10 in 5 minutes
+    new cloudwatch.Alarm(this, 'Api5xxAlarm', {
+      alarmName: `super-agent-${props.envName}-api-5xx-high`,
+      alarmDescription: 'API target group 5xx responses exceed 10 in 5 minutes',
+      metric: apiTargetGroup.metrics.httpCodeTarget(
+        elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
+        {
+          period: Duration.minutes(5),
+          statistic: 'Sum',
+        }
+      ),
+      threshold: 10,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+    });
+
+    // ALB unhealthy host count > 0 for 2 minutes
+    new cloudwatch.Alarm(this, 'AlbUnhealthyHostsAlarm', {
+      alarmName: `super-agent-${props.envName}-alb-unhealthy-hosts`,
+      alarmDescription: 'ALB has unhealthy hosts for 2 minutes',
+      metric: apiTargetGroup.metrics.unhealthyHostCount({
+        period: Duration.minutes(1),
+        statistic: 'Maximum',
+      }),
+      threshold: 0,
+      evaluationPeriods: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
     });
   }
 }

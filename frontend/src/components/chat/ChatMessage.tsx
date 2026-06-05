@@ -13,6 +13,7 @@ import { Bot } from 'lucide-react';
 import { useState } from 'react';
 import type { ContentBlock } from '@/services/chatStreamService';
 import { TextContentBlock } from './TextContentBlock';
+import { ThinkingBlock } from './ThinkingBlock';
 import { ToolUseBlock } from './ToolUseBlock';
 import { ToolResultBlock } from './ToolResultBlock';
 
@@ -36,6 +37,8 @@ function renderContentBlock(block: ContentBlock, index: number, isStreaming: boo
   switch (block.type) {
     case 'text':
       return <TextContentBlock key={`text-${index}`} block={block} />;
+    case 'thinking':
+      return <ThinkingBlock key={`thinking-${index}`} block={block} />;
     case 'tool_use':
       return <ToolUseBlock key={`tool-use-${block.id}`} block={block} isStreaming={isStreaming && isLastToolUse} />;
     case 'tool_result':

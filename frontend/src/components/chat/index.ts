@@ -7,6 +7,7 @@
  */
 
 export { TextContentBlock } from './TextContentBlock';
+export { ThinkingBlock } from './ThinkingBlock';
 export { ToolUseBlock } from './ToolUseBlock';
 export { ToolResultBlock } from './ToolResultBlock';
 export { ChatMessage } from './ChatMessage';

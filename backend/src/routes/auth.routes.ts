@@ -12,6 +12,7 @@ import { prisma } from '../config/database.js';
 import { config } from '../config/index.js';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import { seedCopilotService } from '../services/seed-copilot.service.js';
 
 export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   /**
@@ -151,6 +152,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
       // Find or create a default organization
       let org = await prisma.organizations.findFirst({ orderBy: { created_at: 'asc' } });
+      let orgCreated = false;
       if (!org) {
         org = await prisma.organizations.create({
           data: {
@@ -159,6 +161,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             slug: 'default',
           },
         });
+        orgCreated = true;
       }
 
       // Create membership
@@ -175,6 +178,12 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           role,
         },
       });
+
+      if (orgCreated) {
+        seedCopilotService.ensureSeedCopilots(org.id).catch((err) => {
+          console.error('[auth] Failed to seed copilots for new org:', err);
+        });
+      }
 
       const token = createLocalJwt({
         sub: userId,

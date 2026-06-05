@@ -98,7 +98,7 @@ export class DataLayerConstruct extends Construct {
         atRestEncryptionEnabled: true,
         transitEncryptionEnabled: true,
         transitEncryptionMode: 'required',
-        authToken: this.redisAuthSecret.secretValue.unsafeUnwrap(),
+        authToken: this.redisAuthSecret.secretValue.toString(),
         snapshotRetentionLimit: 5,
         snapshotWindow: '03:00-05:00',
         preferredMaintenanceWindow: 'mon:05:00-mon:07:00',

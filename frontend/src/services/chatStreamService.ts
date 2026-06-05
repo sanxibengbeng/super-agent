@@ -33,6 +33,11 @@ export interface ToolUseContentBlock {
   input: Record<string, unknown>;
 }
 
+export interface ThinkingContentBlock {
+  type: 'thinking';
+  thinking: string;
+}
+
 export interface ToolResultContentBlock {
   type: 'tool_result';
   tool_use_id: string;
@@ -40,7 +45,7 @@ export interface ToolResultContentBlock {
   is_error: boolean;
 }
 
-export type ContentBlock = TextContentBlock | ToolUseContentBlock | ToolResultContentBlock;
+export type ContentBlock = TextContentBlock | ThinkingContentBlock | ToolUseContentBlock | ToolResultContentBlock;
 
 /**
  * SSE event types emitted by the backend.

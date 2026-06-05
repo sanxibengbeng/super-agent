@@ -845,7 +845,7 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         where: { organization_id: orgId, name: 'Scope Copilot', scope_type: 'digital_twin', deleted_at: null },
       });
       if (!copilotScope) {
-        return reply.status(404).send({ error: 'Scope Copilot not configured' });
+        return reply.send({ data: null });
       }
 
       const cfg = await import('../config/index.js');
@@ -856,13 +856,13 @@ export async function scopeGeneratorRoutes(fastify: FastifyInstance): Promise<vo
         const content = await readFile(join(workspacePath, 'scope-config.json'), 'utf-8');
         const parsed = safeParseJson(content) as Record<string, unknown> | null;
         if (!parsed || !parsed.scope || !Array.isArray(parsed.agents)) {
-          return reply.status(422).send({ error: 'scope-config.json exists but contains invalid JSON that could not be repaired' });
+          return reply.send({ data: null });
         }
         return reply.send({ data: parsed });
       } catch (err: unknown) {
         const isNotFound = err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'ENOENT';
         if (isNotFound) {
-          return reply.status(404).send({ error: 'No scope-config.json found in workspace' });
+          return reply.send({ data: null });
         }
         return reply.status(500).send({ error: 'Failed to read scope-config.json from workspace' });
       }

@@ -1,7 +1,7 @@
 import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import { CfnFileSystem } from 'aws-cdk-lib/aws-s3files';
+import { CfnFileSystem, CfnAccessPoint } from 'aws-cdk-lib/aws-s3files';
 import { CfnRuntime } from 'aws-cdk-lib/aws-bedrockagentcore';
 
 export interface AgentCoreConstructProps {
@@ -15,6 +15,7 @@ export class AgentCoreConstruct extends Construct {
   public readonly runtime: CfnRuntime;
   public readonly executionRole: iam.Role;
   public readonly fileSystem: CfnFileSystem;
+  public readonly accessPoint: CfnAccessPoint;
   public readonly s3FilesRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: AgentCoreConstructProps) {
@@ -39,6 +40,12 @@ export class AgentCoreConstruct extends Construct {
       bucket: props.workspaceBucket.bucketName,
       roleArn: this.s3FilesRole.roleArn,
     });
+
+    // S3 Files Access Point (required for AgentCore filesystem mount)
+    this.accessPoint = new CfnAccessPoint(this, 'AccessPoint', {
+      fileSystemId: this.fileSystem.ref,
+    });
+    this.accessPoint.addDependency(this.fileSystem);
 
     // AgentCore Execution Role - assumed by bedrock-agentcore.amazonaws.com (with confused deputy protection)
     this.executionRole = new iam.Role(this, 'ExecutionRole', {
@@ -106,6 +113,12 @@ export class AgentCoreConstruct extends Construct {
             mountPath: '/mnt/session',
           },
         },
+        {
+          s3FilesAccessPoint: {
+            accessPointArn: this.accessPoint.attrAccessPointArn,
+            mountPath: '/mnt/ws',
+          },
+        },
       ],
       environmentVariables: {
         WORKSPACE_DIR: '/mnt/ws',
@@ -121,5 +134,6 @@ export class AgentCoreConstruct extends Construct {
 
     this.runtime.node.addDependency(this.executionRole);
     this.runtime.node.addDependency(this.fileSystem);
+    this.runtime.node.addDependency(this.accessPoint);
   }
 }

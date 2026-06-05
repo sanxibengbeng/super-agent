@@ -173,6 +173,7 @@ export interface AgentConfig {
 
 export type ContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'thinking'; thinking: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string | null; is_error: boolean };
 
@@ -330,26 +331,54 @@ export class ClaudeAgentService {
         : await this.workspaceManager.ensureWorkspace(agentConfig.id, skills);
       // Use provided MCP servers (scope/session-level) instead of loading org-level
       const resolvedMcpServers = mcpServers ?? {};
-      const resumeSessionId = options.claudeSessionId ?? undefined;
+      let resumeSessionId = options.claudeSessionId ?? undefined;
       if (resumeSessionId) {
         console.log(`[runConversation] Resuming Claude session: ${resumeSessionId}`);
       }
-      const sdkOptions = this.buildOptions(agentConfig, workspacePath, skills.map((s) => s.name), resolvedMcpServers, resumeSessionId, abortController, options.userId, pluginPaths);
-      const conversation = this.queryFactory({ prompt: options.message, options: sdkOptions });
+      let sdkOptions = this.buildOptions(agentConfig, workspacePath, skills.map((s) => s.name), resolvedMcpServers, resumeSessionId, abortController, options.userId, pluginPaths);
+      let conversation = this.queryFactory({ prompt: options.message, options: sdkOptions });
 
-      for await (const message of conversation) {
-        if (message.type === 'system') {
-          const sysMsg = message as SDKSystemMessage;
-          if (sysMsg.subtype === 'init') {
-            sessionId = sysMsg.session_id;
-            this.abortControllers.set(sessionId, abortController);
-            this.lastActivity.set(sessionId, Date.now());
-            yield { type: 'session_start', sessionId };
+      let resumeRetried = false;
+      try {
+        for await (const message of conversation) {
+          if (message.type === 'system') {
+            const sysMsg = message as SDKSystemMessage;
+            if (sysMsg.subtype === 'init') {
+              sessionId = sysMsg.session_id;
+              this.abortControllers.set(sessionId, abortController);
+              this.lastActivity.set(sessionId, Date.now());
+              yield { type: 'session_start', sessionId };
+            }
+          } else if (message.type === 'assistant' || message.type === 'result') {
+            if (sessionId) this.lastActivity.set(sessionId, Date.now());
+            const event = this.formatMessage(message, sessionId);
+            if (event) yield event;
           }
-        } else if (message.type === 'assistant' || message.type === 'result') {
-          if (sessionId) this.lastActivity.set(sessionId, Date.now());
-          const event = this.formatMessage(message, sessionId);
-          if (event) yield event;
+        }
+      } catch (resumeError) {
+        if (resumeSessionId && !resumeRetried && resumeError instanceof Error && resumeError.message.includes('exited with code')) {
+          console.warn(`[runConversation] Resume failed (session ${resumeSessionId}), retrying without resume:`, resumeError.message);
+          resumeRetried = true;
+          resumeSessionId = undefined;
+          sdkOptions = this.buildOptions(agentConfig, workspacePath, skills.map((s) => s.name), resolvedMcpServers, undefined, abortController, options.userId, pluginPaths);
+          conversation = this.queryFactory({ prompt: options.message, options: sdkOptions });
+          for await (const message of conversation) {
+            if (message.type === 'system') {
+              const sysMsg = message as SDKSystemMessage;
+              if (sysMsg.subtype === 'init') {
+                sessionId = sysMsg.session_id;
+                this.abortControllers.set(sessionId, abortController);
+                this.lastActivity.set(sessionId, Date.now());
+                yield { type: 'session_start', sessionId };
+              }
+            } else if (message.type === 'assistant' || message.type === 'result') {
+              if (sessionId) this.lastActivity.set(sessionId, Date.now());
+              const event = this.formatMessage(message, sessionId);
+              if (event) yield event;
+            }
+          }
+        } else {
+          throw resumeError;
         }
       }
     } catch (error) {
@@ -470,6 +499,7 @@ export class ClaudeAgentService {
         const contentBlocks: ContentBlock[] = rawContent.map((block) => {
           switch (block.type) {
             case 'text': return { type: 'text' as const, text: block.text ?? '' };
+            case 'thinking': return { type: 'thinking' as const, thinking: (block as unknown as { thinking: string }).thinking ?? '' };
             case 'tool_use': return { type: 'tool_use' as const, id: block.id ?? '', name: block.name ?? '', input: block.input ?? {} };
             case 'tool_result': return {
               type: 'tool_result' as const,

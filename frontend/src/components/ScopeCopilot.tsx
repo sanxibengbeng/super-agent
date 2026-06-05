@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Send, Loader2, User, Bot } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { ChatMessage } from '@/components/chat'
+import type { ContentBlock } from '@/services/chatStreamService'
 import { parseScopeConfig, parseIntegrations, type GeneratedScopeConfig, type ScopeIntegrations } from '@/services/scopeGeneratorService'
 import type { ChatMessageDraft } from '@/hooks/useScopeDraft'
 import { getAuthToken } from '@/services/api/restClient'
@@ -86,36 +86,45 @@ export function ScopeCopilot({
           if (m.type !== 'ai') {
             return { id: m.id, role: 'user' as const, content: m.content, status: 'done' as const, timestamp: new Date(m.created_at).getTime() }
           }
-          // Parse content blocks array
           let displayText = ''
+          let parsedBlocks: ContentBlock[] | undefined
           try {
-            const blocks = JSON.parse(m.content) as Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>
+            const blocks = JSON.parse(m.content) as Array<{ type: string; text?: string; thinking?: string; name?: string; id?: string; input?: Record<string, unknown>; tool_use_id?: string; is_error?: boolean }>
+            const contentBlocks: ContentBlock[] = []
             for (const block of blocks) {
-              if (block.type === 'text' && block.text) displayText += block.text
-              // Extract scope config from Write tool_use block.
-              // file_path may be sanitized to [server-path] by backend output sanitizer.
-              if (block.type === 'tool_use' && block.name === 'Write' && block.input) {
-                const fp = (block.input.file_path as string) ?? ''
-                if (fp.includes('scope-config') || fp === '[server-path]') {
-                  const ct = block.input.content as string | undefined
-                  if (ct) {
-                    try {
-                      const parsed = JSON.parse(ct)
-                      if (parsed.scope && Array.isArray(parsed.agents)) {
-                        latestConfigJson = ct
-                      }
-                    } catch { /* not scope config */ }
+              if (block.type === 'thinking' && block.thinking) {
+                contentBlocks.push({ type: 'thinking', thinking: block.thinking })
+              } else if (block.type === 'text' && block.text) {
+                displayText += block.text
+                contentBlocks.push({ type: 'text', text: block.text })
+              } else if (block.type === 'tool_use' && block.name) {
+                contentBlocks.push({ type: 'tool_use', id: block.id ?? '', name: block.name, input: block.input ?? {} })
+                if (block.name === 'Write' && block.input) {
+                  const fp = (block.input.file_path as string) ?? ''
+                  if (fp.includes('scope-config') || fp === '[server-path]') {
+                    const ct = block.input.content as string | undefined
+                    if (ct) {
+                      try {
+                        const parsed = JSON.parse(ct)
+                        if (parsed.scope && Array.isArray(parsed.agents)) {
+                          latestConfigJson = ct
+                        }
+                      } catch { /* not scope config */ }
+                    }
                   }
                 }
+              } else if (block.type === 'tool_result') {
+                contentBlocks.push({ type: 'tool_result', tool_use_id: block.tool_use_id ?? '', content: block.text ?? null, is_error: block.is_error ?? false })
               }
             }
+            if (contentBlocks.length > 0) parsedBlocks = contentBlocks
           } catch {
             displayText = m.content
           }
-          return { id: m.id, role: 'assistant' as const, content: displayText, status: 'done' as const, timestamp: new Date(m.created_at).getTime() }
+          return { id: m.id, role: 'assistant' as const, content: displayText, contentBlocks: parsedBlocks, status: 'done' as const, timestamp: new Date(m.created_at).getTime() }
         })
 
-        onChatHistoryChange(chatMsgs.filter(m => m.role === 'user' || m.content))
+        onChatHistoryChange(chatMsgs.filter(m => m.role === 'user' || m.content || m.contentBlocks?.length))
 
         // Apply the latest scope config found in history to the workspace
         if (latestConfigJson) {
@@ -181,6 +190,7 @@ export function ScopeCopilot({
 
     const assistantId = assistantMsg.id
     let accumulated = ''
+    const accumulatedBlocks: ContentBlock[] = []
     let scopeConfigJson = ''
 
     try {
@@ -219,47 +229,51 @@ export function ScopeCopilot({
           try {
             const event = JSON.parse(data) as {
               type: string
-              content?: Array<{ type: string; text?: string; name?: string; input?: unknown }> | string
+              content?: Array<{ type: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown; tool_use_id?: string; is_error?: boolean }> | string
               message?: string
             }
-            // Backend emits scope_config event after reading workspace file
             if (event.type === 'scope_config' && typeof event.content === 'string') {
               scopeConfigJson = event.content
             }
             if (event.type === 'assistant' && Array.isArray(event.content)) {
               for (const block of event.content) {
-                if (block.type === 'text' && block.text) {
+                if (block.type === 'thinking' && block.thinking) {
+                  accumulatedBlocks.push({ type: 'thinking', thinking: block.thinking })
+                } else if (block.type === 'text' && block.text) {
                   accumulated += block.text
-                }
-                // Fallback: capture Write tool_use with scope-config content.
-                // file_path may be sanitized to [server-path] by backend output sanitizer.
-                if (block.type === 'tool_use' && block.name === 'Write' && block.input) {
-                  const toolInput = block.input as Record<string, unknown>
-                  const fp = typeof toolInput.file_path === 'string' ? toolInput.file_path : ''
-                  if (fp.includes('scope-config') || fp === '[server-path]') {
-                    const raw = typeof toolInput.content === 'string'
-                      ? toolInput.content
-                      : (toolInput.content && typeof toolInput.content === 'object' ? JSON.stringify(toolInput.content) : null)
-                    if (raw) {
-                      try {
-                        const parsed = JSON.parse(raw)
-                        if (parsed.scope && Array.isArray(parsed.agents)) {
-                          scopeConfigJson = raw
-                        }
-                      } catch { /* not scope config JSON */ }
+                  accumulatedBlocks.push({ type: 'text', text: block.text })
+                } else if (block.type === 'tool_use' && block.name) {
+                  accumulatedBlocks.push({ type: 'tool_use', id: block.id ?? '', name: block.name, input: (block.input as Record<string, unknown>) ?? {} })
+                  const toolInput = block.input as Record<string, unknown> | undefined
+                  if (block.name === 'Write' && toolInput) {
+                    const fp = typeof toolInput.file_path === 'string' ? toolInput.file_path : ''
+                    if (fp.includes('scope-config') || fp === '[server-path]') {
+                      const raw = typeof toolInput.content === 'string'
+                        ? toolInput.content
+                        : (toolInput.content && typeof toolInput.content === 'object' ? JSON.stringify(toolInput.content) : null)
+                      if (raw) {
+                        try {
+                          const parsed = JSON.parse(raw)
+                          if (parsed.scope && Array.isArray(parsed.agents)) {
+                            scopeConfigJson = raw
+                          }
+                        } catch { /* not scope config JSON */ }
+                      }
+                    }
+                    if (fp.includes('scope-integrations') && toolInput.content) {
+                      const parsed = parseIntegrations(typeof toolInput.content === 'string' ? toolInput.content : JSON.stringify(toolInput.content))
+                      if (parsed && onApplyIntegrations) {
+                        onApplyIntegrations(parsed)
+                        onCreateSnapshot('AI updated integrations', 'ai-modified')
+                      }
                     }
                   }
-                  if (fp.includes('scope-integrations') && toolInput.content) {
-                    const parsed = parseIntegrations(typeof toolInput.content === 'string' ? toolInput.content : JSON.stringify(toolInput.content))
-                    if (parsed && onApplyIntegrations) {
-                      onApplyIntegrations(parsed)
-                      onCreateSnapshot('AI updated integrations', 'ai-modified')
-                    }
-                  }
+                } else if (block.type === 'tool_result') {
+                  accumulatedBlocks.push({ type: 'tool_result', tool_use_id: block.tool_use_id ?? '', content: block.text ?? null, is_error: block.is_error ?? false })
                 }
               }
               onChatHistoryChange(
-                newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated } : m)
+                newHistory.map(m => m.id === assistantId ? { ...m, content: accumulated, contentBlocks: [...accumulatedBlocks] } : m)
               )
             }
           } catch {
@@ -268,7 +282,6 @@ export function ScopeCopilot({
         }
       }
 
-      // Try to extract scope config: prefer captured Write tool content, fall back to text
       let applied = false
       const configSource = scopeConfigJson || accumulated
       try {
@@ -283,9 +296,9 @@ export function ScopeCopilot({
       const finalContent = accumulated || (applied ? 'Scope configuration updated.' : '')
       onChatHistoryChange(
         newHistory.map(m => m.id === assistantId
-          ? { ...m, content: finalContent, status: 'done' }
+          ? { ...m, content: finalContent, contentBlocks: [...accumulatedBlocks], status: 'done' }
           : m
-        ).filter(m => m.role === 'user' || m.content || m.status === 'streaming') as ChatMessageDraft[]
+        ).filter(m => m.role === 'user' || m.content || m.contentBlocks?.length || m.status === 'streaming') as ChatMessageDraft[]
       )
     } catch (err) {
       onChatHistoryChange(
@@ -319,9 +332,9 @@ export function ScopeCopilot({
           </div>
         )}
 
-        {chatHistory.filter(m => m.role === 'user' || m.content || m.status === 'streaming').map((msg) => (
+        {chatHistory.filter(m => m.role === 'user' || m.content || m.contentBlocks?.length || m.status === 'streaming').map((msg) => (
           <div key={msg.id} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {msg.role === 'assistant' && (
+            {msg.role === 'assistant' && !msg.contentBlocks?.length && (
               <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center mt-0.5">
                 <Bot className="w-3.5 h-3.5 text-purple-400" />
               </div>
@@ -333,20 +346,17 @@ export function ScopeCopilot({
                 ? 'bg-red-500/10 border border-red-500/20 text-red-300'
                 : 'bg-gray-800 text-gray-300'
             }`}>
-              {msg.status === 'streaming' && !msg.content && (
+              {msg.status === 'streaming' && !msg.content && !msg.contentBlocks?.length && (
                 <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
               )}
-              {msg.content && (
-                <div className="prose prose-invert prose-sm max-w-none overflow-x-auto
-                  prose-p:text-inherit prose-p:text-xs prose-p:my-1 prose-p:leading-relaxed
-                  prose-li:text-inherit prose-li:text-xs
-                  prose-strong:text-gray-200
-                  prose-code:text-purple-300 prose-code:bg-gray-900/50 prose-code:px-1 prose-code:rounded prose-code:text-[11px]
-                  prose-table:text-[10px] prose-th:text-gray-300 prose-td:text-gray-400 prose-th:px-1.5 prose-th:py-0.5 prose-td:px-1.5 prose-td:py-0.5 prose-th:border-b prose-th:border-gray-700">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              {msg.role === 'assistant' && msg.contentBlocks?.length ? (
+                <div>
+                  <ChatMessage content={msg.contentBlocks} isStreaming={msg.status === 'streaming'} />
                   {msg.status === 'streaming' && <Loader2 className="w-3 h-3 animate-spin text-purple-400 mt-1" />}
                 </div>
-              )}
+              ) : msg.content ? (
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              ) : null}
             </div>
             {msg.role === 'user' && (
               <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center mt-0.5">

@@ -22,6 +22,7 @@ export interface ChatMessageDraft {
   id: string
   role: 'user' | 'assistant'
   content: string
+  contentBlocks?: import('@/services/chatStreamService').ContentBlock[]
   status?: 'streaming' | 'done' | 'error'
   timestamp: number
 }

@@ -54,6 +54,7 @@ export class RedisService {
       port: config.redis.port,
       password: config.redis.password || undefined,
       db: config.redis.db,
+      ...(config.redis.tls ? { tls: {} } : {}),
       retryStrategy: (times) => {
         if (times > 3) {
           console.error('❌ Redis connection failed after 3 retries');

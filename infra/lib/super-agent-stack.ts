@@ -11,6 +11,8 @@ import { CdnConstruct } from './constructs/cdn';
 
 export interface SuperAgentStackProps extends cdk.StackProps {
   envName: string;
+  enableCdn?: boolean;
+  enableAgentCore?: boolean;
 }
 
 export class SuperAgentStack extends cdk.Stack {
@@ -94,14 +96,18 @@ export class SuperAgentStack extends cdk.Stack {
     });
 
     // =========================================================================
-    // AgentCore Runtime + S3 Files
+    // AgentCore Runtime + S3 Files (only in regions where S3 Files is available)
     // =========================================================================
-    const agentCore = new AgentCoreConstruct(this, 'AgentCore', {
-      workspaceBucket,
-      containerUri: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${agentcoreRepo.repositoryName}:latest`,
-      region: this.region,
-      account: this.account,
-    });
+    const enableAgentCore = props.enableAgentCore !== false;
+    let agentCore: AgentCoreConstruct | undefined;
+    if (enableAgentCore) {
+      agentCore = new AgentCoreConstruct(this, 'AgentCore', {
+        workspaceBucket,
+        containerUri: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${agentcoreRepo.repositoryName}:latest`,
+        region: this.region,
+        account: this.account,
+      });
+    }
 
     // =========================================================================
     // ECS Fargate Cluster (api + worker + gateway)
@@ -110,41 +116,49 @@ export class SuperAgentStack extends cdk.Stack {
       vpc: network.vpc,
       ecsSecurityGroup: network.ecsSecurityGroup,
       albSecurityGroup: network.albSecurityGroup,
+      backendRepo,
       dbSecret: dataLayer.dbSecret,
       appSecret: secrets.appSecret,
       redisAuthSecret: dataLayer.redisAuthSecret,
       redisEndpoint: dataLayer.redisEndpoint,
       redisPort: dataLayer.redisPort,
+      workspaceBucket,
       workspaceBucketName: workspaceBucket.bucketName,
       assetsBucketName: assetsBucket.bucketName,
-      agentCoreRuntimeArn: agentCore.runtime.attrAgentRuntimeArn,
-      s3FilesFileSystemId: agentCore.fileSystem.ref,
+      agentCoreRuntimeArn: agentCore?.runtime.attrAgentRuntimeArn || '',
+      s3FilesFileSystemId: agentCore?.fileSystem.ref || '',
       region: this.region,
       account: this.account,
       envName: env,
     });
 
     // =========================================================================
-    // CloudFront CDN + WAF (VPC Origin → internal ALB)
+    // CloudFront CDN + WAF (optional — requires us-east-1 for WAF scope)
     // =========================================================================
-    const cdn = new CdnConstruct(this, 'Cdn', {
-      alb: ecsCluster.alb,
-      frontendBucket,
-    });
+    if (props.enableCdn) {
+      const resolvedRegion = props.env?.region || 'us-east-1';
+      const cdn = new CdnConstruct(this, 'Cdn', {
+        alb: ecsCluster.alb,
+        frontendBucket,
+        enableWaf: resolvedRegion === 'us-east-1',
+      });
+      new cdk.CfnOutput(this, 'CloudFrontDomain', { value: cdn.distribution.distributionDomainName });
+    }
 
     // =========================================================================
     // Outputs
     // =========================================================================
     new cdk.CfnOutput(this, 'Environment', { value: env });
-    new cdk.CfnOutput(this, 'CloudFrontDomain', { value: cdn.distribution.distributionDomainName });
     new cdk.CfnOutput(this, 'AlbDnsName', { value: ecsCluster.alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'DbClusterEndpoint', { value: dataLayer.dbCluster.clusterEndpoint.hostname });
     new cdk.CfnOutput(this, 'DbSecretArn', { value: dataLayer.dbSecret.secretArn });
     new cdk.CfnOutput(this, 'RedisEndpoint', { value: dataLayer.redisEndpoint });
     new cdk.CfnOutput(this, 'WorkspaceBucketName', { value: workspaceBucket.bucketName });
     new cdk.CfnOutput(this, 'AssetsBucketName', { value: assetsBucket.bucketName });
-    new cdk.CfnOutput(this, 'AgentCoreRuntimeArn', { value: agentCore.runtime.attrAgentRuntimeArn });
-    new cdk.CfnOutput(this, 'S3FilesFileSystemId', { value: agentCore.fileSystem.ref });
+    if (agentCore) {
+      new cdk.CfnOutput(this, 'AgentCoreRuntimeArn', { value: agentCore.runtime.attrAgentRuntimeArn });
+      new cdk.CfnOutput(this, 'S3FilesFileSystemId', { value: agentCore.fileSystem.ref });
+    }
     new cdk.CfnOutput(this, 'BackendRepoUri', { value: backendRepo.repositoryUri });
     new cdk.CfnOutput(this, 'AgentCoreRepoUri', { value: agentcoreRepo.repositoryUri });
     new cdk.CfnOutput(this, 'AppSecretArn', { value: secrets.appSecret.secretArn });

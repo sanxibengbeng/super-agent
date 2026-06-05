@@ -1,9 +1,14 @@
 /**
- * Request logging middleware with request ID generation
+ * Request logging middleware with correlation ID propagation,
+ * performance monitoring, and metrics integration.
  * Requirements: 13.3
  */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { metricsCollector } from './metrics.js';
+
+/** Threshold in ms above which a request is logged at WARN level */
+const SLOW_REQUEST_THRESHOLD_MS = 3000;
 
 /**
  * Request context interface for logging
@@ -41,13 +46,36 @@ export function extractRequestContext(request: FastifyRequest): RequestContext {
   };
 }
 
+// Store request start times keyed by request id
+const requestStartTimes = new Map<string, bigint>();
+
 /**
- * Request logger hook that logs incoming requests
+ * Request logger hook that:
+ * - Propagates X-Request-ID (or uses the auto-generated request.id)
+ * - Sets the correlation ID on the reply header
+ * - Increments the active connection counter
+ * - Records high-resolution start time
  */
 export async function requestLoggerHook(
   request: FastifyRequest,
-  _reply: FastifyReply
+  reply: FastifyReply
 ): Promise<void> {
+  // If the client sent an X-Request-ID header, adopt it as the canonical request ID
+  const incomingId = request.headers['x-request-id'];
+  if (incomingId && typeof incomingId === 'string') {
+    // Override Fastify's generated ID with the client-provided one
+    (request as { id: string }).id = incomingId;
+  }
+
+  // Expose the correlation ID to the client on the response
+  reply.header('X-Request-ID', request.id);
+
+  // Track the request in metrics
+  metricsCollector.onRequestStart();
+
+  // Record high-resolution start time for response time calculation
+  requestStartTimes.set(request.id, process.hrtime.bigint());
+
   const context = extractRequestContext(request);
 
   request.log.info(
@@ -63,27 +91,56 @@ export async function requestLoggerHook(
 }
 
 /**
- * Response logger hook that logs outgoing responses
+ * Response logger hook that:
+ * - Logs the completed response
+ * - Warns on slow requests (> 3000ms)
+ * - Records response time and status in metrics
  */
 export async function responseLoggerHook(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
   const context = extractRequestContext(request);
-  const responseTime = reply.elapsedTime;
+  const statusCode = reply.statusCode;
 
-  request.log.info(
-    {
-      requestId: context.requestId,
-      method: context.method,
-      url: context.url,
-      statusCode: reply.statusCode,
-      responseTime: `${responseTime.toFixed(2)}ms`,
-      userId: context.userId,
-      orgId: context.orgId,
-    },
-    'Request completed'
-  );
+  // Calculate response time from stored start time (more reliable than reply.elapsedTime
+  // which may not be set when disableRequestLogging is true)
+  let responseTimeMs: number;
+  const startTime = requestStartTimes.get(request.id);
+  if (startTime) {
+    const elapsed = process.hrtime.bigint() - startTime;
+    responseTimeMs = Number(elapsed) / 1_000_000; // nanoseconds -> milliseconds
+    requestStartTimes.delete(request.id);
+  } else {
+    responseTimeMs = reply.elapsedTime ?? 0;
+  }
+
+  // Record in metrics collector
+  metricsCollector.onRequestEnd(statusCode, responseTimeMs);
+
+  const logPayload = {
+    requestId: context.requestId,
+    method: context.method,
+    url: context.url,
+    statusCode,
+    responseTimeMs: Math.round(responseTimeMs * 100) / 100,
+    userId: context.userId || undefined,
+    orgId: context.orgId || undefined,
+  };
+
+  // Warn on slow requests
+  if (responseTimeMs > SLOW_REQUEST_THRESHOLD_MS) {
+    request.log.warn(
+      {
+        ...logPayload,
+        durationMs: responseTimeMs,
+        route: request.routeOptions?.url || request.url,
+      },
+      `Slow request detected (${responseTimeMs.toFixed(0)}ms)`
+    );
+  } else {
+    request.log.info(logPayload, 'Request completed');
+  }
 }
 
 /**

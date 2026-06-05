@@ -3,17 +3,25 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import { createWriteStream } from 'node:fs';
 import { config } from './config/index.js';
 
-// Tee console output to a log file
-const logFile = createWriteStream('backend.log', { flags: 'a' });
-const origLog = console.log;
-const origError = console.error;
-const origWarn = console.warn;
-console.log = (...args: unknown[]) => { origLog(...args); logFile.write(`[LOG ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
-console.error = (...args: unknown[]) => { origError(...args); logFile.write(`[ERR ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
-console.warn = (...args: unknown[]) => { origWarn(...args); logFile.write(`[WRN ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
+// Tee console output to a log file — ONLY in local development (non-production, non-test).
+// In production the process runs as non-root 'node' user and writing to the working directory
+// fails with EACCES. CloudWatch captures stdout/stderr natively.
+if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
+  try {
+    const { createWriteStream } = await import('node:fs');
+    const logFile = createWriteStream('backend.log', { flags: 'a' });
+    const origLog = console.log;
+    const origError = console.error;
+    const origWarn = console.warn;
+    console.log = (...args: unknown[]) => { origLog(...args); logFile.write(`[LOG ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
+    console.error = (...args: unknown[]) => { origError(...args); logFile.write(`[ERR ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
+    console.warn = (...args: unknown[]) => { origWarn(...args); logFile.write(`[WRN ${new Date().toISOString()}] ${args.map(String).join(' ')}\n`); };
+  } catch {
+    // Silently skip file logging if the filesystem is not writable
+  }
+}
 import { errorHandler, registerRequestLogger } from './middleware/index.js';
 import { registerRoutes } from './routes/index.js';
 import { executionWebSocketGateway } from './websocket/index.js';
@@ -84,7 +92,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         : config.corsOrigin.split(',').map((o) => o.trim()), // Support comma-separated origins
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Request-ID'],
     exposedHeaders: [
       'Content-Disposition', // For file downloads
       'Content-Type',        // For binary file responses (images, etc.)

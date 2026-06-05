@@ -13,13 +13,18 @@ const app = new cdk.App();
 //   authMode:     "cognito" | "local" (default: local)
 
 const envName = app.node.tryGetContext('env') || 'dev';
+const region = app.node.tryGetContext('region') || process.env.CDK_DEFAULT_REGION || 'ap-southeast-1';
+const enableCdn = app.node.tryGetContext('enableCdn') === 'true';
+const enableAgentCore = app.node.tryGetContext('enableAgentCore') !== 'false';
 const stackName = `SuperAgent-${envName}`;
 
 new SuperAgentStack(app, stackName, {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+    region,
   },
   description: `Super Agent Platform (${envName})`,
   envName,
+  enableCdn,
+  enableAgentCore,
 });

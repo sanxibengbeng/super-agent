@@ -28,3 +28,5 @@ export {
   registerRequestLogger,
   type RequestContext,
 } from './requestLogger.js';
+
+export { metricsCollector, type MetricsSnapshot } from './metrics.js';

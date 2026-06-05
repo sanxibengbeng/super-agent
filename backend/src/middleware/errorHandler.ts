@@ -76,6 +76,30 @@ export class AppError extends Error {
 }
 
 /**
+ * Sanitize request body for logging — remove sensitive fields
+ */
+function sanitizeBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object') return undefined;
+  const sensitiveKeys = ['password', 'secret', 'token', 'authorization', 'credential', 'api_key', 'apiKey'];
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (sensitiveKeys.some(k => key.toLowerCase().includes(k))) {
+      sanitized[key] = '[REDACTED]';
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * Classify an HTTP status code for log filtering
+ */
+function classifyError(statusCode: number): 'client' | 'server' {
+  return statusCode >= 500 ? 'server' : 'client';
+}
+
+/**
  * Global error handler for Fastify
  * Provides consistent error responses across all endpoints
  */
@@ -86,8 +110,34 @@ export function errorHandler(
 ): void {
   const requestId = request.id;
 
-  // Log error with request context
-  request.log.error({ err: error, requestId }, 'Request error');
+  // Determine status code for classification
+  const statusCode =
+    error instanceof AppError
+      ? error.statusCode
+      : error.statusCode ?? 500;
+  const errorClass = classifyError(statusCode);
+
+  // Build structured error context for logging
+  const errorContext = {
+    err: error,
+    requestId,
+    errorClass,
+    statusCode,
+    method: request.method,
+    url: request.url,
+    route: request.routeOptions?.url,
+    userId: request.user?.id,
+    orgId: request.user?.orgId,
+    body: sanitizeBody(request.body),
+    stack: error.stack,
+  };
+
+  // Log at appropriate level: warn for client errors, error for server errors
+  if (errorClass === 'server') {
+    request.log.error(errorContext, 'Server error');
+  } else {
+    request.log.warn(errorContext, 'Client error');
+  }
 
   // Handle Fastify validation errors
   if (error.validation) {

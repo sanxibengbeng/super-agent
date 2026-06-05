@@ -37,9 +37,13 @@ export class VpcConstruct extends Construct {
     });
 
     // VPC Endpoints
-    // S3 Gateway Endpoint
+    // S3 Gateway Endpoint (attach to both private and isolated subnets)
     this.vpc.addGatewayEndpoint('S3Endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
+      subnets: [
+        { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      ],
     });
 
     // ECR API Interface Endpoint

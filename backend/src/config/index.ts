@@ -18,6 +18,7 @@ const envSchema = z.object({
   REDIS_PORT: z.string().default('6379').transform(Number),
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.string().default('0').transform(Number),
+  REDIS_TLS: z.string().optional().default('false'),
 
   // Authentication
   AUTH_MODE: z.enum(['cognito', 'local']).default('local'),
@@ -152,6 +153,7 @@ export const config = {
     port: env.REDIS_PORT,
     password: env.REDIS_PASSWORD,
     db: env.REDIS_DB,
+    tls: env.REDIS_TLS === 'true',
   },
 
   authMode: env.AUTH_MODE,

@@ -31,6 +31,7 @@ export const redisConnection = {
   password: config.redis.password || undefined,
   db: config.redis.db,
   maxRetriesPerRequest: null, // Required for BullMQ
+  ...(config.redis.tls ? { tls: {} } : {}),
 };
 
 /**

@@ -43,6 +43,7 @@ import { organizationRoutes } from './organizations.routes.js';
 import { businessScopeRoutes } from './businessScopes.routes.js';
 import { scopeGeneratorRoutes } from './scope-generator.routes.js';
 import { healthRoutes } from './health.routes.js';
+import { metricsRoutes } from './metrics.routes.js';
 import { authRoutes } from './auth.routes.js';
 import { skillsRoutes } from './skills.routes.js';
 import { skillMarketplaceRoutes } from './skill-marketplace.routes.js';
@@ -101,6 +102,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // ============================================================================
   // Health routes are registered without /api prefix for load balancer compatibility
   await fastify.register(healthRoutes, { prefix: '/health' });
+
+  // Metrics endpoint for observability (no authentication required)
+  await fastify.register(metricsRoutes, { prefix: '/metrics' });
 
   // ============================================================================
   // Authentication Routes (No Authentication Required)
@@ -273,6 +277,7 @@ export {
   businessScopeRoutes,
   scopeGeneratorRoutes,
   healthRoutes,
+  metricsRoutes,
   authRoutes,
   skillsRoutes,
   skillMarketplaceRoutes,

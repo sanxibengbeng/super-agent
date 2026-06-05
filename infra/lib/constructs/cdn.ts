@@ -11,6 +11,7 @@ import { Duration } from 'aws-cdk-lib';
 export interface CdnConstructProps {
   alb: elbv2.IApplicationLoadBalancer;
   frontendBucket: s3.IBucket;
+  enableWaf?: boolean;
 }
 
 export class CdnConstruct extends Construct {
@@ -19,98 +20,102 @@ export class CdnConstruct extends Construct {
   constructor(scope: Construct, id: string, props: CdnConstructProps) {
     super(scope, id);
 
-    // WAF WebACL for CloudFront (must be in us-east-1 scope)
-    const webAcl = new wafv2.CfnWebACL(this, 'WebACL', {
-      scope: 'CLOUDFRONT',
-      defaultAction: { allow: {} },
-      visibilityConfig: {
-        sampledRequestsEnabled: true,
-        cloudWatchMetricsEnabled: true,
-        metricName: 'SuperAgentWebACL',
-      },
-      rules: [
-        {
-          name: 'RateLimit',
-          priority: 1,
-          statement: {
-            rateBasedStatement: {
-              limit: 1000,
-              aggregateKeyType: 'IP',
+    // WAF WebACL for CloudFront (only works when stack is in us-east-1)
+    let webAclArn: string | undefined;
+    if (props.enableWaf !== false) {
+      const webAcl = new wafv2.CfnWebACL(this, 'WebACL', {
+        scope: 'CLOUDFRONT',
+        defaultAction: { allow: {} },
+        visibilityConfig: {
+          sampledRequestsEnabled: true,
+          cloudWatchMetricsEnabled: true,
+          metricName: 'SuperAgentWebACL',
+        },
+        rules: [
+          {
+            name: 'RateLimit',
+            priority: 1,
+            statement: {
+              rateBasedStatement: {
+                limit: 1000,
+                aggregateKeyType: 'IP',
+              },
+            },
+            action: { block: {} },
+            visibilityConfig: {
+              sampledRequestsEnabled: true,
+              cloudWatchMetricsEnabled: true,
+              metricName: 'RateLimit',
             },
           },
-          action: { block: {} },
-          visibilityConfig: {
-            sampledRequestsEnabled: true,
-            cloudWatchMetricsEnabled: true,
-            metricName: 'RateLimit',
-          },
-        },
-        {
-          name: 'AWSManagedRulesCommonRuleSet',
-          priority: 2,
-          statement: {
-            managedRuleGroupStatement: {
-              vendorName: 'AWS',
-              name: 'AWSManagedRulesCommonRuleSet',
+          {
+            name: 'AWSManagedRulesCommonRuleSet',
+            priority: 2,
+            statement: {
+              managedRuleGroupStatement: {
+                vendorName: 'AWS',
+                name: 'AWSManagedRulesCommonRuleSet',
+              },
+            },
+            overrideAction: { none: {} },
+            visibilityConfig: {
+              sampledRequestsEnabled: true,
+              cloudWatchMetricsEnabled: true,
+              metricName: 'AWSManagedRulesCommonRuleSet',
             },
           },
-          overrideAction: { none: {} },
-          visibilityConfig: {
-            sampledRequestsEnabled: true,
-            cloudWatchMetricsEnabled: true,
-            metricName: 'AWSManagedRulesCommonRuleSet',
-          },
-        },
-        {
-          name: 'AWSManagedRulesSQLiRuleSet',
-          priority: 3,
-          statement: {
-            managedRuleGroupStatement: {
-              vendorName: 'AWS',
-              name: 'AWSManagedRulesSQLiRuleSet',
+          {
+            name: 'AWSManagedRulesSQLiRuleSet',
+            priority: 3,
+            statement: {
+              managedRuleGroupStatement: {
+                vendorName: 'AWS',
+                name: 'AWSManagedRulesSQLiRuleSet',
+              },
+            },
+            overrideAction: { none: {} },
+            visibilityConfig: {
+              sampledRequestsEnabled: true,
+              cloudWatchMetricsEnabled: true,
+              metricName: 'AWSManagedRulesSQLiRuleSet',
             },
           },
-          overrideAction: { none: {} },
-          visibilityConfig: {
-            sampledRequestsEnabled: true,
-            cloudWatchMetricsEnabled: true,
-            metricName: 'AWSManagedRulesSQLiRuleSet',
-          },
-        },
-        {
-          name: 'AWSManagedRulesKnownBadInputsRuleSet',
-          priority: 4,
-          statement: {
-            managedRuleGroupStatement: {
-              vendorName: 'AWS',
-              name: 'AWSManagedRulesKnownBadInputsRuleSet',
+          {
+            name: 'AWSManagedRulesKnownBadInputsRuleSet',
+            priority: 4,
+            statement: {
+              managedRuleGroupStatement: {
+                vendorName: 'AWS',
+                name: 'AWSManagedRulesKnownBadInputsRuleSet',
+              },
+            },
+            overrideAction: { none: {} },
+            visibilityConfig: {
+              sampledRequestsEnabled: true,
+              cloudWatchMetricsEnabled: true,
+              metricName: 'AWSManagedRulesKnownBadInputsRuleSet',
             },
           },
-          overrideAction: { none: {} },
-          visibilityConfig: {
-            sampledRequestsEnabled: true,
-            cloudWatchMetricsEnabled: true,
-            metricName: 'AWSManagedRulesKnownBadInputsRuleSet',
-          },
-        },
-        {
-          name: 'AWSManagedRulesAmazonIpReputationList',
-          priority: 5,
-          statement: {
-            managedRuleGroupStatement: {
-              vendorName: 'AWS',
-              name: 'AWSManagedRulesAmazonIpReputationList',
+          {
+            name: 'AWSManagedRulesAmazonIpReputationList',
+            priority: 5,
+            statement: {
+              managedRuleGroupStatement: {
+                vendorName: 'AWS',
+                name: 'AWSManagedRulesAmazonIpReputationList',
+              },
+            },
+            overrideAction: { none: {} },
+            visibilityConfig: {
+              sampledRequestsEnabled: true,
+              cloudWatchMetricsEnabled: true,
+              metricName: 'AWSManagedRulesAmazonIpReputationList',
             },
           },
-          overrideAction: { none: {} },
-          visibilityConfig: {
-            sampledRequestsEnabled: true,
-            cloudWatchMetricsEnabled: true,
-            metricName: 'AWSManagedRulesAmazonIpReputationList',
-          },
-        },
-      ],
-    });
+        ],
+      });
+      webAclArn = webAcl.attrArn;
+    }
 
     // OAC for S3 frontend bucket
     const oac = new cloudfront.S3OriginAccessControl(this, 'OAC', {
@@ -175,12 +180,6 @@ export class CdnConstruct extends Construct {
           ttl: Duration.seconds(0),
         },
         {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: Duration.seconds(0),
-        },
-        {
           httpStatus: 502,
           ttl: Duration.seconds(5),
         },
@@ -189,7 +188,7 @@ export class CdnConstruct extends Construct {
           ttl: Duration.seconds(5),
         },
       ],
-      webAclId: webAcl.attrArn,
+      ...(webAclArn ? { webAclId: webAclArn } : {}),
     });
 
     // Deploy frontend build output to S3 + invalidate CloudFront

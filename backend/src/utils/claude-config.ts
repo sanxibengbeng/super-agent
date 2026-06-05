@@ -10,10 +10,10 @@
  * AWS Bedrock model ARN-style IDs.
  */
 export const ANTHROPIC_TO_BEDROCK_MODEL_MAP: Record<string, string> = {
-  'claude-sonnet-4-5-20250929': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-  'claude-haiku-4-5-20251001': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  'claude-sonnet-4-6':'us.anthropic.claude-sonnet-4-6',
-  'claude-opus-4-6':'us.anthropic.claude-opus-4-6-v1'
+  'claude-sonnet-4-5-20250929': 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  'claude-haiku-4-5-20251001': 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+  'claude-sonnet-4-6': 'global.anthropic.claude-sonnet-4-6',
+  'claude-opus-4-6': 'global.anthropic.claude-opus-4-6-v1',
 };
 
 /**
