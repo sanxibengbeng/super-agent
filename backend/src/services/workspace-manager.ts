@@ -1067,11 +1067,11 @@ export class WorkspaceManager {
   async listWorkspaceFilesFromS3(
     orgId: string,
     scopeId: string,
-    _sessionId: string,
+    sessionId: string,
     bucket?: string,
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    const prefix = `${orgId}/${scopeId}/workspace/`;
+    const prefix = `${orgId}/${scopeId}/${sessionId}/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
