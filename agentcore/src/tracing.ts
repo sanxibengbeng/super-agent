@@ -20,8 +20,8 @@ export class ContainerTracer {
 
   constructor(traceparent: string) {
     const parts = traceparent.split('-');
-    this.traceId = parts[1] ?? crypto.randomUUID().replace(/-/g, '');
-    this.rootParentSpanId = parts[2] ?? '0000000000000000';
+    this.traceId = parts[1]?.trim() || crypto.randomUUID().replace(/-/g, '');
+    this.rootParentSpanId = parts[2]?.trim() || '0000000000000000';
     this.baseTime = performance.now();
   }
 
