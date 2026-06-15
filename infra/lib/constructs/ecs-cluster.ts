@@ -28,6 +28,8 @@ export interface EcsClusterConstructProps {
   region: string;
   account: string;
   envName: string;
+  otelEndpoint?: string;
+  otelHeaders?: string;
 }
 
 export class EcsClusterConstruct extends Construct {
@@ -103,6 +105,11 @@ export class EcsClusterConstruct extends Construct {
       ASSETS_BUCKET_NAME: props.assetsBucketName,
       AGENTCORE_RUNTIME_ARN: props.agentCoreRuntimeArn,
       S3FILES_FILESYSTEM_ID: props.s3FilesFileSystemId,
+      OTEL_EXPORTER_OTLP_ENDPOINT: props.otelEndpoint ?? '',
+      OTEL_EXPORTER_OTLP_HEADERS: props.otelHeaders ?? '',
+      OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
+      OTEL_TRACES_SAMPLER_ARG: '0.1',
+      OTEL_METRICS_EXPORT_INTERVAL: '60000',
     };
 
     // Shared secrets from Secrets Manager
@@ -163,6 +170,7 @@ export class EcsClusterConstruct extends Construct {
       environment: {
         ...sharedEnvironment,
         PROCESS_ROLE: 'api',
+        OTEL_SERVICE_NAME: 'super-agent-api',
       },
       secrets: sharedSecrets,
       logging: ecs.LogDrivers.awsLogs({
@@ -291,6 +299,7 @@ export class EcsClusterConstruct extends Construct {
       environment: {
         ...sharedEnvironment,
         PROCESS_ROLE: 'worker',
+        OTEL_SERVICE_NAME: 'super-agent-worker',
       },
       secrets: sharedSecrets,
       logging: ecs.LogDrivers.awsLogs({
@@ -345,6 +354,7 @@ export class EcsClusterConstruct extends Construct {
       environment: {
         ...sharedEnvironment,
         PROCESS_ROLE: 'gateway',
+        OTEL_SERVICE_NAME: 'super-agent-gateway',
       },
       secrets: sharedSecrets,
       logging: ecs.LogDrivers.awsLogs({

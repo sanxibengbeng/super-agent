@@ -120,6 +120,14 @@ const envSchema = z.object({
   SALESFORCE_OAUTH_CLIENT_ID: z.string().optional(),
   SALESFORCE_OAUTH_CLIENT_SECRET: z.string().optional(),
   OAUTH_REDIRECT_BASE_URL: z.string().optional(), // e.g. https://app.example.com
+
+  // OpenTelemetry (optional — no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset)
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  OTEL_EXPORTER_OTLP_HEADERS: z.string().optional(),
+  OTEL_SERVICE_NAME: z.string().optional(),
+  OTEL_TRACES_SAMPLER: z.string().optional().default('parentbased_traceidratio'),
+  OTEL_TRACES_SAMPLER_ARG: z.string().optional().default('1.0'),
+  OTEL_METRICS_EXPORT_INTERVAL: z.string().optional().default('60000'),
 });
 
 function loadConfig(): z.infer<typeof envSchema> {
@@ -261,6 +269,17 @@ export const config = {
   },
 
   logLevel: env.LOG_LEVEL,
+
+  otel: {
+    endpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    headers: env.OTEL_EXPORTER_OTLP_HEADERS,
+    serviceName: env.OTEL_SERVICE_NAME,
+    sampler: env.OTEL_TRACES_SAMPLER,
+    samplerArg: env.OTEL_TRACES_SAMPLER_ARG,
+    metricsInterval: env.OTEL_METRICS_EXPORT_INTERVAL,
+    enabled: !!env.OTEL_EXPORTER_OTLP_ENDPOINT,
+  },
+
   corsOrigin: env.CORS_ORIGIN,
 } as const;
 
