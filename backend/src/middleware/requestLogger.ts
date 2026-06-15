@@ -7,6 +7,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { trace } from '@opentelemetry/api';
 import { metricsCollector } from './metrics.js';
+import { httpRequestDuration, httpActiveConnections } from './otel-metrics.js';
 
 /** Threshold in ms above which a request is logged at WARN level */
 const SLOW_REQUEST_THRESHOLD_MS = 3000;
@@ -73,6 +74,7 @@ export async function requestLoggerHook(
 
   // Track the request in metrics
   metricsCollector.onRequestStart();
+  httpActiveConnections.add(1);
 
   // Record high-resolution start time for response time calculation
   requestStartTimes.set(request.id, process.hrtime.bigint());
@@ -123,6 +125,12 @@ export async function responseLoggerHook(
 
   // Record in metrics collector
   metricsCollector.onRequestEnd(statusCode, responseTimeMs);
+  httpActiveConnections.add(-1);
+  httpRequestDuration.record(responseTimeMs / 1000, {
+    method: request.method,
+    route: request.routeOptions?.url || request.url,
+    status_code: String(statusCode),
+  });
 
   const activeSpan = trace.getActiveSpan();
   const logPayload = {
