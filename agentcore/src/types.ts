@@ -23,6 +23,10 @@ export interface AgentPayload {
   workspace_access_point_arn?: string;
   /** Execution task ID for Layer 1 reconciliation */
   execution_task_id?: string;
+  /** W3C traceparent header for distributed tracing */
+  traceparent?: string;
+  /** W3C tracestate header */
+  tracestate?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +53,7 @@ export interface TokenUsage {
 }
 
 export interface AgentEvent {
-  type: 'session_start' | 'assistant' | 'result' | 'error';
+  type: 'session_start' | 'assistant' | 'result' | 'error' | 'trace';
   session_id?: string;
   content?: ContentBlock[];
   code?: string;
@@ -59,4 +63,14 @@ export interface AgentEvent {
   is_error?: boolean;
   result?: string;
   token_usage?: TokenUsage;
+  spans?: Array<{
+    name: string;
+    traceId: string;
+    spanId: string;
+    parentSpanId: string;
+    startTimeMs: number;
+    endTimeMs: number;
+    attributes: Record<string, string | number | boolean>;
+    status: 'OK' | 'ERROR';
+  }>;
 }
