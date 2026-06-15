@@ -16,11 +16,12 @@ import {
   pollJobOptions,
   redisConnection,
 } from '../config/queue.js';
+import { traceProducer, type TracedJobData } from '../middleware/otel-bullmq.js';
 
 /**
  * Job data for running a workflow node
  */
-export interface RunWorkflowJobData {
+export interface RunWorkflowJobData extends TracedJobData {
   executionId: string;
   nodeId: string;
   userId: string;
@@ -29,7 +30,7 @@ export interface RunWorkflowJobData {
 /**
  * Job data for polling workflow execution
  */
-export interface PollWorkflowJobData {
+export interface PollWorkflowJobData extends TracedJobData {
   executionId: string;
   userId: string;
 }
@@ -137,12 +138,13 @@ export class WorkflowQueueService {
   /**
    * Add a job to run a workflow node
    */
-  async addRunWorkflowJob(data: RunWorkflowJobData): Promise<Job<RunWorkflowJobData>> {
+  async addRunWorkflowJob(data: RunWorkflowJobData): Promise<Job<RunWorkflowJobData & TracedJobData>> {
     if (!this.runWorkflowQueue) {
       throw new Error('Run workflow queue not initialized');
     }
 
-    const job = await this.runWorkflowQueue.add('runWorkflow', data, {
+    const tracedData = traceProducer(QUEUE_RUN_WORKFLOW, 'runWorkflow', data);
+    const job = await this.runWorkflowQueue.add('runWorkflow', tracedData, {
       jobId: `run-${data.executionId}-${data.nodeId}`,
     });
 
@@ -152,12 +154,13 @@ export class WorkflowQueueService {
   /**
    * Add a job to poll workflow execution
    */
-  async addPollWorkflowJob(data: PollWorkflowJobData): Promise<Job<PollWorkflowJobData>> {
+  async addPollWorkflowJob(data: PollWorkflowJobData): Promise<Job<PollWorkflowJobData & TracedJobData>> {
     if (!this.pollWorkflowQueue) {
       throw new Error('Poll workflow queue not initialized');
     }
 
-    const job = await this.pollWorkflowQueue.add('pollWorkflow', data, {
+    const tracedData = traceProducer(QUEUE_POLL_WORKFLOW, 'pollWorkflow', data);
+    const job = await this.pollWorkflowQueue.add('pollWorkflow', tracedData, {
       ...pollJobOptions,
       jobId: `poll-${data.executionId}-${Date.now()}`,
     });

@@ -14,6 +14,8 @@ import { workflowExecutionService } from '../services/workflow-execution.service
 import { redisService } from '../services/redis.service.js';
 import type { Job } from 'bullmq';
 import type { RunWorkflowJobData, PollWorkflowJobData } from '../services/workflow-queue.service.js';
+import { tracedProcessor } from '../middleware/otel-bullmq.js';
+import { QUEUE_RUN_WORKFLOW, QUEUE_POLL_WORKFLOW } from '../config/queue.js';
 
 let initialized = false;
 
@@ -39,20 +41,20 @@ export async function initializeWorkflowQueues(): Promise<void> {
     // 2. Initialize queues
     await workflowQueueService.initialize();
 
-    // 3. Register run-workflow processor
+    // 3. Register run-workflow processor (with trace propagation)
     workflowQueueService.registerRunWorkflowProcessor(
-      async (job: Job<RunWorkflowJobData>) => {
+      tracedProcessor(QUEUE_RUN_WORKFLOW, async (job: Job<RunWorkflowJobData>) => {
         console.log(`🔄 Processing run-workflow job: ${job.id}`, job.data);
         await workflowExecutionService.runWorkflow(job.data);
-      }
+      })
     );
 
-    // 4. Register poll-workflow processor
+    // 4. Register poll-workflow processor (with trace propagation)
     workflowQueueService.registerPollWorkflowProcessor(
-      async (job: Job<PollWorkflowJobData>) => {
+      tracedProcessor(QUEUE_POLL_WORKFLOW, async (job: Job<PollWorkflowJobData>) => {
         console.log(`🔄 Processing poll-workflow job: ${job.id}`, job.data);
         await workflowExecutionService.pollWorkflow(job.data);
-      }
+      })
     );
 
     initialized = true;
