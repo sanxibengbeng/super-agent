@@ -9,6 +9,7 @@
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentPayload, AgentEvent, ContentBlock } from './types.js';
+import { ContainerTracer } from './tracing.js';
 
 const DEFAULT_TOOLS = [
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -24,6 +25,7 @@ const WORKSPACE_DIR = process.env.WORKSPACE_DIR ?? '/mnt/ws';
 
 export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEvent> {
   const model = payload.model || process.env.ANTHROPIC_MODEL;
+  const tracer = payload.traceparent ? new ContainerTracer(payload.traceparent) : null;
 
   const baseOptions: Record<string, unknown> = {
     systemPrompt: payload.system_prompt ?? undefined,
@@ -44,17 +46,34 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
 
   // Strategy: try Claude Code session resume first (fast, native history).
   // If resume fails (microVM was recycled), fallback to history-injected prompt.
+  const coldStartSpan = tracer?.startSpan('agentcore:cold_start');
+  coldStartSpan?.setAttribute('session_resume_attempted', !!payload.session_id);
+
   if (payload.session_id) {
     try {
-      yield* runWithOptions(payload.prompt, { ...baseOptions, resume: payload.session_id });
+      yield* runWithOptions(payload.prompt, { ...baseOptions, resume: payload.session_id }, tracer);
+      coldStartSpan?.setAttribute('resume_success', true);
+      coldStartSpan?.end();
+
+      // Emit trace before returning (resume path)
+      if (tracer && tracer.getSpans().length > 0) {
+        yield { type: 'trace', spans: tracer.getSpans() };
+      }
       return;
     } catch (err) {
       console.log(`[agent-runner] Session resume failed (${err}), falling back to history injection`);
+      coldStartSpan?.setAttribute('resume_success', false);
     }
   }
 
   const prompt = buildContextualPrompt(payload);
-  yield* runWithOptions(prompt, baseOptions);
+  yield* runWithOptions(prompt, baseOptions, tracer);
+  coldStartSpan?.end();
+
+  // Emit trace at the end (fallback path)
+  if (tracer && tracer.getSpans().length > 0) {
+    yield { type: 'trace', spans: tracer.getSpans() };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +83,9 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
 async function* runWithOptions(
   prompt: string,
   options: Record<string, unknown>,
+  tracer?: ContainerTracer | null,
 ): AsyncGenerator<AgentEvent> {
+  const turnSpan = tracer?.startSpan('agentcore:agent_turn');
   for await (const message of query({ prompt, options })) {
     const msg = message as Record<string, unknown>;
 
@@ -90,6 +111,16 @@ async function* runWithOptions(
       const blocks = Array.isArray(rawContent)
         ? rawContent.map(mapContentBlock)
         : [];
+
+      if (tracer && turnSpan) {
+        for (const block of blocks) {
+          if (block.type === 'tool_use' && block.name) {
+            const toolSpan = tracer.startSpan(`agentcore:tool_use:${block.name}`, turnSpan.spanId);
+            toolSpan.end();
+          }
+        }
+      }
+
       yield {
         type: 'assistant',
         content: blocks,
@@ -99,6 +130,12 @@ async function* runWithOptions(
     }
 
     if (msg.type === 'result') {
+      if (turnSpan) {
+        turnSpan.setAttribute('model', options.model as string ?? 'unknown');
+        turnSpan.setAttribute('num_turns', (msg.num_turns as number) ?? 0);
+        turnSpan.end((msg.is_error as boolean) ? 'ERROR' : 'OK');
+      }
+
       const resultMsg = msg as Record<string, unknown>;
       // Extract token usage from SDK result message
       const usage = resultMsg.usage as Record<string, number> | undefined;
