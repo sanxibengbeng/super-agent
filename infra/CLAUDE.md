@@ -89,12 +89,92 @@ Context variables (passed via `-c key=value`):
 - `domainName` — Custom domain (required when enableCdn=true)
 - `hostedZoneId` — Route53 zone (required when enableCdn=true)
 - `authMode` — "cognito" | "local" (default: local)
+- `otelEndpoint` — Grafana Cloud OTLP endpoint URL (enables distributed tracing)
 
 ## Deployment Scripts (`scripts/`)
 
 - `deploy.sh` — Reads stack outputs, builds + deploys backend/frontend, runs migrations
 - `deploy-full.sh` — Full CDK deploy + code deploy + AgentCore setup (ECR build, runtime creation)
 - Flags: `--skip-frontend`, `--skip-backend`, `--env-file`, `--cognito-password`
+
+## Observability (Distributed Tracing)
+
+Full-chain distributed tracing via OpenTelemetry SDK → Grafana Cloud (Tempo + Mimir).
+
+### Architecture
+
+```
+ECS Fargate (api/worker/gateway)
+  └── OTel Node.js SDK (auto-instruments HTTP, Fastify, pg, ioredis, AWS SDK)
+       ├── Traces → OTLP/proto → Grafana Cloud Tempo
+       └── Metrics → OTLP/proto → Grafana Cloud Mimir
+```
+
+AgentCore containers (no network access) piggyback span data on SSE events; the backend rehydrates them into OTel spans.
+
+### Production Setup
+
+**Step 1: Set Grafana Cloud OTLP endpoint via CDK context**
+
+```bash
+npx cdk deploy --all -c otelEndpoint=https://otlp-gateway-prod-ap-southeast-1.grafana.net/otlp
+```
+
+**Step 2: Store Grafana Cloud API key in Secrets Manager**
+
+The `OTEL_EXPORTER_OTLP_HEADERS` secret is part of `super-agent/app-config`. Update it in the AWS Console or CLI:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id super-agent/app-config \
+  --secret-string '{
+    "JWT_SECRET": "<existing>",
+    "ANTHROPIC_API_KEY": "<existing>",
+    "LANGFUSE_SECRET_KEY": "<existing>",
+    "LANGFUSE_PUBLIC_KEY": "<existing>",
+    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Basic <base64(instanceId:apiKey)>"
+  }'
+```
+
+To get the base64 value for Grafana Cloud:
+```bash
+echo -n "<instance-id>:<api-key>" | base64
+```
+
+**Step 3: Verify traces appear**
+
+After deploying, make a request and check Grafana Cloud → Explore → Tempo. Search by service name: `super-agent-api`, `super-agent-worker`, `super-agent-gateway`.
+
+### Environment Variables (ECS)
+
+| Variable | Source | Per-Service |
+|----------|--------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Plain-text env (CDK context) | Shared |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Secrets Manager (`super-agent/app-config`) | Shared |
+| `OTEL_SERVICE_NAME` | Plain-text env | `super-agent-api` / `super-agent-worker` / `super-agent-gateway` |
+| `OTEL_TRACES_SAMPLER` | Plain-text env | `parentbased_traceidratio` (all) |
+| `OTEL_TRACES_SAMPLER_ARG` | Plain-text env | `0.1` (10% sampling in production) |
+| `OTEL_METRICS_EXPORT_INTERVAL` | Plain-text env | `60000` ms (all) |
+
+### Disabling Tracing
+
+Set `otelEndpoint` to empty string or omit it from CDK context. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, the OTel SDK is a complete no-op with zero performance overhead.
+
+### Local Development
+
+```bash
+docker compose --profile tracing up    # Starts Jaeger at localhost:16686
+```
+
+Traces are sent to the local Jaeger container. No Grafana Cloud credentials needed for local dev.
+
+### Cost (Grafana Cloud Free Tier)
+
+- 50 GB traces/month
+- 10,000 metrics series
+- 50 GB logs/month (if Loki added later)
+
+At 10% sampling rate with typical traffic, this is well within free tier.
 
 ## Gotchas
 
@@ -105,3 +185,4 @@ Context variables (passed via `-c key=value`):
 - Redis auth token is stored in Secrets Manager; ElastiCache requires `transit_encryption_enabled`.
 - WAF WebACL must be in `us-east-1` for CloudFront scope — handled by CDK cross-region if stack is elsewhere.
 - VPC has 2 NAT Gateways (one per AZ) — costs ~$65/mo each.
+- `OTEL_EXPORTER_OTLP_HEADERS` contains Grafana Cloud API key — always stored in Secrets Manager, never in plain-text env vars.

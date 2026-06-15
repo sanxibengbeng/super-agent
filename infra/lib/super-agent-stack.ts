@@ -13,6 +13,7 @@ export interface SuperAgentStackProps extends cdk.StackProps {
   envName: string;
   enableCdn?: boolean;
   enableAgentCore?: boolean;
+  otelEndpoint?: string;
 }
 
 export class SuperAgentStack extends cdk.Stack {
@@ -130,6 +131,7 @@ export class SuperAgentStack extends cdk.Stack {
       region: this.region,
       account: this.account,
       envName: env,
+      otelEndpoint: props.otelEndpoint,
     });
 
     // =========================================================================

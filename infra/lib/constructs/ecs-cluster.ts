@@ -29,7 +29,6 @@ export interface EcsClusterConstructProps {
   account: string;
   envName: string;
   otelEndpoint?: string;
-  otelHeaders?: string;
 }
 
 export class EcsClusterConstruct extends Construct {
@@ -106,7 +105,6 @@ export class EcsClusterConstruct extends Construct {
       AGENTCORE_RUNTIME_ARN: props.agentCoreRuntimeArn,
       S3FILES_FILESYSTEM_ID: props.s3FilesFileSystemId,
       OTEL_EXPORTER_OTLP_ENDPOINT: props.otelEndpoint ?? '',
-      OTEL_EXPORTER_OTLP_HEADERS: props.otelHeaders ?? '',
       OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
       OTEL_TRACES_SAMPLER_ARG: '0.1',
       OTEL_METRICS_EXPORT_INTERVAL: '60000',
@@ -117,6 +115,7 @@ export class EcsClusterConstruct extends Construct {
       DATABASE_URL: ecs.Secret.fromSecretsManager(props.dbSecret, 'connectionString'),
       JWT_SECRET: ecs.Secret.fromSecretsManager(props.appSecret),
       REDIS_PASSWORD: ecs.Secret.fromSecretsManager(props.redisAuthSecret),
+      OTEL_EXPORTER_OTLP_HEADERS: ecs.Secret.fromSecretsManager(props.appSecret, 'OTEL_EXPORTER_OTLP_HEADERS'),
     };
 
     const containerImage = ecs.ContainerImage.fromEcrRepository(props.backendRepo, 'latest');

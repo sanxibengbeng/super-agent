@@ -21,6 +21,7 @@ export class SecretsConstruct extends Construct {
           ANTHROPIC_API_KEY: '',
           LANGFUSE_SECRET_KEY: '',
           LANGFUSE_PUBLIC_KEY: '',
+          OTEL_EXPORTER_OTLP_HEADERS: '',
         }),
         generateStringKey: 'JWT_SECRET',
         excludePunctuation: true,
