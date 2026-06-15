@@ -15,9 +15,10 @@ import { config } from '../config/index.js';
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
 import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig, AnyMCPServerConfig } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
+import { trace, context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 
 interface AgentCoreEvent {
-  type: 'session_start' | 'assistant' | 'result' | 'error';
+  type: 'session_start' | 'assistant' | 'result' | 'error' | 'trace';
   session_id?: string;
   content?: Array<{
     type: string;
@@ -35,6 +36,16 @@ interface AgentCoreEvent {
   num_turns?: number;
   is_error?: boolean;
   result?: string;
+  spans?: Array<{
+    name: string;
+    traceId: string;
+    spanId: string;
+    parentSpanId: string;
+    startTimeMs: number;
+    endTimeMs: number;
+    attributes: Record<string, string | number | boolean>;
+    status: 'OK' | 'ERROR';
+  }>;
 }
 
 export class AgentCoreAgentRuntime implements AgentRuntime {
@@ -109,6 +120,9 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       }
     }
 
+    const traceCarrier: Record<string, string> = {};
+    propagation.inject(context.active(), traceCarrier);
+
     const payload = JSON.stringify({
       prompt: options.message,
       session_id: options.providerSessionId ?? undefined,
@@ -122,6 +136,8 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       mcp_servers: serializableMcpServers,
       workspace_access_point_arn: accessPoint.arn,
       execution_task_id: options.executionTaskId ?? undefined,
+      traceparent: traceCarrier.traceparent,
+      tracestate: traceCarrier.tracestate,
     });
 
     console.log(`[agentcore-runtime] S3 Files access point: ${accessPoint.arn}`);
@@ -337,6 +353,9 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       }
       case 'error':
         return { type: 'error', sessionId: event.session_id, code: event.code ?? 'AGENTCORE_ERROR', message: event.message ?? 'Unknown error' };
+      case 'trace':
+        this.rehydrateContainerSpans(event.spans);
+        return { type: 'assistant', content: [] };
       default:
         return { type: 'error', code: 'UNKNOWN_EVENT', message: `Unknown event type: ${(event as any).type}` };
     }
@@ -347,5 +366,25 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     const chunks: Buffer[] = [];
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));
     return Buffer.concat(chunks).toString('utf-8');
+  }
+
+  private rehydrateContainerSpans(spans: AgentCoreEvent['spans']): void {
+    if (!spans || spans.length === 0) return;
+    const rehydrator = trace.getTracer('agentcore-rehydrator');
+
+    for (const cs of spans) {
+      const span = rehydrator.startSpan(cs.name, {
+        kind: SpanKind.INTERNAL,
+        attributes: Object.fromEntries(
+          Object.entries(cs.attributes).map(([k, v]) => [`agentcore.${k}`, v])
+        ),
+      });
+
+      if (cs.status === 'ERROR') {
+        span.setStatus({ code: SpanStatusCode.ERROR });
+      }
+
+      span.end();
+    }
   }
 }
