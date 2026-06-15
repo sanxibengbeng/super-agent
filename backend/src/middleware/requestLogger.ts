@@ -5,6 +5,7 @@
  */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { trace } from '@opentelemetry/api';
 import { metricsCollector } from './metrics.js';
 
 /** Threshold in ms above which a request is logged at WARN level */
@@ -78,6 +79,7 @@ export async function requestLoggerHook(
 
   const context = extractRequestContext(request);
 
+  const incomingSpan = trace.getActiveSpan();
   request.log.info(
     {
       requestId: context.requestId,
@@ -85,6 +87,10 @@ export async function requestLoggerHook(
       url: context.url,
       userAgent: context.userAgent,
       ip: context.ip,
+      ...(incomingSpan ? {
+        trace_id: incomingSpan.spanContext().traceId,
+        span_id: incomingSpan.spanContext().spanId,
+      } : {}),
     },
     'Incoming request'
   );
@@ -118,6 +124,7 @@ export async function responseLoggerHook(
   // Record in metrics collector
   metricsCollector.onRequestEnd(statusCode, responseTimeMs);
 
+  const activeSpan = trace.getActiveSpan();
   const logPayload = {
     requestId: context.requestId,
     method: context.method,
@@ -126,6 +133,11 @@ export async function responseLoggerHook(
     responseTimeMs: Math.round(responseTimeMs * 100) / 100,
     userId: context.userId || undefined,
     orgId: context.orgId || undefined,
+    ...(activeSpan ? {
+      trace_id: activeSpan.spanContext().traceId,
+      span_id: activeSpan.spanContext().spanId,
+      trace_flags: activeSpan.spanContext().traceFlags,
+    } : {}),
   };
 
   // Warn on slow requests
