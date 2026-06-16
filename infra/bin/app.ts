@@ -14,7 +14,7 @@ const app = new cdk.App();
 
 const envName = app.node.tryGetContext('env') || 'dev';
 const region = app.node.tryGetContext('region') || process.env.CDK_DEFAULT_REGION || 'ap-southeast-1';
-const enableCdn = app.node.tryGetContext('enableCdn') === 'true';
+const enableCdn = app.node.tryGetContext('enableCdn') !== 'false';
 const enableAgentCore = app.node.tryGetContext('enableAgentCore') !== 'false';
 const otelEndpoint = app.node.tryGetContext('otelEndpoint') || '';
 const stackName = `SuperAgent-${envName}`;

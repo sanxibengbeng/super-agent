@@ -2,11 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Progressive Disclosure:** Each subdirectory has its own CLAUDE.md with deeper operational context:
-> - [`backend/CLAUDE.md`](../backend/CLAUDE.md) — Request flow, service/repository patterns, streaming, testing
-> - [`frontend/CLAUDE.md`](../frontend/CLAUDE.md) — Components, state management, path aliases, styling
-> - [`infra/CLAUDE.md`](../infra/CLAUDE.md) — CDK constructs, resource details, deployment scripts
-> - [`agentcore/CLAUDE.md`](../agentcore/CLAUDE.md) — Container runtime, SDK integration, build process
+> **Progressive Disclosure:** Load subdirectory CLAUDE.md only when the trigger matches — don't preload all of them.
+>
+> | File | Load when |
+> |------|-----------|
+> | [`backend/CLAUDE.md`](../backend/CLAUDE.md) | Editing `backend/src/` or running backend commands (dev, test, migrate, lint) |
+> | [`frontend/CLAUDE.md`](../frontend/CLAUDE.md) | Editing `frontend/src/` or running frontend commands |
+> | [`infra/CLAUDE.md`](../infra/CLAUDE.md) | Any CDK/AWS infrastructure change, `cdk diff/deploy/destroy` |
+> | [`agentcore/CLAUDE.md`](../agentcore/CLAUDE.md) | Building, pushing, or debugging the AgentCore container image |
 
 ## Project Overview
 
@@ -392,6 +395,16 @@ When a task requires external tooling, use this table to select the correct tool
 - If a command fails twice, report the error and ask — do not keep retrying silently.
 - Do not use Playwright MCP for browser testing — use Puppeteer or AgentCore browser use.
 - Never assume AWS service versions or features from training data — verify against `infra/` source or docs.
+- Do not add "limitations", "considerations", "next steps", or "takeaway" sections to responses unless explicitly requested.
+
+### Trust Boundaries
+
+| Operation | Required action before executing |
+|-----------|----------------------------------|
+| `cdk deploy` or `cdk destroy` (any environment) | Run `cdk diff` first, show output, wait for explicit confirmation |
+| `docker push` to ECR (`873543029686.dkr.ecr.*`) | State the image tag being pushed, confirm before executing |
+| Any `aws` CLI write in account `873543029686` | State the operation and its effect, confirm before executing |
+| `git push --force` or `git reset --hard` | Blocked by settings.json deny list — do not attempt |
 
 ---
 

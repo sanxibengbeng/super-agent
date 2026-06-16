@@ -9,6 +9,10 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import * as dotenv from 'dotenv';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import * as bcrypt from 'bcryptjs';
 
 // Load environment variables
 dotenv.config();
@@ -483,6 +487,57 @@ async function main() {
   ]);
   console.log(`Created ${documents.length} documents`);
 
+  // --- Seed System Copilots ---
+  console.log('\n🤖 Seeding system copilots...');
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const seedsDir = join(__dirname, '..', 'seeds', 'system-copilots');
+  const copilotFiles = ['workflow-copilot.json', 'scope-copilot.json', 'claude-code-agent.json'];
+
+  for (const file of copilotFiles) {
+    const template = JSON.parse(readFileSync(join(seedsDir, file), 'utf-8'));
+    const existing = await prisma.business_scopes.findFirst({
+      where: { organization_id: orgId, name: template.scope.name, scope_type: 'digital_twin', deleted_at: null },
+    });
+    if (existing) {
+      console.log(`   Copilot "${template.scope.name}" already exists, skipping.`);
+      continue;
+    }
+    const copilotScope = await prisma.business_scopes.create({
+      data: {
+        organization_id: orgId,
+        name: template.scope.name,
+        description: template.scope.description,
+        icon: template.scope.icon,
+        color: template.scope.color,
+        scope_type: 'digital_twin',
+      },
+    });
+    await prisma.agents.create({
+      data: {
+        organization_id: orgId,
+        business_scope_id: copilotScope.id,
+        name: template.agent.name,
+        display_name: template.agent.displayName,
+        role: template.agent.role,
+        system_prompt: template.agent.systemPrompt,
+        origin: template.agent.origin,
+        status: 'active',
+        model_config: template.agent.modelConfig as object,
+      },
+    });
+    console.log(`   Created copilot: ${template.scope.name}`);
+  }
+
+  // --- Set admin password ---
+  console.log('\n🔑 Setting admin password...');
+  const adminHash = await bcrypt.hash('Admin1234!', 10);
+  await prisma.profiles.updateMany({
+    where: { username: 'admin@example.com', password_hash: null },
+    data: { password_hash: adminHash },
+  });
+  console.log('   Admin login: admin@example.com / Admin1234!');
+
   console.log('\n✅ Database seeded successfully!');
   console.log('\n📋 Summary:');
   console.log(`   Organization: ${org.name}`);
@@ -493,6 +548,8 @@ async function main() {
   console.log(`   Tasks: ${tasks.length}`);
   console.log(`   MCP Servers: ${mcpServers.length}`);
   console.log(`   Documents: ${documents.length}`);
+  console.log(`   System Copilots: ${copilotFiles.length}`);
+  console.log(`   Admin Password: set`);
 }
 
 main()

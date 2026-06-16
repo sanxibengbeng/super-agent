@@ -17,6 +17,32 @@ export default defineConfig({
       '@i18n': path.resolve(__dirname, './src/i18n'),
     },
   },
+  build: {
+    sourcemap: false,
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-xyflow': ['@xyflow/react'],
+          'vendor-ui': ['lucide-react', 'react-markdown', 'remark-gfm'],
+          'vendor-hljs': ['highlight.js/lib/core'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+        },
+      },
+    },
+  },
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-router-dom',
+      '@xyflow/react',
+      'lucide-react',
+      'react-markdown',
+      'remark-gfm',
+    ],
+  },
   server: {
     host: '0.0.0.0',
     proxy: {

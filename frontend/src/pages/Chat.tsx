@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { Send, ChevronDown, AlertCircle, X, Bot, Layers, MessageSquare, File as FileIcon, Save, Eye, Pencil, Square, Paperclip, Upload, Trash2, Globe, RefreshCw, Brain, Download, Users, MessageCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { useTranslation } from '@/i18n'
 import { MessageList, QuickQuestions, WorkspaceExplorer } from '@/components'
@@ -75,21 +74,50 @@ function getLanguageForExt(ext: string): string | undefined {
   return EXT_TO_LANG[ext]
 }
 
-/** Highlight code content using highlight.js. Returns HTML string. */
+/** Highlight code content using highlight.js (loaded on demand). Returns HTML string. */
 function useHighlightedCode(code: string | null, ext: string): string {
-  return useMemo(() => {
-    if (!code) return ''
-    const lang = getLanguageForExt(ext)
-    try {
-      if (lang && hljs.getLanguage(lang)) {
-        return hljs.highlight(code, { language: lang }).value
+  const [html, setHtml] = useState('')
+  useEffect(() => {
+    if (!code) { setHtml(''); return }
+    let cancelled = false
+    import('highlight.js/lib/core').then(async ({ default: hljs }) => {
+      const [js, ts, py, bash, json, css, html, sql, yaml, xml] = await Promise.all([
+        import('highlight.js/lib/languages/javascript'),
+        import('highlight.js/lib/languages/typescript'),
+        import('highlight.js/lib/languages/python'),
+        import('highlight.js/lib/languages/bash'),
+        import('highlight.js/lib/languages/json'),
+        import('highlight.js/lib/languages/css'),
+        import('highlight.js/lib/languages/xml'),
+        import('highlight.js/lib/languages/sql'),
+        import('highlight.js/lib/languages/yaml'),
+        import('highlight.js/lib/languages/xml'),
+      ])
+      hljs.registerLanguage('javascript', js.default)
+      hljs.registerLanguage('typescript', ts.default)
+      hljs.registerLanguage('python', py.default)
+      hljs.registerLanguage('bash', bash.default)
+      hljs.registerLanguage('json', json.default)
+      hljs.registerLanguage('css', css.default)
+      hljs.registerLanguage('html', html.default)
+      hljs.registerLanguage('sql', sql.default)
+      hljs.registerLanguage('yaml', yaml.default)
+      hljs.registerLanguage('xml', xml.default)
+      if (cancelled) return
+      const lang = getLanguageForExt(ext)
+      try {
+        if (lang && hljs.getLanguage(lang)) {
+          setHtml(hljs.highlight(code, { language: lang }).value)
+        } else {
+          setHtml(hljs.highlightAuto(code).value)
+        }
+      } catch {
+        setHtml(code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
       }
-      // Auto-detect as fallback
-      return hljs.highlightAuto(code).value
-    } catch {
-      return code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    }
+    })
+    return () => { cancelled = true }
   }, [code, ext])
+  return html
 }
 
 function MarkdownPreview({ content }: { content: string }) {

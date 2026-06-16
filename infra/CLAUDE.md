@@ -85,7 +85,7 @@ App entry: `npx ts-node --prefer-ts-exts bin/app.ts`
 
 Context variables (passed via `-c key=value`):
 - `stackName` — Stack name (default: SuperAgent)
-- `enableCdn` — "true" to deploy CloudFront + S3 frontend
+- `enableCdn` — Deploy CloudFront + S3 frontend (default: true; set "false" to disable)
 - `domainName` — Custom domain (required when enableCdn=true)
 - `hostedZoneId` — Route53 zone (required when enableCdn=true)
 - `authMode` — "cognito" | "local" (default: local)
@@ -93,9 +93,19 @@ Context variables (passed via `-c key=value`):
 
 ## Deployment Scripts (`scripts/`)
 
-- `deploy.sh` — Reads stack outputs, builds + deploys backend/frontend, runs migrations
-- `deploy-full.sh` — Full CDK deploy + code deploy + AgentCore setup (ECR build, runtime creation)
-- Flags: `--skip-frontend`, `--skip-backend`, `--env-file`, `--cognito-password`
+### `deploy-ecs.sh` (Primary — ECS Fargate)
+```bash
+./scripts/deploy-ecs.sh                    # Full deploy (infra + backend + frontend)
+./scripts/deploy-ecs.sh --skip-infra       # Code deploy only (backend + frontend)
+./scripts/deploy-ecs.sh --backend-only     # Backend image build + push + ECS restart
+./scripts/deploy-ecs.sh --frontend-only    # Frontend build + S3 sync + CF invalidation
+./scripts/deploy-ecs.sh --dry-run          # Preview what would happen
+```
+Options: `--env <name>`, `--region <region>`, `--otel-endpoint <url>`, `--skip-infra`, `--skip-backend`, `--skip-frontend`
+
+### Legacy (EC2-based, retained for reference)
+- `deploy.sh` — EC2 deploy via SSM tunnel (unused since ECS migration)
+- `deploy-full.sh` — EC2 + AgentCore setup (unused since ECS migration)
 
 ## Observability (Distributed Tracing)
 

@@ -55,6 +55,9 @@ export class CdnConstruct extends Construct {
               managedRuleGroupStatement: {
                 vendorName: 'AWS',
                 name: 'AWSManagedRulesCommonRuleSet',
+                excludedRules: [
+                  { name: 'SizeRestrictions_BODY' },
+                ],
               },
             },
             overrideAction: { none: {} },
@@ -130,14 +133,54 @@ export class CdnConstruct extends Construct {
       httpPort: 80,
     });
 
+    // Security response headers policy
+    const responseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+      responseHeadersPolicyName: 'SuperAgentSecurityHeaders',
+      securityHeadersBehavior: {
+        strictTransportSecurity: {
+          accessControlMaxAge: Duration.seconds(31536000),
+          includeSubdomains: true,
+          preload: true,
+          override: true,
+        },
+        contentTypeOptions: {
+          override: true,
+        },
+        frameOptions: {
+          frameOption: cloudfront.HeadersFrameOption.DENY,
+          override: true,
+        },
+        referrerPolicy: {
+          referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+          override: true,
+        },
+        xssProtection: {
+          protection: true,
+          modeBlock: true,
+          override: true,
+        },
+      },
+      customHeadersBehavior: {
+        customHeaders: [
+          {
+            header: 'Permissions-Policy',
+            value: 'geolocation=(), microphone=(), camera=()',
+            override: true,
+          },
+        ],
+      },
+    });
+
     // CloudFront Distribution — S3 SPA as default, ALB for API paths
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(props.frontendBucket, {
           originAccessControl: oac,
         }),
+        compress: true,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        responseHeadersPolicy,
       },
       additionalBehaviors: {
         '/api/*': {
