@@ -167,15 +167,10 @@ export class AgentCoreConstruct extends Construct {
       })
     );
 
-    // Grant S3 Files access point permissions (required for filesystem mount)
+    // Grant S3 Files permissions (required for filesystem mount in AgentCore)
     this.executionRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: [
-          's3files:GetAccessPoint',
-          's3files:CreateAccessPoint',
-          's3files:DeleteAccessPoint',
-          's3files:DescribeAccessPoint',
-        ],
+        actions: ['s3files:*'],
         resources: [`arn:aws:s3files:${props.region}:${props.account}:file-system/*`],
       })
     );
