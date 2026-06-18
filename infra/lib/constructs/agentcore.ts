@@ -167,6 +167,19 @@ export class AgentCoreConstruct extends Construct {
       })
     );
 
+    // Grant S3 Files access point permissions (required for filesystem mount)
+    this.executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          's3files:GetAccessPoint',
+          's3files:CreateAccessPoint',
+          's3files:DeleteAccessPoint',
+          's3files:DescribeAccessPoint',
+        ],
+        resources: [`arn:aws:s3files:${props.region}:${props.account}:file-system/*`],
+      })
+    );
+
     // Grant CloudWatch Logs write permissions
     this.executionRole.addToPolicy(
       new iam.PolicyStatement({
