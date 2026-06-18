@@ -121,13 +121,14 @@ export class AgentCoreConstruct extends Construct {
 
     // S3 Files Mount Targets (one per private subnet, required for VPC mode)
     const privateSubnets = props.vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS });
-    privateSubnets.subnetIds.forEach((subnetId, index) => {
+    const mountTargets = privateSubnets.subnetIds.map((subnetId, index) => {
       const mt = new CfnMountTarget(this, `MountTarget${index}`, {
         fileSystemId: this.fileSystem.ref,
         subnetId,
         securityGroups: [props.ecsSecurityGroup.securityGroupId],
       });
       mt.addDependency(this.fileSystem);
+      return mt;
     });
 
     // AgentCore Execution Role - assumed by bedrock-agentcore.amazonaws.com (with confused deputy protection)
@@ -245,5 +246,6 @@ export class AgentCoreConstruct extends Construct {
     this.runtime.node.addDependency(this.executionRole);
     this.runtime.node.addDependency(this.fileSystem);
     this.runtime.node.addDependency(this.accessPoint);
+    mountTargets.forEach(mt => this.runtime.node.addDependency(mt));
   }
 }
