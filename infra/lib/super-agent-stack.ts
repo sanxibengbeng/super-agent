@@ -114,6 +114,8 @@ export class SuperAgentStack extends cdk.Stack {
       agentCore = new AgentCoreConstruct(this, 'AgentCore', {
         workspaceBucket,
         containerUri: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${agentcoreRepo.repositoryName}:latest`,
+        vpc: network.vpc,
+        ecsSecurityGroup: network.ecsSecurityGroup,
         region: this.region,
         account: this.account,
       });

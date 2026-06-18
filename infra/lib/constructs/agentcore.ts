@@ -1,4 +1,5 @@
 import { Construct } from 'constructs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { CfnFileSystem, CfnAccessPoint } from 'aws-cdk-lib/aws-s3files';
@@ -7,6 +8,8 @@ import { CfnRuntime } from 'aws-cdk-lib/aws-bedrockagentcore';
 export interface AgentCoreConstructProps {
   workspaceBucket: s3.IBucket;
   containerUri: string;
+  vpc: ec2.IVpc;
+  ecsSecurityGroup: ec2.ISecurityGroup;
   region: string;
   account: string;
 }
@@ -189,7 +192,11 @@ export class AgentCoreConstruct extends Construct {
         },
       },
       networkConfiguration: {
-        networkMode: 'PUBLIC',
+        networkMode: 'VPC',
+        networkModeConfig: {
+          subnets: props.vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
+          securityGroups: [props.ecsSecurityGroup.securityGroupId],
+        },
       },
       filesystemConfigurations: [
         {
