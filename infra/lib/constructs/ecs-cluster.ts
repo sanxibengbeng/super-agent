@@ -29,6 +29,7 @@ export interface EcsClusterConstructProps {
   account: string;
   envName: string;
   otelEndpoint?: string;
+  agentRuntime?: string;
 }
 
 export class EcsClusterConstruct extends Construct {
@@ -108,6 +109,7 @@ export class EcsClusterConstruct extends Construct {
       OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
       OTEL_TRACES_SAMPLER_ARG: '0.1',
       OTEL_METRICS_EXPORT_INTERVAL: '60000',
+      AGENT_RUNTIME: props.agentRuntime || 'claude',
     };
 
     // Shared secrets from Secrets Manager
