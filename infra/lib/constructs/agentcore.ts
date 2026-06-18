@@ -150,6 +150,20 @@ export class AgentCoreConstruct extends Construct {
       })
     );
 
+    // Grant ECR pull permissions (AgentCore needs to pull the container image)
+    this.executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ecr:GetAuthorizationToken'],
+        resources: ['*'],
+      })
+    );
+    this.executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ecr:BatchGetImage', 'ecr:GetDownloadUrlForLayer', 'ecr:BatchCheckLayerAvailability'],
+        resources: [`arn:aws:ecr:${props.region}:${props.account}:repository/*`],
+      })
+    );
+
     // Grant CloudWatch Logs write permissions
     this.executionRole.addToPolicy(
       new iam.PolicyStatement({
