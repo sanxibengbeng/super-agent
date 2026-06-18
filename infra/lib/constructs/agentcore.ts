@@ -2,7 +2,7 @@ import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import { CfnFileSystem, CfnAccessPoint } from 'aws-cdk-lib/aws-s3files';
+import { CfnFileSystem, CfnAccessPoint, CfnMountTarget } from 'aws-cdk-lib/aws-s3files';
 import { CfnRuntime } from 'aws-cdk-lib/aws-bedrockagentcore';
 
 export interface AgentCoreConstructProps {
@@ -118,6 +118,17 @@ export class AgentCoreConstruct extends Construct {
       fileSystemId: this.fileSystem.ref,
     });
     this.accessPoint.addDependency(this.fileSystem);
+
+    // S3 Files Mount Targets (one per private subnet, required for VPC mode)
+    const privateSubnets = props.vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS });
+    privateSubnets.subnetIds.forEach((subnetId, index) => {
+      const mt = new CfnMountTarget(this, `MountTarget${index}`, {
+        fileSystemId: this.fileSystem.ref,
+        subnetId,
+        securityGroups: [props.ecsSecurityGroup.securityGroupId],
+      });
+      mt.addDependency(this.fileSystem);
+    });
 
     // AgentCore Execution Role - assumed by bedrock-agentcore.amazonaws.com (with confused deputy protection)
     this.executionRole = new iam.Role(this, 'ExecutionRole', {
