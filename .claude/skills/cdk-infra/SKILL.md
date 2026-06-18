@@ -162,8 +162,12 @@ infra/
 │   ├── super-agent-stack.ts    # Main stack (S3, ECR, construct composition)
 │   └── constructs/             # 6 construct files (vpc, data-layer, secrets, agentcore, ecs-cluster, cdn)
 ├── scripts/
-│   ├── deploy.sh              # Application deployment orchestrator
-│   └── deploy-full.sh         # Full infra + app + AgentCore deployment
+│   ├── lib/common.sh          # Shared utilities (logging, AWS helpers)
+│   ├── deploy-infra.sh        # CDK diff → confirm → deploy
+│   ├── deploy-backend.sh      # Docker build → ECR push → ECS rolling deploy
+│   ├── deploy-frontend.sh     # Vite build → S3 sync → CF invalidation
+│   ├── deploy-migrate.sh      # ECS Exec → prisma migrate deploy
+│   └── deploy-all.sh          # Orchestrator (infra → backend → frontend → migrate)
 ├── lambda/connectors/         # Lambda handlers for data connectors
 ├── cdk.json                   # CDK config (context defaults)
 ├── package.json
@@ -180,4 +184,7 @@ infra/
 | Destroy all | `cd infra && npx cdk destroy --all` |
 | Bootstrap | `cd infra && npx cdk bootstrap` |
 | List stacks | `cd infra && npx cdk list` |
-| Full deploy | `cd infra && ./scripts/deploy-full.sh` |
+| Deploy infra | `cd infra && ./scripts/deploy-infra.sh --env prod` |
+| Deploy backend | `cd infra && ./scripts/deploy-backend.sh --env prod` |
+| Deploy frontend | `cd infra && ./scripts/deploy-frontend.sh --env prod` |
+| Full deploy | `cd infra && ./scripts/deploy-all.sh --env prod` |

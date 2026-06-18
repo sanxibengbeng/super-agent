@@ -93,19 +93,29 @@ Context variables (passed via `-c key=value`):
 
 ## Deployment Scripts (`scripts/`)
 
-### `deploy-ecs.sh` (Primary — ECS Fargate)
-```bash
-./scripts/deploy-ecs.sh                    # Full deploy (infra + backend + frontend)
-./scripts/deploy-ecs.sh --skip-infra       # Code deploy only (backend + frontend)
-./scripts/deploy-ecs.sh --backend-only     # Backend image build + push + ECS restart
-./scripts/deploy-ecs.sh --frontend-only    # Frontend build + S3 sync + CF invalidation
-./scripts/deploy-ecs.sh --dry-run          # Preview what would happen
-```
-Options: `--env <name>`, `--region <region>`, `--otel-endpoint <url>`, `--skip-infra`, `--skip-backend`, `--skip-frontend`
+### Layered Scripts (production)
 
-### Legacy (EC2-based, retained for reference)
-- `deploy.sh` — EC2 deploy via SSM tunnel (unused since ECS migration)
-- `deploy-full.sh` — EC2 + AgentCore setup (unused since ECS migration)
+| Script | Purpose | Key flags |
+|--------|---------|-----------|
+| `lib/common.sh` | Shared utilities (logging, AWS helpers, health check) | — |
+| `deploy-infra.sh` | CDK diff → confirm → deploy | `--env`, `--region`, `--dry-run`, `--context` |
+| `deploy-backend.sh` | Docker build → ECR push → ECS rolling deploy | `--env`, `--region`, `--dry-run` |
+| `deploy-frontend.sh` | Vite build → S3 sync → CloudFront invalidation | `--env`, `--region`, `--dry-run` |
+| `deploy-migrate.sh` | ECS Exec → `npx prisma migrate deploy` | `--env`, `--region`, `--dry-run` |
+| `deploy-all.sh` | Orchestrator: infra → backend → frontend → migrate → health | `--skip-infra`, `--skip-backend`, `--skip-frontend`, `--skip-migrate` |
+
+```bash
+# Typical usage
+./scripts/deploy-infra.sh --env prod              # Infra only (shows diff, asks y/N)
+./scripts/deploy-backend.sh --env prod            # Backend code deploy
+./scripts/deploy-frontend.sh --env prod           # Frontend code deploy
+./scripts/deploy-all.sh --env prod --skip-infra   # App-only full deploy
+```
+
+### Legacy (retained for reference)
+- `setup-github-secrets.sh` — GitHub Actions secrets setup
+- `setup-litellm.sh` — LiteLLM proxy setup
+- `user-data.sh` — EC2 user-data (unused since ECS migration)
 
 ## Observability (Distributed Tracing)
 
