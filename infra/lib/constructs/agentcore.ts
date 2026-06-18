@@ -21,24 +21,93 @@ export class AgentCoreConstruct extends Construct {
   constructor(scope: Construct, id: string, props: AgentCoreConstructProps) {
     super(scope, id);
 
-    // S3 Files Role - assumed by s3files.amazonaws.com (with confused deputy protection)
+    // S3 Files Role - assumed by the S3 Files service to sync the file system
+    // with the backing bucket. S3 Files is implemented on top of Amazon EFS, so
+    // the trust principal is 'elasticfilesystem.amazonaws.com' (NOT
+    // 's3files.amazonaws.com', which IAM rejects as an invalid principal, nor
+    // 'bedrock-agentcore.amazonaws.com', which S3 Files cannot assume).
+    // Trust + permission policies follow the S3 Files prerequisites doc:
+    // https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-files-prereq-policies.html
     this.s3FilesRole = new iam.Role(this, 'S3FilesRole', {
-      assumedBy: new iam.ServicePrincipal('s3files.amazonaws.com', {
+      assumedBy: new iam.ServicePrincipal('elasticfilesystem.amazonaws.com', {
         conditions: {
           StringEquals: {
             'aws:SourceAccount': props.account,
           },
+          ArnLike: {
+            'aws:SourceArn': `arn:aws:s3files:${props.region}:${props.account}:file-system/*`,
+          },
         },
       }),
-      description: 'Role for S3 Files to access workspace bucket',
+      description: 'Role assumed by S3 Files to sync the workspace bucket',
     });
 
-    props.workspaceBucket.grantReadWrite(this.s3FilesRole);
+    const workspaceBucketArn = props.workspaceBucket.bucketArn;
+
+    // S3 bucket/object permissions (incl. ListBucketVersions required by S3 Files sync).
+    this.s3FilesRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'S3BucketPermissions',
+        actions: ['s3:ListBucket', 's3:ListBucketVersions'],
+        resources: [workspaceBucketArn],
+        conditions: { StringEquals: { 'aws:ResourceAccount': props.account } },
+      })
+    );
+    this.s3FilesRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'S3ObjectPermissions',
+        actions: [
+          's3:AbortMultipartUpload',
+          's3:DeleteObject*',
+          's3:GetObject*',
+          's3:List*',
+          's3:PutObject*',
+        ],
+        resources: [`${workspaceBucketArn}/*`],
+        conditions: { StringEquals: { 'aws:ResourceAccount': props.account } },
+      })
+    );
+
+    // EventBridge rules that S3 Files manages to detect bucket changes.
+    this.s3FilesRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'EventBridgeManage',
+        actions: [
+          'events:DeleteRule',
+          'events:DisableRule',
+          'events:EnableRule',
+          'events:PutRule',
+          'events:PutTargets',
+          'events:RemoveTargets',
+        ],
+        resources: ['arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*'],
+        conditions: {
+          StringEquals: { 'events:ManagedBy': 'elasticfilesystem.amazonaws.com' },
+        },
+      })
+    );
+    this.s3FilesRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'EventBridgeRead',
+        actions: [
+          'events:DescribeRule',
+          'events:ListRuleNamesByTarget',
+          'events:ListRules',
+          'events:ListTargetsByRule',
+        ],
+        resources: ['arn:aws:events:*:*:rule/*'],
+      })
+    );
 
     // S3 Files FileSystem
     this.fileSystem = new CfnFileSystem(this, 'FileSystem', {
-      bucket: props.workspaceBucket.bucketName,
+      // CfnFileSystem.Bucket must be a full S3 ARN (pattern ^arn:aws[a-zA-Z0-9-]*:s3:::.+$),
+      // not a bare bucket name.
+      bucket: props.workspaceBucket.bucketArn,
       roleArn: this.s3FilesRole.roleArn,
+      // The workspace bucket already contains objects; acknowledge the
+      // non-empty-bucket warning so filesystem creation isn't blocked.
+      acceptBucketWarning: true,
     });
 
     // S3 Files Access Point (required for AgentCore filesystem mount)
@@ -97,7 +166,8 @@ export class AgentCoreConstruct extends Construct {
 
     // AgentCore Runtime
     this.runtime = new CfnRuntime(this, 'Runtime', {
-      agentRuntimeName: 'super-agent-runtime',
+      // agentRuntimeName must match [a-zA-Z][a-zA-Z0-9_]{0,47} — no hyphens.
+      agentRuntimeName: 'super_agent_runtime',
       roleArn: this.executionRole.roleArn,
       agentRuntimeArtifact: {
         containerConfiguration: {

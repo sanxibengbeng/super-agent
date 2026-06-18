@@ -23,6 +23,10 @@
 - `backend/src/__tests__/utils/deterministic-session.test.ts` — Tests for session ID generator
 
 ### Modified Files
+- `backend/src/schemas/agent.schema.ts` — Add `system_seed` to agent origin enum
+- `backend/src/schemas/chat.schema.ts` — Add `source` field to session creation schema
+- `backend/src/services/chat.service.ts` — Create-or-resume for deterministic session IDs, source field passthrough
+- `backend/src/repositories/chat.repository.ts` — Accept optional `id` in `createForUser`
 - `backend/src/services/organization.service.ts` — Call seed injection on org creation
 - `backend/src/app.ts` — Call seed injection on startup for existing orgs
 - `backend/src/routes/workflows.routes.ts` — Replace `/generate`, `/modify`, `/patch` with chat-based routes
@@ -230,6 +234,23 @@ git commit -m "feat: add seed templates for workflow-copilot and scope-copilot"
 **Files:**
 - Create: `backend/src/services/seed-copilot.service.ts`
 - Create: `backend/src/__tests__/services/seed-copilot.service.test.ts`
+- Modify: `backend/src/schemas/agent.schema.ts`
+
+- [ ] **Step 0: Add `system_seed` to agent origin enum**
+
+The plan introduces `origin: 'system_seed'` for seed copilot agents. The Zod enum in `backend/src/schemas/agent.schema.ts` line 36 currently is:
+
+```typescript
+origin: z.enum(['scope_generation', 'manual', 'chat_created', 'cloned', 'imported', 'digital_twin']).default('scope_generation'),
+```
+
+Add `'system_seed'` to the enum:
+
+```typescript
+origin: z.enum(['scope_generation', 'manual', 'chat_created', 'cloned', 'imported', 'digital_twin', 'system_seed']).default('scope_generation'),
+```
+
+Even though the seed service creates agents directly via Prisma (bypassing Zod), this ensures the agent API's list/get endpoints can serialize these agents without schema validation errors, and any future admin UI that edits agents will recognize the origin value.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -247,11 +268,11 @@ const mockPrisma = {
   agents: {
     findFirst: vi.fn(),
     create: vi.fn(),
-    updateMany: vi.fn(),
   },
   organizations: {
     findMany: vi.fn(),
   },
+  $executeRaw: vi.fn(),
 };
 
 vi.mock('../../config/database.js', () => ({
@@ -292,15 +313,21 @@ describe('SeedCopilotService', () => {
 
   describe('upgradeSeedCopilots', () => {
     it('upgrades agents that have not been customized', async () => {
-      const now = new Date('2026-01-01T00:00:00Z');
-      mockPrisma.agents.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.$executeRaw.mockResolvedValue(1);
       mockPrisma.business_scopes.findFirst.mockResolvedValue({ id: 'scope-1' });
 
       await service.upgradeSeedCopilots('org-1');
 
-      expect(mockPrisma.agents.updateMany).toHaveBeenCalled();
-      const call = mockPrisma.agents.updateMany.mock.calls[0][0];
-      expect(call.where.origin).toBe('system_seed');
+      // Should execute raw SQL for each seed template (2 copilots)
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips upgrade when scope does not exist', async () => {
+      mockPrisma.business_scopes.findFirst.mockResolvedValue(null);
+
+      await service.upgradeSeedCopilots('org-1');
+
+      expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
     });
   });
 });
@@ -361,44 +388,56 @@ export class SeedCopilotService {
     organizationId: string,
     template: SeedTemplate,
   ): Promise<void> {
+    // Check for existing scope (include soft-deleted: no deleted_at filter)
     const existing = await prisma.business_scopes.findFirst({
       where: {
         organization_id: organizationId,
         name: template.scope.name,
-        scope_type: 'digital_twin',
       },
     });
 
     if (existing) return;
 
-    const scope = await prisma.business_scopes.create({
-      data: {
-        organization_id: organizationId,
-        name: template.scope.name,
-        description: template.scope.description,
-        icon: template.scope.icon,
-        color: template.scope.color,
-        scope_type: 'digital_twin',
-      },
-    });
+    // Use try/catch to handle TOCTOU race: if two concurrent processes
+    // both pass the findFirst check, the second create will fail on
+    // the unique_scope_name_per_org constraint.
+    try {
+      const scope = await prisma.business_scopes.create({
+        data: {
+          organization_id: organizationId,
+          name: template.scope.name,
+          description: template.scope.description,
+          icon: template.scope.icon,
+          color: template.scope.color,
+          scope_type: 'digital_twin',
+        },
+      });
 
-    await prisma.agents.create({
-      data: {
-        organization_id: organizationId,
-        business_scope_id: scope.id,
-        name: template.agent.name,
-        display_name: template.agent.displayName,
-        role: template.agent.role,
-        system_prompt: template.agent.systemPrompt,
-        origin: template.agent.origin,
-        status: 'active',
-        model_config: template.agent.modelConfig,
-      },
-    });
+      await prisma.agents.create({
+        data: {
+          organization_id: organizationId,
+          business_scope_id: scope.id,
+          name: template.agent.name,
+          display_name: template.agent.displayName,
+          role: template.agent.role,
+          system_prompt: template.agent.systemPrompt,
+          origin: template.agent.origin,
+          status: 'active',
+          model_config: template.agent.modelConfig,
+        },
+      });
 
-    console.log(
-      `[seed-copilot] Created "${template.scope.name}" for org ${organizationId}`,
-    );
+      console.log(
+        `[seed-copilot] Created "${template.scope.name}" for org ${organizationId}`,
+      );
+    } catch (err: any) {
+      // P2002 = Prisma unique constraint violation — another process already created it
+      if (err.code === 'P2002') {
+        console.log(`[seed-copilot] "${template.scope.name}" already exists for org ${organizationId} (concurrent creation)`);
+        return;
+      }
+      throw err;
+    }
   }
 
   async upgradeSeedCopilots(organizationId: string): Promise<void> {
@@ -415,22 +454,22 @@ export class SeedCopilotService {
 
       if (!scope) continue;
 
-      // Only upgrade agents that have NOT been customized (updated_at == created_at)
-      await prisma.agents.updateMany({
-        where: {
-          organization_id: organizationId,
-          business_scope_id: scope.id,
-          name: template.agent.name,
-          origin: 'system_seed',
-          updated_at: { equals: prisma.agents.fields.created_at },
-        },
-        data: {
-          system_prompt: template.agent.systemPrompt,
-          role: template.agent.role,
-          display_name: template.agent.displayName,
-          model_config: template.agent.modelConfig,
-        },
-      });
+      // Only upgrade agents that have NOT been customized (updated_at == created_at).
+      // Prisma doesn't support column-to-column comparison in where clauses,
+      // so we use $executeRaw.
+      await prisma.$executeRaw`
+        UPDATE agents
+        SET system_prompt = ${template.agent.systemPrompt},
+            role = ${template.agent.role},
+            display_name = ${template.agent.displayName},
+            model_config = ${JSON.stringify(template.agent.modelConfig)}::jsonb,
+            updated_at = NOW()
+        WHERE organization_id = ${organizationId}::uuid
+          AND business_scope_id = ${scope.id}::uuid
+          AND name = ${template.agent.name}
+          AND origin = 'system_seed'
+          AND updated_at = created_at
+      `;
     }
   }
 
@@ -508,15 +547,19 @@ git commit -m "feat: inject seed copilots on org creation and app startup"
 
 ---
 
-## Task 5: Add `source` Field Support to Session Creation
+## Task 5: Add `source` Field and Deterministic Session ID Support
 
 **Files:**
 - Modify: `backend/src/schemas/chat.schema.ts`
 - Modify: `backend/src/services/chat.service.ts`
+- Modify: `backend/src/repositories/chat.repository.ts`
 
-The current `createSession` method hardcodes `source: 'user'`. Copilot sessions need to set `source` to `workflow_copilot` or `scope_copilot`. This is a minimal change — add `source` as an optional field.
+Two problems need fixing before copilot routes can work:
 
-- [ ] **Step 1: Add `source` to the schema**
+1. **`source` field:** `createSession` hardcodes `source: 'user'`. Copilot sessions need `workflow_copilot` or `scope_copilot`.
+2. **Deterministic session IDs:** Copilot routes compute a deterministic `sessionId` and pass it via `options.sessionId`. But `prepareScopeSession` (line 883) does `getSessionById(sessionId)` when `sessionId` is present — which throws `notFound` for a brand-new deterministic ID. We need a **create-or-resume** path.
+
+- [ ] **Step 1: Add `source` to the session creation schema**
 
 In `backend/src/schemas/chat.schema.ts`, add to `createChatSessionSchema`:
 
@@ -524,7 +567,7 @@ In `backend/src/schemas/chat.schema.ts`, add to `createChatSessionSchema`:
 source: z.string().max(20).optional(),
 ```
 
-- [ ] **Step 2: Pass `source` through in createSession**
+- [ ] **Step 2: Pass `source` through in `createSession`**
 
 In `backend/src/services/chat.service.ts` line 147, change:
 
@@ -538,16 +581,134 @@ to:
 source: data.source ?? 'user',
 ```
 
-- [ ] **Step 3: Verify build**
+- [ ] **Step 3: Allow `createForUser` to accept a custom `id`**
+
+In `backend/src/repositories/chat.repository.ts`, the `createForUser` method signature is:
+
+```typescript
+async createForUser(
+  data: Omit<ChatSessionEntity, 'id' | 'organization_id' | 'user_id' | 'created_at' | 'updated_at'>,
+  organizationId: string,
+  userId: string
+): Promise<ChatSessionEntity>
+```
+
+Change the type to also accept an optional `id`:
+
+```typescript
+async createForUser(
+  data: Omit<ChatSessionEntity, 'id' | 'organization_id' | 'user_id' | 'created_at' | 'updated_at'> & { id?: string },
+  organizationId: string,
+  userId: string
+): Promise<ChatSessionEntity> {
+  return this.getModel().create({
+    data: {
+      ...data,
+      organization_id: organizationId,
+      user_id: userId,
+    },
+  });
+}
+```
+
+Prisma's `@default(uuid())` only fires when `id` is not supplied, so passing an explicit `id` uses that value instead.
+
+- [ ] **Step 4: Add create-or-resume logic in `prepareScopeSession`**
+
+In `backend/src/services/chat.service.ts`, the `prepareScopeSession` method (around line 866) has:
+
+```typescript
+if (!sessionId) {
+  session = await this.createSession(
+    { business_scope_id: scopeId, agent_id: selectedAgentId, context: options.context ?? {} },
+    organizationId,
+    userId,
+  );
+  sessionId = session.id;
+  // ... provision workspace
+} else {
+  session = await this.getSessionById(sessionId, organizationId);
+  // ... refresh workspace
+}
+```
+
+Change the `else` branch to create-or-resume:
+
+```typescript
+} else {
+  // Create-or-resume: deterministic session IDs may not exist yet
+  const existing = await chatSessionRepository.findById(sessionId, organizationId);
+  if (existing) {
+    session = existing;
+    const refreshResult = await this.workspaceManager.ensureWorkspaceUpToDate(
+      organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+    );
+    pluginPaths = refreshResult.pluginPaths;
+  } else {
+    // First use of this deterministic session ID — create with the pre-computed ID.
+    // Use try/catch for P2002 (duplicate key) in case of concurrent first requests.
+    const source = (options.context?.source as string) ?? 'user';
+    let isNewSession = false;
+    try {
+      session = await chatSessionRepository.createForUser(
+        {
+          id: sessionId,
+          business_scope_id: scopeId,
+          agent_id: selectedAgentId,
+          claude_session_id: null,
+          title: null,
+          status: 'idle',
+          source,
+          sop_context: null,
+          context: options.context ?? {},
+        },
+        organizationId,
+        userId,
+      );
+      isNewSession = true;
+    } catch (err: any) {
+      if (err.code === 'P2002') {
+        session = await this.getSessionById(sessionId, organizationId);
+      } else {
+        throw err;
+      }
+    }
+
+    if (isNewSession) {
+      const provisionResult = await this.workspaceManager.ensureSessionWorkspace(
+        organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+      );
+      pluginPaths = provisionResult.pluginPaths;
+    } else {
+      const refreshResult = await this.workspaceManager.ensureWorkspaceUpToDate(
+        organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+      );
+      pluginPaths = refreshResult.pluginPaths;
+    }
+  }
+}
+```
+
+This ensures that:
+- When a deterministic `sessionId` is passed and the session exists → resume it
+- When a deterministic `sessionId` is passed and the session doesn't exist → create it with that exact ID
+- The `source` value from `options.context.source` is used for the `chat_sessions.source` column
+
+- [ ] **Step 5: Verify build**
 
 Run: `cd backend && npm run build`
 Expected: No errors
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Run existing chat tests**
+
+Run: `cd backend && npx vitest run --reporter=verbose 2>&1 | head -60`
+Expected: Existing tests still pass (this change is backward-compatible — when no `id` is passed, behavior is unchanged)
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/src/schemas/chat.schema.ts backend/src/services/chat.service.ts
-git commit -m "feat: allow source field in chat session creation"
+git add backend/src/schemas/chat.schema.ts backend/src/services/chat.service.ts backend/src/repositories/chat.repository.ts
+git commit -m "feat: support source field and deterministic session IDs for copilot sessions"
 ```
 
 ---
@@ -591,12 +752,14 @@ fastify.get('/copilot/messages', { preHandler: [authenticate] }, async (request,
     return reply.status(400).send({ error: 'Invalid copilot parameters' });
   }
 
-  const messages = await chatService.getMessages(organizationId, {
-    sessionId,
-    limit: 100,
-  });
-
-  return { session_id: sessionId, messages: messages ?? [] };
+  // Session may not exist yet (first open before any messages sent).
+  // Use try/catch to return empty array instead of 404.
+  try {
+    const messages = await chatService.getSessionMessages(organizationId, sessionId, 100);
+    return { session_id: sessionId, messages };
+  } catch {
+    return { session_id: sessionId, messages: [] };
+  }
 });
 ```
 
@@ -982,16 +1145,19 @@ git commit -m "feat: migrate scope generator to chat-based copilot"
 ## Task 11: Workspace Context for Copilot Sessions
 
 **Files:**
-- Modify: `backend/src/routes/workflows.routes.ts` (the copilot/stream handler from Task 5)
-- Modify: `backend/src/routes/scope-generator.routes.ts` (the scope-copilot/stream handler from Task 6)
+- Modify: `backend/src/routes/workflows.routes.ts` (the copilot/stream handler from Task 6)
+- Modify: `backend/src/routes/scope-generator.routes.ts` (the scope-copilot/stream handler from Task 7)
+
+**Important note on CLAUDE.md:** Do NOT write directly to `CLAUDE.md`. The workspace manager's `generateScopeClaudeMd()` (called during `ensureSessionWorkspace` and `ensureWorkspaceUpToDate`) owns that file and would overwrite any content you write there. Instead, write copilot context to **separate files** in the workspace that the agent's system prompt references.
 
 - [ ] **Step 1: Write workflow data into workspace before chat**
 
-In the workflow copilot stream handler (Task 6), before calling `chatService.streamChat()`, write the current workflow definition into the session workspace:
+In the workflow copilot stream handler (Task 6), **after** computing `sessionId` and **before** calling `chatService.streamChat()`, write the current workflow definition to a dedicated context file:
 
 ```typescript
 import { workspaceManager } from '../services/workspace-manager.js';
 import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
 
 // Load the workflow to get nodes/connections
 const workflow = await prisma.workflows.findUnique({
@@ -1005,8 +1171,8 @@ if (workflow) {
   );
   await mkdir(workspacePath, { recursive: true });
 
-  // Write workflow context into CLAUDE.md
-  const claudeMd = [
+  // Write workflow context to a separate file (NOT CLAUDE.md — that's owned by workspace manager)
+  const context = [
     `# Workflow: ${workflow.name}`,
     `Version: ${workflow.version}`,
     '',
@@ -1016,16 +1182,28 @@ if (workflow) {
     '```',
   ].join('\n');
 
-  await writeFile(join(workspacePath, 'CLAUDE.md'), claudeMd);
+  await writeFile(join(workspacePath, 'workflow-context.md'), context);
+}
+
+// Also load available agents list for the copilot
+const agents = await prisma.agents.findMany({
+  where: { organization_id: organizationId },
+  select: { name: true, display_name: true, role: true },
+});
+if (agents.length > 0) {
+  const agentList = agents.map(a => `- **${a.display_name ?? a.name}** (\`${a.name}\`): ${a.role ?? 'General agent'}`).join('\n');
+  await writeFile(join(workspacePath, 'available-agents.md'), `# Available Agents\n\n${agentList}\n`);
 }
 ```
 
+The workflow-copilot seed agent's `systemPrompt` (Task 2) must reference this file: "Read `workflow-context.md` in the workspace to understand the current workflow state. Read `available-agents.md` for the list of available agents."
+
 - [ ] **Step 2: Write scope config into workspace before chat**
 
-In the scope copilot stream handler (Task 7), before calling `chatService.streamChat()`, write the current scope configuration:
+In the scope copilot stream handler (Task 7), write the current scope configuration to a dedicated context file:
 
 ```typescript
-// Load the scope and its agents
+// Load the target scope and its agents
 const targetScope = await prisma.business_scopes.findUnique({
   where: { id: scope_id },
   include: { agents: { include: { agent_skills: true } } },
@@ -1037,39 +1215,52 @@ if (targetScope) {
   );
   await mkdir(workspacePath, { recursive: true });
 
-  const claudeMd = [
+  const config = JSON.stringify({
+    scope: {
+      name: targetScope.name,
+      description: targetScope.description,
+      icon: targetScope.icon,
+      color: targetScope.color,
+    },
+    agents: targetScope.agents.map(a => ({
+      name: a.name,
+      displayName: a.display_name,
+      role: a.role,
+      systemPrompt: a.system_prompt,
+    })),
+  }, null, 2);
+
+  // Write to a separate file (NOT CLAUDE.md — that's owned by workspace manager)
+  const context = [
     `# Scope: ${targetScope.name}`,
     `Description: ${targetScope.description ?? 'Not set'}`,
     '',
     '## Current Configuration',
     '```json',
-    JSON.stringify({
-      scope: {
-        name: targetScope.name,
-        description: targetScope.description,
-        icon: targetScope.icon,
-        color: targetScope.color,
-      },
-      agents: targetScope.agents.map(a => ({
-        name: a.name,
-        displayName: a.display_name,
-        role: a.role,
-        systemPrompt: a.system_prompt,
-      })),
-    }, null, 2),
+    config,
     '```',
   ].join('\n');
 
-  await writeFile(join(workspacePath, 'CLAUDE.md'), claudeMd);
+  await writeFile(join(workspacePath, 'scope-context.md'), context);
 }
 ```
 
-- [ ] **Step 3: Verify build**
+The scope-copilot seed agent's `systemPrompt` (Task 2) must reference: "Read `scope-context.md` in the workspace to understand the current scope configuration."
+
+- [ ] **Step 3: Update seed template system prompts to reference context files**
+
+Verify that the seed templates from Task 2 include instructions to read the context files:
+- `workflow-copilot.json` system prompt: "On each turn, read `workflow-context.md` and `available-agents.md` from the workspace for current state."
+- `scope-copilot.json` system prompt: "On each turn, read `scope-context.md` from the workspace for the current scope configuration."
+
+If not already present in Task 2, add them now.
+
+- [ ] **Step 4: Verify build**
 
 Run: `cd backend && npm run build`
 Expected: No errors
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add backend/src/routes/workflows.routes.ts backend/src/routes/scope-generator.routes.ts
