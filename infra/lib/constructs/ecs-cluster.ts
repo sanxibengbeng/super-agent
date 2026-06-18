@@ -192,7 +192,7 @@ export class EcsClusterConstruct extends Construct {
     this.apiService = new ecs.FargateService(this, 'ApiService', {
       cluster: this.cluster,
       taskDefinition: apiTaskDefinition,
-      desiredCount: 0, // Set to 2 after first container image push
+      desiredCount: 2,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
       circuitBreaker: { enable: true, rollback: true },
@@ -322,7 +322,7 @@ export class EcsClusterConstruct extends Construct {
     this.workerService = new ecs.FargateService(this, 'WorkerService', {
       cluster: this.cluster,
       taskDefinition: workerTaskDefinition,
-      desiredCount: 0, // Set to 2 after first container image push
+      desiredCount: 1,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
       circuitBreaker: { enable: true, rollback: true },
@@ -377,7 +377,7 @@ export class EcsClusterConstruct extends Construct {
     this.gatewayService = new ecs.FargateService(this, 'GatewayService', {
       cluster: this.cluster,
       taskDefinition: gatewayTaskDefinition,
-      desiredCount: 0, // Set to 2 after first container image push
+      desiredCount: 2,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
       circuitBreaker: { enable: true, rollback: true },
