@@ -8,6 +8,7 @@ import { SecretsConstruct } from './constructs/secrets';
 import { AgentCoreConstruct } from './constructs/agentcore';
 import { EcsClusterConstruct } from './constructs/ecs-cluster';
 import { CdnConstruct } from './constructs/cdn';
+import { AgentCoreImageBuilderConstruct } from './constructs/agentcore-image-builder';
 
 export interface SuperAgentStackProps extends cdk.StackProps {
   envName: string;
@@ -102,12 +103,23 @@ export class SuperAgentStack extends cdk.Stack {
     const enableAgentCore = props.enableAgentCore !== false;
     let agentCore: AgentCoreConstruct | undefined;
     if (enableAgentCore) {
+      // Build AgentCore image via CodeBuild (auto-triggered on source change)
+      const imageBuilder = new AgentCoreImageBuilderConstruct(this, 'AgentCoreBuilder', {
+        agentcoreRepo,
+        sourceDirectory: '../agentcore',
+        region: this.region,
+        account: this.account,
+      });
+
       agentCore = new AgentCoreConstruct(this, 'AgentCore', {
         workspaceBucket,
         containerUri: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${agentcoreRepo.repositoryName}:latest`,
         region: this.region,
         account: this.account,
       });
+
+      // Guarantee: image exists in ECR before Runtime creation
+      agentCore.runtime.node.addDependency(imageBuilder.buildTrigger);
     }
 
     // =========================================================================
@@ -132,6 +144,7 @@ export class SuperAgentStack extends cdk.Stack {
       account: this.account,
       envName: env,
       otelEndpoint: props.otelEndpoint,
+      agentRuntime: enableAgentCore ? 'agentcore' : 'claude',
     });
 
     // =========================================================================
