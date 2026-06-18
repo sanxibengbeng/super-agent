@@ -62,14 +62,14 @@ export class AgentCoreImageBuilderConstruct extends Construct {
           build: {
             commands: [
               'echo "Building AgentCore image (ARM64, BuildKit disabled)..."',
-              'DOCKER_BUILDKIT=0 docker build --platform linux/arm64 -t $ECR_URI:latest -t $ECR_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION .',
+              'DOCKER_BUILDKIT=0 docker build --platform linux/arm64 -t $ECR_URI:latest -t $ECR_URI:build-$CODEBUILD_BUILD_NUMBER .',
             ],
           },
           post_build: {
             commands: [
               'echo "Pushing to ECR..."',
               'docker push $ECR_URI:latest',
-              'docker push $ECR_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION',
+              'docker push $ECR_URI:build-$CODEBUILD_BUILD_NUMBER',
               'echo "Build complete: $ECR_URI:latest"',
             ],
           },
