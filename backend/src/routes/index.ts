@@ -58,6 +58,7 @@ import { appsRoutes } from './apps.routes.js';
 import { appDataRoutes } from './appData.routes.js';
 import { enterpriseSkillsRoutes, enterpriseSkillPublishRoutes } from './enterprise-skills.routes.js';
 import { imChannelAdminRoutes, imWebhookRoutes } from './im.routes.js';
+import { imBridgeRoutes } from './im-bridge.routes.js';
 import { scopeMemoryRoutes } from './scope-memory.routes.js';
 import { briefingRoutes } from './briefing.routes.js';
 import { scopeMembershipRoutes } from './scopeMemberships.routes.js';
@@ -236,6 +237,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   // IM Webhook Routes (receive messages from Slack, Discord, etc. — no JWT auth)
   await fastify.register(imWebhookRoutes, { prefix: '/api/im' });
+
+  // IM Bridge Routes (QR-based WhatsApp/Lark personal account connections)
+  await fastify.register(imBridgeRoutes, { prefix: '/api/im/bridge' });
 
   // Published Apps / Marketplace Routes
   await fastify.register(appsRoutes, { prefix: '/api/apps' });

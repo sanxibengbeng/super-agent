@@ -4,23 +4,37 @@
  * Admin panel for managing IM channel bindings on a business scope.
  * Allows connecting Slack, Discord, and generic webhook channels
  * so external users can chat with the scope's agents via IM.
+ * Also supports bridge-mode channels (whatsapp-bridge, lark-bridge)
+ * that use QR code scanning for personal account connections.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, Trash2, Loader2, ToggleLeft, ToggleRight, MessageSquare, Hash, Copy, CheckCircle2 } from 'lucide-react'
 import { useIMChannels } from '@/services/useIMChannels'
 import type { CreateIMChannelRequest } from '@/services/useIMChannels'
 import { useTranslation } from '@/i18n'
 
 const CHANNEL_TYPES = [
-  { value: 'slack', label: 'Slack', icon: '💬', description: 'Connect a Slack channel via Events API' },
-  { value: 'discord', label: 'Discord', icon: '🎮', description: 'Connect via Discord Gateway (WebSocket)' },
+  { value: 'slack', label: 'Slack', icon: '\u{1F4AC}', description: 'Connect a Slack channel via Events API' },
+  { value: 'discord', label: 'Discord', icon: '\u{1F3AE}', description: 'Connect via Discord Gateway (WebSocket)' },
   { value: 'telegram', label: 'Telegram', icon: '✈️', description: 'Connect a Telegram group via Bot API' },
-  { value: 'feishu', label: 'Feishu', icon: '🪶', description: 'Connect via Feishu WSClient (WebSocket)' },
-  { value: 'dingtalk', label: 'DingTalk', icon: '🔔', description: 'Connect via DingTalk Stream or Webhook' },
-  { value: 'whatsapp', label: 'WhatsApp', icon: '📱', description: 'Connect via Meta Cloud API' },
-  { value: 'webhook', label: 'Generic Webhook', icon: '🔗', description: 'Any platform via HTTP webhook' },
+  { value: 'feishu', label: 'Feishu', icon: '\u{1FAB6}', description: 'Connect via Feishu WSClient (WebSocket)' },
+  { value: 'dingtalk', label: 'DingTalk', icon: '\u{1F514}', description: 'Connect via DingTalk Stream or Webhook' },
+  { value: 'whatsapp', label: 'WhatsApp', icon: '\u{1F4F1}', description: 'Connect via Meta Cloud API' },
+  { value: 'whatsapp-bridge', label: 'WhatsApp (Personal)', icon: '\u{1F4F1}', description: 'Connect personal WhatsApp via QR code scan' },
+  { value: 'lark-bridge', label: 'Feishu (Personal)', icon: '\u{1FAB6}', description: 'Connect via PersonalAgent app (WebSocket, no public IP needed)' },
+  { value: 'webhook', label: 'Generic Webhook', icon: '\u{1F517}', description: 'Any platform via HTTP webhook' },
 ] as const
+
+const BRIDGE_TYPES = ['whatsapp-bridge', 'lark-bridge']
+
+interface BridgeState {
+  bindingId: string;
+  channelType: string;
+  qr?: string;
+  authUrl?: string;
+  status: string;
+}
 
 interface IMChannelsPanelProps {
   scopeId: string
@@ -42,10 +56,25 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
   const [isSaving, setIsSaving] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [dingtalkMode, setDingtalkMode] = useState<'stream' | 'webhook'>('webhook')
+  const [bridgeState, setBridgeState] = useState<BridgeState | null>(null)
+
+  const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('token');
+    return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  };
+
+  const isBridgeType = (type: string) => BRIDGE_TYPES.includes(type)
 
   const handleCreate = async () => {
-    // Auto-fill channel_id for DingTalk webhook mode
     const effectiveData = { ...formData };
+
+    // Bridge types: auto-generate channel_id
+    if (isBridgeType(effectiveData.channel_type)) {
+      effectiveData.channel_id = `bridge-${Date.now()}`;
+    }
+
+    // Auto-fill channel_id for DingTalk webhook mode
     if (effectiveData.channel_type === 'dingtalk' && dingtalkMode === 'webhook') {
       effectiveData.channel_id = '*';
     }
@@ -54,6 +83,10 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
     const result = await create(effectiveData);
     setIsSaving(false);
     if (result) {
+      // For bridge types, immediately start the connection flow
+      if (isBridgeType(effectiveData.channel_type)) {
+        handleBridgeConnect(result.id, effectiveData.channel_type);
+      }
       setShowForm(false);
       setFormData({ channel_type: 'slack', channel_id: '', channel_name: '', bot_token: '', webhook_url: '', config: {} });
     }
@@ -74,6 +107,59 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
     setCopiedId(bindingId)
     setTimeout(() => setCopiedId(null), 2000)
   }
+
+  const handleBridgeConnect = async (bindingId: string, channelType: string) => {
+    try {
+      await fetch(`${apiBase}/api/im/bridge/${bindingId}/connect`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      setBridgeState({ bindingId, channelType, status: 'waiting_for_qr' });
+    } catch (err) {
+      console.error('Failed to start bridge connection:', err);
+    }
+  };
+
+  const handleBridgeDisconnect = async (bindingId: string) => {
+    try {
+      await fetch(`${apiBase}/api/im/bridge/${bindingId}/disconnect`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      if (bridgeState?.bindingId === bindingId) {
+        setBridgeState(null);
+      }
+    } catch (err) {
+      console.error('Failed to disconnect bridge:', err);
+    }
+  };
+
+  // QR polling effect
+  useEffect(() => {
+    if (!bridgeState || bridgeState.status === 'connected') return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/im/bridge/${bridgeState.bindingId}/qr`, {
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBridgeState(prev => prev ? {
+            ...prev,
+            qr: data.qr || prev.qr,
+            authUrl: data.auth_url || prev.authUrl,
+            status: data.status || prev.status,
+          } : null);
+          if (data.status === 'connected') {
+            clearInterval(interval);
+          }
+        }
+      } catch (err) {
+        console.error('QR poll error:', err);
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [bridgeState?.bindingId, bridgeState?.status]);
 
   const channelTypeInfo = (type: string) => CHANNEL_TYPES.find(t => t.value === type)
 
@@ -133,8 +219,58 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
             ))}
           </div>
 
-          {/* Channel ID + Display Name — hidden for DingTalk webhook mode (auto-filled with '*') */}
-          {!(formData.channel_type === 'dingtalk' && dingtalkMode === 'webhook') && (
+          {/* Bridge types: show display name + type-specific fields */}
+          {isBridgeType(formData.channel_type) && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">{t('im.displayName')} (optional)</label>
+                <input
+                  type="text"
+                  value={formData.channel_name || ''}
+                  onChange={e => setFormData(prev => ({ ...prev, channel_name: e.target.value }))}
+                  placeholder={formData.channel_type === 'whatsapp-bridge' ? 'My WhatsApp' : 'My Feishu'}
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              {formData.channel_type === 'lark-bridge' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">App ID</label>
+                      <input
+                        type="text"
+                        value={(formData.config as Record<string, string>)?.app_id || ''}
+                        onChange={e => setFormData(prev => ({
+                          ...prev,
+                          channel_id: e.target.value,
+                          config: { ...prev.config, app_id: e.target.value },
+                        }))}
+                        placeholder="cli_xxxxxxxxxx"
+                        className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">App Secret</label>
+                      <input
+                        type="password"
+                        value={formData.bot_token || ''}
+                        onChange={e => setFormData(prev => ({ ...prev, bot_token: e.target.value, config: { ...prev.config, app_secret: e.target.value } }))}
+                        placeholder="App Secret"
+                        className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-3">
+                    <p className="text-xs text-blue-400 font-medium mb-1">How to get App ID / Secret:</p>
+                    <p className="text-xs text-gray-400">Run <code className="bg-gray-900 px-1 rounded">npx lark-channel-bridge</code> — it will guide you through QR scan to create a PersonalAgent app and output the credentials.</p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Channel ID + Display Name — hidden for bridge types and DingTalk webhook mode */}
+          {!isBridgeType(formData.channel_type) && !(formData.channel_type === 'dingtalk' && dingtalkMode === 'webhook') && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-gray-400 mb-1">
@@ -167,7 +303,7 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
           </div>
           )}
 
-          {formData.channel_type !== 'webhook' && !(formData.channel_type === 'dingtalk' && dingtalkMode === 'webhook') && (
+          {!isBridgeType(formData.channel_type) && formData.channel_type !== 'webhook' && !(formData.channel_type === 'dingtalk' && dingtalkMode === 'webhook') && (
             <div>
               <label className="block text-xs text-gray-400 mb-1">
                 {formData.channel_type === 'feishu' ? 'App Secret' :
@@ -424,16 +560,49 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
               onClick={handleCreate}
               disabled={
                 isSaving ||
-                (formData.channel_type === 'dingtalk' && dingtalkMode === 'webhook'
-                  ? !formData.webhook_url
-                  : !formData.channel_id)
+                (isBridgeType(formData.channel_type)
+                  ? false
+                  : formData.channel_type === 'dingtalk' && dingtalkMode === 'webhook'
+                    ? !formData.webhook_url
+                    : !formData.channel_id)
               }
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
             >
               {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {t('im.connectChannel')}
+              {isBridgeType(formData.channel_type) ? 'Start Connection' : t('im.connectChannel')}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* QR Code Display for Bridge Connections */}
+      {bridgeState && (
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 text-center">
+          <p className="text-sm text-gray-300 mb-4">
+            {bridgeState.channelType === 'whatsapp-bridge'
+              ? 'Scan with WhatsApp to connect'
+              : 'Scan with Feishu/Lark to authorize'}
+          </p>
+          {bridgeState.qr ? (
+            <img src={bridgeState.qr} className="mx-auto w-64 h-64 rounded-lg" alt="QR Code" />
+          ) : bridgeState.authUrl ? (
+            <div>
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(bridgeState.authUrl)}`}
+                className="mx-auto w-64 h-64 rounded-lg"
+                alt="QR Code"
+              />
+              <a href={bridgeState.authUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 mt-2 inline-block">
+                Or click to open
+              </a>
+            </div>
+          ) : (
+            <Loader2 className="w-8 h-8 animate-spin mx-auto text-gray-400" />
+          )}
+          <p className="text-xs text-gray-500 mt-3">Status: {bridgeState.status}</p>
+          <button onClick={() => setBridgeState(null)} className="text-xs text-gray-400 mt-2 hover:text-white">
+            Cancel
+          </button>
         </div>
       )}
 
@@ -448,6 +617,8 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
         <div className="space-y-2">
           {bindings.map(binding => {
             const info = channelTypeInfo(binding.channel_type)
+            const isBridge = isBridgeType(binding.channel_type)
+            const bridgeConnected = isBridge && binding.is_enabled
             return (
               <div
                 key={binding.id}
@@ -458,7 +629,7 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <span className="text-xl">{info?.icon || '📡'}</span>
+                  <span className="text-xl">{info?.icon || '\u{1F4E1}'}</span>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-white">
@@ -467,7 +638,19 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                       <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">
                         {info?.label || binding.channel_type}
                       </span>
-                      {!binding.is_enabled && (
+                      {isBridge && (
+                        <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
+                          bridgeConnected
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            bridgeConnected ? 'bg-green-400' : 'bg-yellow-400'
+                          }`} />
+                          {bridgeConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                      )}
+                      {!isBridge && !binding.is_enabled && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400">
                           {t('im.disabled')}
                         </span>
@@ -496,18 +679,37 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                     </button>
                   )}
 
-                  {/* Toggle enabled/disabled */}
-                  <button
-                    onClick={() => handleToggle(binding.id, binding.is_enabled)}
-                    className="p-1.5 text-gray-400 hover:text-white transition-colors"
-                    title={binding.is_enabled ? 'Disable' : 'Enable'}
-                  >
-                    {binding.is_enabled ? (
-                      <ToggleRight className="w-5 h-5 text-green-400" />
+                  {/* Bridge types: Connect/Disconnect buttons */}
+                  {isBridge ? (
+                    bridgeConnected ? (
+                      <button
+                        onClick={() => handleBridgeDisconnect(binding.id)}
+                        className="px-2 py-1 text-xs rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                      >
+                        Disconnect
+                      </button>
                     ) : (
-                      <ToggleLeft className="w-5 h-5" />
-                    )}
-                  </button>
+                      <button
+                        onClick={() => handleBridgeConnect(binding.id, binding.channel_type)}
+                        className="px-2 py-1 text-xs rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
+                      >
+                        Connect
+                      </button>
+                    )
+                  ) : (
+                    /* Toggle enabled/disabled for non-bridge types */
+                    <button
+                      onClick={() => handleToggle(binding.id, binding.is_enabled)}
+                      className="p-1.5 text-gray-400 hover:text-white transition-colors"
+                      title={binding.is_enabled ? 'Disable' : 'Enable'}
+                    >
+                      {binding.is_enabled ? (
+                        <ToggleRight className="w-5 h-5 text-green-400" />
+                      ) : (
+                        <ToggleLeft className="w-5 h-5" />
+                      )}
+                    </button>
+                  )}
 
                   {/* Delete */}
                   <button
@@ -552,6 +754,9 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
             <strong className="text-gray-300">WhatsApp:</strong> Set webhook URL in Meta Developer Console to{' '}
             <code className="text-blue-400 bg-gray-900 px-1 rounded">{window.location.origin.replace(/:\d+$/, ':3001')}/api/im/whatsapp/webhook</code>
             {' '}and subscribe to <code className="text-blue-400 bg-gray-900 px-1 rounded">messages</code>.
+          </p>
+          <p className="text-xs text-gray-400">
+            <strong className="text-gray-300">WhatsApp (Personal) / Feishu (Personal):</strong> Click "Connect" on the binding card and scan the QR code with your phone app.
           </p>
         </div>
       )}
