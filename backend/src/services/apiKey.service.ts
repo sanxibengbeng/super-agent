@@ -121,10 +121,12 @@ class ApiKeyService {
     await redisService.setex(cacheKey, 300, JSON.stringify(data));
 
     // Update last used (fire and forget)
-    prisma.api_keys.update({
-      where: { id: apiKey.id },
-      data: { last_used_at: new Date() },
-    }).catch(() => {});
+    prisma.api_keys
+      .update({
+        where: { id: apiKey.id },
+        data: { last_used_at: new Date() },
+      })
+      .catch(() => {});
 
     return data;
   }
@@ -135,12 +137,9 @@ class ApiKeyService {
    */
   async checkRateLimit(keyHash: string, limit: number): Promise<boolean> {
     const rateLimitKey = `ratelimit:${keyHash}`;
-    const current = await redisService.incr(rateLimitKey);
-    
-    if (current === 1) {
-      // First request in window, set expiry
-      await redisService.expire(rateLimitKey, RATE_LIMIT_WINDOW_SECONDS);
-    }
+    // Atomic INCR + first-hit EXPIRE in one round-trip so a crash can never
+    // leave the key without a TTL (which would permanently lock out the key).
+    const current = await redisService.incrWithTtl(rateLimitKey, RATE_LIMIT_WINDOW_SECONDS);
 
     return current <= limit;
   }

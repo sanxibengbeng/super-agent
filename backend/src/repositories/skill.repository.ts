@@ -154,7 +154,7 @@ export class SkillRepository {
       where: { agent_id: agentId },
       include: { skill: true },
     });
-    
+
     // Filter by organization for security
     return agentSkills
       .map((as) => as.skill as SkillEntity)
@@ -162,9 +162,41 @@ export class SkillRepository {
   }
 
   /**
+   * Get skills assigned to multiple agents in a single query.
+   * Returns a Map from agent_id to that agent's skills, batching what would
+   * otherwise be N separate findByAgentId calls into one query.
+   */
+  async findByAgentIds(
+    organizationId: string,
+    agentIds: string[]
+  ): Promise<Map<string, SkillEntity[]>> {
+    const result = new Map<string, SkillEntity[]>();
+    for (const id of agentIds) result.set(id, []);
+    if (agentIds.length === 0) return result;
+
+    const agentSkills = await prisma.agent_skills.findMany({
+      where: { agent_id: { in: agentIds } },
+      include: { skill: true },
+    });
+
+    for (const as of agentSkills) {
+      const skill = as.skill as SkillEntity;
+      // Filter by organization for security (mirrors findByAgentId)
+      if (skill.organization_id !== organizationId) continue;
+      const list = result.get(as.agent_id);
+      if (list) list.push(skill);
+    }
+
+    return result;
+  }
+
+  /**
    * Get all unique skills for a business scope (across all agents)
    */
-  async findByBusinessScope(organizationId: string, businessScopeId: string): Promise<SkillEntity[]> {
+  async findByBusinessScope(
+    organizationId: string,
+    businessScopeId: string
+  ): Promise<SkillEntity[]> {
     // Get all agents in the business scope
     const agents = await prisma.agents.findMany({
       where: {
@@ -173,18 +205,18 @@ export class SkillRepository {
       },
       select: { id: true },
     });
-    
+
     if (agents.length === 0) return [];
-    
+
     const agentIds = agents.map((a) => a.id);
-    
+
     // Get unique skills across all agents
     const agentSkills = await prisma.agent_skills.findMany({
       where: { agent_id: { in: agentIds } },
       include: { skill: true },
       distinct: ['skill_id'],
     });
-    
+
     return agentSkills
       .map((as) => as.skill as SkillEntity)
       .filter((s) => s.organization_id === organizationId && s.status === 'active');
@@ -228,7 +260,7 @@ export class SkillRepository {
     assignedBy?: string
   ): Promise<number> {
     const result = await prisma.agent_skills.createMany({
-      data: skillIds.map(skillId => ({
+      data: skillIds.map((skillId) => ({
         agent_id: agentId,
         skill_id: skillId,
         assigned_by: assignedBy,
@@ -253,7 +285,7 @@ export class SkillRepository {
       }),
       // Add new
       prisma.agent_skills.createMany({
-        data: skillIds.map(skillId => ({
+        data: skillIds.map((skillId) => ({
           agent_id: agentId,
           skill_id: skillId,
           assigned_by: assignedBy,
@@ -265,7 +297,10 @@ export class SkillRepository {
   /**
    * Find scope-level skills (skills directly attached to a business scope, not via agents)
    */
-  async findScopeLevelSkills(organizationId: string, businessScopeId: string): Promise<SkillEntity[]> {
+  async findScopeLevelSkills(
+    organizationId: string,
+    businessScopeId: string
+  ): Promise<SkillEntity[]> {
     return prisma.skills.findMany({
       where: {
         organization_id: organizationId,
@@ -279,7 +314,11 @@ export class SkillRepository {
   /**
    * Find scope-level skills by type (e.g. 'api_integration')
    */
-  async findScopeLevelSkillsByType(organizationId: string, businessScopeId: string, skillType: string): Promise<SkillEntity[]> {
+  async findScopeLevelSkillsByType(
+    organizationId: string,
+    businessScopeId: string,
+    skillType: string
+  ): Promise<SkillEntity[]> {
     return prisma.skills.findMany({
       where: {
         organization_id: organizationId,

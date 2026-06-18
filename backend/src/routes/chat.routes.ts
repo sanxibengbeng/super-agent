@@ -816,25 +816,33 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         const { config: appConfig } = await import('../config/index.js');
         let files;
         if (appConfig.agentRuntime === 'agentcore') {
-          // Use InvokeAgentRuntimeCommandCommand to query container directly
+          // Try container first, then S3, then local disk.
+          // Container may be idle (throws) or return empty (path mismatch / not provisioned yet).
           try {
             const entries = await agentCoreCommandService.listWorkspaceFiles(session.id);
-            files = buildTreeFromEntries(entries);
-          } catch (cmdErr) {
+            if (entries.length > 0) {
+              files = buildTreeFromEntries(entries);
+            }
+          } catch {
             // Expected when session has no active microVM (idle >15min or no messages yet).
-            // Try S3, then fall back to local disk.
+          }
+
+          // Fallback: S3 Files bucket (works when container is idle or returned empty)
+          if (!files || files.length === 0) {
             files = await workspaceManager.listWorkspaceFilesFromS3(
               request.user!.orgId,
               scopeIdForPath,
               session.id,
             );
-            if (!files || files.length === 0) {
-              files = await workspaceManager.listWorkspaceFiles(
-                request.user!.orgId,
-                scopeIdForPath,
-                session.id,
-              );
-            }
+          }
+
+          // Final fallback: local disk (ECS-provisioned workspace)
+          if (!files || files.length === 0) {
+            files = await workspaceManager.listWorkspaceFiles(
+              request.user!.orgId,
+              scopeIdForPath,
+              session.id,
+            );
           }
         } else {
           files = await workspaceManager.listWorkspaceFiles(
@@ -893,10 +901,18 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         const { config: appConfig } = await import('../config/index.js');
         let files;
         if (appConfig.agentRuntime === 'agentcore') {
+          // Try container first (only works when microVM is alive)
           try {
             const entries = await agentCoreCommandService.listClaudeHomeFiles(session.id);
-            files = buildTreeFromEntries(entries);
+            if (entries.length > 0) {
+              files = buildTreeFromEntries(entries);
+            }
           } catch {
+            // Expected when container is idle
+          }
+
+          // Fallback: S3 (if ~/.claude was synced by file-watcher)
+          if (!files || files.length === 0) {
             files = await workspaceManager.listClaudeHomeFromS3(
               request.user!.orgId,
               scopeIdForPath,

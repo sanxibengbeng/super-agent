@@ -1,4 +1,12 @@
-import { createContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import {
+  createContext,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from 'react'
 import type { Message, ChatContext as ChatContextData, QuickQuestion } from '@/types'
 import { ChatService, ChatServiceError } from './chatService'
 import { RestChatService } from './api/restChatService'
@@ -114,11 +122,21 @@ interface ChatProviderProps {
   initialScopeId?: string
 }
 
-export function ChatProvider({ children, initialSessionId, initialSop, initialAgentId, initialScopeId }: ChatProviderProps) {
+export function ChatProvider({
+  children,
+  initialSessionId,
+  initialSop,
+  initialAgentId,
+  initialScopeId,
+}: ChatProviderProps) {
   const [sessionId] = useState<string>(() => initialSessionId || getOrCreateSessionId())
   const [activeSop, setActiveSopState] = useState<string>(() => initialSop || getStoredSop())
-  const [selectedAgentId, setSelectedAgentIdState] = useState<string | null>(() => initialAgentId || getStoredAgentId())
-  const [selectedBusinessScopeId, setSelectedBusinessScopeIdState] = useState<string | null>(() => initialScopeId || getStoredScopeId())
+  const [selectedAgentId, setSelectedAgentIdState] = useState<string | null>(
+    () => initialAgentId || getStoredAgentId()
+  )
+  const [selectedBusinessScopeId, setSelectedBusinessScopeIdState] = useState<string | null>(
+    () => initialScopeId || getStoredScopeId()
+  )
   const [context, setContext] = useState<ChatContextData | null>(null)
   const [quickQuestions, setQuickQuestions] = useState<QuickQuestion[]>([])
   const [quickQuestionsLoading, setQuickQuestionsLoading] = useState(false)
@@ -133,7 +151,7 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
   // Subscribe to SessionStreamManager for reactive updates
   const [, forceUpdate] = useState(0)
   useEffect(() => {
-    return sessionStreamManager.subscribe(() => forceUpdate(n => n + 1))
+    return sessionStreamManager.subscribe(() => forceUpdate((n) => n + 1))
   }, [])
 
   // Derive messages and isSending from the manager for the active session
@@ -188,7 +206,7 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
   useEffect(() => {
     if (backendSessionId) {
       // Load history and attempt reconnection
-      (async () => {
+      ;(async () => {
         try {
           if (shouldUseRestApi()) {
             RestChatService.setCurrentSessionId(backendSessionId)
@@ -217,13 +235,15 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     } else if (selectedBusinessScopeId && shouldUseRestApi()) {
       // Eagerly create session + provision workspace on mount when we have a
       // stored scope but no backend session yet.
-      RestChatService.ensureSession(activeSop, selectedBusinessScopeId).then(newSessionId => {
-        setBackendSessionId(newSessionId)
-      }).catch(err => {
-        console.warn('Failed to eagerly create session on mount:', err)
-      })
+      RestChatService.ensureSession(activeSop, selectedBusinessScopeId)
+        .then((newSessionId) => {
+          setBackendSessionId(newSessionId)
+        })
+        .catch((err) => {
+          console.warn('Failed to eagerly create session on mount:', err)
+        })
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // Run only on mount
 
   // Load initial data
@@ -305,7 +325,9 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
   const streamHandleRef = useRef<ChatStreamHandle | null>(null)
 
   useEffect(() => {
-    return () => { streamHandleRef.current?.abort() }
+    return () => {
+      streamHandleRef.current?.abort()
+    }
   }, [])
 
   const stopGeneration = useCallback(() => {
@@ -314,57 +336,63 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     }
   }, [backendSessionId])
 
-  const sendMessage = useCallback(async (content: string, mentionAgentId?: string): Promise<Message | null> => {
-    if (!content.trim()) {
-      setError('Message cannot be empty')
-      return null
-    }
-
-    if (!selectedBusinessScopeId && !selectedAgentId) {
-      setError('Select a business scope or an agent to start chatting')
-      return null
-    }
-
-    setError(null)
-
-    if (shouldUseRestApi()) {
-      try {
-        const validSessionId = await RestChatService.ensureSession(activeSop, selectedBusinessScopeId ?? undefined)
-        setBackendSessionId(validSessionId)
-
-        sessionStreamManager.sendMessage(validSessionId, content, {
-          businessScopeId: selectedBusinessScopeId ?? '',
-          agentId: selectedAgentId ?? undefined,
-          mentionAgentId: mentionAgentId ?? undefined,
-          sopContext: activeSop ?? '',
-        })
-
-        return {
-          id: `msg-${Date.now()}`,
-          type: 'ai',
-          content: '',
-          timestamp: new Date(),
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create session')
+  const sendMessage = useCallback(
+    async (content: string, mentionAgentId?: string): Promise<Message | null> => {
+      if (!content.trim()) {
+        setError('Message cannot be empty')
         return null
       }
-    }
 
-    // Fallback: non-streaming mock path
-    try {
-      const aiResponse = await ChatService.sendMessage(sessionId, content, activeSop)
-      const history = await ChatService.getHistory(sessionId)
-      if (backendSessionId) {
-        sessionStreamManager.setMessages(backendSessionId, history)
+      if (!selectedBusinessScopeId && !selectedAgentId) {
+        setError('Select a business scope or an agent to start chatting')
+        return null
       }
-      return aiResponse
-    } catch (err) {
-      const message = err instanceof ChatServiceError ? err.message : 'Failed to send message'
-      setError(message)
-      return null
-    }
-  }, [sessionId, activeSop, selectedAgentId, selectedBusinessScopeId, backendSessionId])
+
+      setError(null)
+
+      if (shouldUseRestApi()) {
+        try {
+          const validSessionId = await RestChatService.ensureSession(
+            activeSop,
+            selectedBusinessScopeId ?? undefined
+          )
+          setBackendSessionId(validSessionId)
+
+          sessionStreamManager.sendMessage(validSessionId, content, {
+            businessScopeId: selectedBusinessScopeId ?? '',
+            agentId: selectedAgentId ?? undefined,
+            mentionAgentId: mentionAgentId ?? undefined,
+            sopContext: activeSop ?? '',
+          })
+
+          return {
+            id: `msg-${Date.now()}`,
+            type: 'ai',
+            content: '',
+            timestamp: new Date(),
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to create session')
+          return null
+        }
+      }
+
+      // Fallback: non-streaming mock path
+      try {
+        const aiResponse = await ChatService.sendMessage(sessionId, content, activeSop)
+        const history = await ChatService.getHistory(sessionId)
+        if (backendSessionId) {
+          sessionStreamManager.setMessages(backendSessionId, history)
+        }
+        return aiResponse
+      } catch (err) {
+        const message = err instanceof ChatServiceError ? err.message : 'Failed to send message'
+        setError(message)
+        return null
+      }
+    },
+    [sessionId, activeSop, selectedAgentId, selectedBusinessScopeId, backendSessionId]
+  )
 
   const setActiveSop = useCallback((sopId: string) => {
     setActiveSopState(sopId)
@@ -374,28 +402,33 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     setSelectedAgentIdState(agentId)
   }, [])
 
-  const setSelectedBusinessScope = useCallback((scopeId: string) => {
-    const newScopeId = scopeId || null
-    setSelectedBusinessScopeIdState(newScopeId)
-    // Reset agent and backend session when scope changes
-    setSelectedAgentIdState(null)
-    setBackendSessionId(null)
-    if (shouldUseRestApi()) {
-      RestChatService.resetSession()
+  const setSelectedBusinessScope = useCallback(
+    (scopeId: string) => {
+      const newScopeId = scopeId || null
+      setSelectedBusinessScopeIdState(newScopeId)
+      // Reset agent and backend session when scope changes
+      setSelectedAgentIdState(null)
+      setBackendSessionId(null)
+      if (shouldUseRestApi()) {
+        RestChatService.resetSession()
 
-      // Eagerly create session + provision workspace when a scope is selected,
-      // so the workspace is ready by the time the user sends their first message.
-      if (newScopeId) {
-        console.log('[ChatContext] Eagerly creating session for scope:', newScopeId)
-        RestChatService.ensureSession(activeSop, newScopeId).then(newSessionId => {
-          console.log('[ChatContext] Eager session created:', newSessionId)
-          setBackendSessionId(newSessionId)
-        }).catch(err => {
-          console.warn('Failed to eagerly create session:', err)
-        })
+        // Eagerly create session + provision workspace when a scope is selected,
+        // so the workspace is ready by the time the user sends their first message.
+        if (newScopeId) {
+          console.log('[ChatContext] Eagerly creating session for scope:', newScopeId)
+          RestChatService.ensureSession(activeSop, newScopeId)
+            .then((newSessionId) => {
+              console.log('[ChatContext] Eager session created:', newSessionId)
+              setBackendSessionId(newSessionId)
+            })
+            .catch((err) => {
+              console.warn('Failed to eagerly create session:', err)
+            })
+        }
       }
-    }
-  }, [activeSop])
+    },
+    [activeSop]
+  )
 
   const clearHistory = useCallback(async () => {
     setError(null)
@@ -517,17 +550,20 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     }
 
     // Check status once immediately
-    restClient.get<{ status: string; streamAvailable: boolean }>(
-      `/api/chat/sessions/${backendSessionId}/status`
-    ).then(resp => {
-      if (cancelled) return
-      if (resp.status === 'generating' && !resp.streamAvailable) {
-        sessionStreamManager.setSending(backendSessionId, true)
-        // Do an immediate poll, then start interval
-        void poll()
-        intervalId = setInterval(poll, 2000)
-      }
-    }).catch(() => {})
+    restClient
+      .get<{ status: string; streamAvailable: boolean }>(
+        `/api/chat/sessions/${backendSessionId}/status`
+      )
+      .then((resp) => {
+        if (cancelled) return
+        if (resp.status === 'generating' && !resp.streamAvailable) {
+          sessionStreamManager.setSending(backendSessionId, true)
+          // Do an immediate poll, then start interval
+          void poll()
+          intervalId = setInterval(poll, 2000)
+        }
+      })
+      .catch(() => {})
 
     return () => {
       cancelled = true
@@ -566,42 +602,65 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
       sessionStreamManager.stopStream(backendSessionId)
       sessionStreamManager.setMessages(backendSessionId, [])
       // Clear on the backend so switching sessions doesn't reload old messages
-      RestChatService.clearSessionHistory(backendSessionId).catch(err => {
+      RestChatService.clearSessionHistory(backendSessionId).catch((err) => {
         console.warn('Failed to clear session history on backend:', err)
       })
     }
     setError(null)
   }, [backendSessionId])
 
-  const value: ChatContextType = {
-    sessionId,
-    activeSop,
-    selectedAgentId,
-    selectedBusinessScopeId,
-    backendSessionId,
-    messages,
-    context,
-    quickQuestions,
-    quickQuestionsLoading,
-    isLoading,
-    isSending,
-    error: effectiveError,
-    sendMessage,
-    stopGeneration,
-    setActiveSop,
-    setSelectedAgent,
-    setSelectedBusinessScope,
-    clearHistory,
-    clearError,
-    refreshContext,
-    loadSession,
-    startNewSession,
-    clearConversation,
-  }
-
-  return (
-    <ChatContext.Provider value={value}>
-      {children}
-    </ChatContext.Provider>
+  const value: ChatContextType = useMemo(
+    () => ({
+      sessionId,
+      activeSop,
+      selectedAgentId,
+      selectedBusinessScopeId,
+      backendSessionId,
+      messages,
+      context,
+      quickQuestions,
+      quickQuestionsLoading,
+      isLoading,
+      isSending,
+      error: effectiveError,
+      sendMessage,
+      stopGeneration,
+      setActiveSop,
+      setSelectedAgent,
+      setSelectedBusinessScope,
+      clearHistory,
+      clearError,
+      refreshContext,
+      loadSession,
+      startNewSession,
+      clearConversation,
+    }),
+    [
+      sessionId,
+      activeSop,
+      selectedAgentId,
+      selectedBusinessScopeId,
+      backendSessionId,
+      messages,
+      context,
+      quickQuestions,
+      quickQuestionsLoading,
+      isLoading,
+      isSending,
+      effectiveError,
+      sendMessage,
+      stopGeneration,
+      setActiveSop,
+      setSelectedAgent,
+      setSelectedBusinessScope,
+      clearHistory,
+      clearError,
+      refreshContext,
+      loadSession,
+      startNewSession,
+      clearConversation,
+    ]
   )
+
+  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
 }

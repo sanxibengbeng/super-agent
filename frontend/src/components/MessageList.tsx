@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo, memo } from 'react'
 import { User } from 'lucide-react'
 import type { Message } from '@/types'
 import type { ContentBlock } from '@/services/chatStreamService'
@@ -35,8 +35,11 @@ function tryParseContentBlocks(content: string): ContentBlock[] | null {
   }
 }
 
-function UserBubble({ message }: { message: Message }) {
-  const isLong = message.content.length > 200 || message.content.includes('\n#') || message.content.includes('\n|')
+const UserBubble = memo(function UserBubble({ message }: { message: Message }) {
+  const isLong =
+    message.content.length > 200 ||
+    message.content.includes('\n#') ||
+    message.content.includes('\n|')
   return (
     <div className="flex gap-3 flex-row-reverse">
       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-600/15 border border-blue-500/25">
@@ -50,19 +53,20 @@ function UserBubble({ message }: { message: Message }) {
             <p className="text-sm whitespace-pre-wrap">{message.content}</p>
           )}
         </div>
-        <span className="text-xs text-gray-500 mt-1 px-1">
-          {formatTime(message.timestamp)}
-        </span>
+        <span className="text-xs text-gray-500 mt-1 px-1">{formatTime(message.timestamp)}</span>
       </div>
     </div>
   )
-}
+})
 
-function AIBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
-  const contentBlocks = useMemo(
-    () => tryParseContentBlocks(message.content),
-    [message.content]
-  )
+const AIBubble = memo(function AIBubble({
+  message,
+  isStreaming,
+}: {
+  message: Message
+  isStreaming?: boolean
+}) {
+  const contentBlocks = useMemo(() => tryParseContentBlocks(message.content), [message.content])
 
   // While streaming, content starts empty — show typing dots
   if (!message.content) {
@@ -92,31 +96,68 @@ function AIBubble({ message, isStreaming }: { message: Message; isStreaming?: bo
         // Fallback: markdown rendering for plain text messages
         <div className="flex gap-3">
           <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-purple-600">
-            <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+            <svg
+              className="w-4 h-4 text-white"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 8V4H8" />
+              <rect width="16" height="12" x="4" y="8" rx="2" />
+              <path d="M2 14h2" />
+              <path d="M20 14h2" />
+              <path d="M15 13v2" />
+              <path d="M9 13v2" />
+            </svg>
           </div>
           <div className="flex-1 min-w-0">
             <TextContentBlock block={{ type: 'text', text: message.content }} />
           </div>
         </div>
       )}
-      <span className="text-xs text-gray-500 mt-1 px-1 ml-11">
-        {formatTime(message.timestamp)}
-      </span>
+      <span className="text-xs text-gray-500 mt-1 px-1 ml-11">{formatTime(message.timestamp)}</span>
     </div>
   )
-}
+})
 
 function TypingIndicator() {
   return (
     <div className="flex gap-3">
       <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center flex-shrink-0">
-        <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+        <svg
+          className="w-4 h-4 text-white"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M12 8V4H8" />
+          <rect width="16" height="12" x="4" y="8" rx="2" />
+          <path d="M2 14h2" />
+          <path d="M20 14h2" />
+          <path d="M15 13v2" />
+          <path d="M9 13v2" />
+        </svg>
       </div>
       <div className="bg-gray-800 px-4 py-3 rounded-2xl rounded-bl-md">
         <div className="flex gap-1">
-          <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-          <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-          <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <span
+            className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+            style={{ animationDelay: '0ms' }}
+          />
+          <span
+            className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+            style={{ animationDelay: '150ms' }}
+          />
+          <span
+            className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+            style={{ animationDelay: '300ms' }}
+          />
         </div>
       </div>
     </div>
@@ -131,7 +172,7 @@ export function MessageList({ messages, isTyping = false, scrollToTimestamp }: M
 
   useEffect(() => {
     if (scrollToTimestamp && !hasScrolledToTarget.current && messages.length > 0) {
-      const targetIdx = messages.findIndex(m => m.timestamp >= scrollToTimestamp)
+      const targetIdx = messages.findIndex((m) => m.timestamp >= scrollToTimestamp)
       if (targetIdx >= 0) {
         hasScrolledToTarget.current = true
         requestAnimationFrame(() => {
@@ -154,7 +195,7 @@ export function MessageList({ messages, isTyping = false, scrollToTimestamp }: M
   }
 
   const targetIdx = scrollToTimestamp
-    ? messages.findIndex(m => m.timestamp >= scrollToTimestamp)
+    ? messages.findIndex((m) => m.timestamp >= scrollToTimestamp)
     : -1
 
   return (
@@ -168,16 +209,14 @@ export function MessageList({ messages, isTyping = false, scrollToTimestamp }: M
               <div className="flex-1 border-t border-blue-500/30" />
             </div>
           )}
-          {message.type === 'user'
-            ? <UserBubble message={message} />
-            : <AIBubble
-                message={message}
-                isStreaming={isTyping && idx === messages.length - 1}
-              />
-          }
+          {message.type === 'user' ? (
+            <UserBubble message={message} />
+          ) : (
+            <AIBubble message={message} isStreaming={isTyping && idx === messages.length - 1} />
+          )}
         </div>
       ))}
-      {isTyping && !messages.some(m => m.type === 'ai' && !m.content) && <TypingIndicator />}
+      {isTyping && !messages.some((m) => m.type === 'ai' && !m.content) && <TypingIndicator />}
       <div ref={messagesEndRef} />
     </div>
   )

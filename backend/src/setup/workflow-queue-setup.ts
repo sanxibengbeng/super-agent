@@ -13,9 +13,33 @@ import { workflowQueueService } from '../services/workflow-queue.service.js';
 import { workflowExecutionService } from '../services/workflow-execution.service.js';
 import { redisService } from '../services/redis.service.js';
 import type { Job } from 'bullmq';
-import type { RunWorkflowJobData, PollWorkflowJobData } from '../services/workflow-queue.service.js';
+import type {
+  RunWorkflowJobData,
+  PollWorkflowJobData,
+} from '../services/workflow-queue.service.js';
 import { tracedProcessor } from '../middleware/otel-bullmq.js';
-import { QUEUE_RUN_WORKFLOW, QUEUE_POLL_WORKFLOW } from '../config/queue.js';
+import {
+  QUEUE_RUN_WORKFLOW,
+  QUEUE_POLL_WORKFLOW,
+  NODE_EXECUTION_TIMEOUT_MS,
+} from '../config/queue.js';
+
+/**
+ * Run a promise with a hard deadline. BullMQ v5 removed the job-level `timeout`
+ * option, so we enforce the per-node timeout here — otherwise a hung node would
+ * hold its worker slot forever and starve the rest of the DAG.
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 let initialized = false;
 
@@ -45,7 +69,11 @@ export async function initializeWorkflowQueues(): Promise<void> {
     workflowQueueService.registerRunWorkflowProcessor(
       tracedProcessor(QUEUE_RUN_WORKFLOW, async (job: Job<RunWorkflowJobData>) => {
         console.log(`🔄 Processing run-workflow job: ${job.id}`, job.data);
-        await workflowExecutionService.runWorkflow(job.data);
+        await withTimeout(
+          workflowExecutionService.runWorkflow(job.data),
+          NODE_EXECUTION_TIMEOUT_MS,
+          `Node execution (job ${job.id})`
+        );
       })
     );
 

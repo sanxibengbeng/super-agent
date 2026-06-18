@@ -479,9 +479,11 @@ model chat_sessions {
   @@index([business_scope_id])
   @@index([source])
   @@index([room_mode])
+  @@index([status])
   @@index([created_at(sort: Desc)])
   @@index([organization_id, user_id])
   @@index([organization_id, business_scope_id])
+  @@index([organization_id, status])
 }
 
 // ============================================================================

@@ -104,7 +104,10 @@ export class RedisService {
    * @param ttlMs - Lock TTL in milliseconds (default: NODE_LOCK_TTL_MS)
    * @returns A function to release the lock, or null if lock not acquired
    */
-  async acquireLock(key: string, ttlMs: number = this.defaultLockTTL): Promise<ReleaseLockFn | null> {
+  async acquireLock(
+    key: string,
+    ttlMs: number = this.defaultLockTTL
+  ): Promise<ReleaseLockFn | null> {
     if (!this.client) {
       throw new Error('Redis service not initialized');
     }
@@ -243,6 +246,33 @@ export class RedisService {
   }
 
   /**
+   * Atomically increment a key and, on the first increment of the window,
+   * attach a TTL — all in a single round-trip. This guarantees the TTL is
+   * always set together with the first INCR, so a crash between the two can
+   * never leave a key without expiry (which would permanently lock out the
+   * caller in a rate-limit scenario).
+   *
+   * @param key - The key
+   * @param ttlSeconds - TTL applied when the key is first created
+   * @returns The new value after increment
+   */
+  async incrWithTtl(key: string, ttlSeconds: number): Promise<number> {
+    if (!this.client) {
+      throw new Error('Redis service not initialized');
+    }
+
+    const script = `
+      local current = redis.call('INCR', KEYS[1])
+      if current == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+      end
+      return current
+    `;
+    const result = await this.client.eval(script, 1, key, String(ttlSeconds));
+    return Number(result);
+  }
+
+  /**
    * Delete a key from Redis (alias for ioredis del)
    *
    * @param key - The key
@@ -347,7 +377,10 @@ export class RedisService {
    * @param pattern - The pattern to subscribe to (e.g., 'workspace:events:*')
    * @param handler - The handler function to call when a message is received
    */
-  async psubscribe(pattern: string, handler: (channel: string, message: string) => void): Promise<void> {
+  async psubscribe(
+    pattern: string,
+    handler: (channel: string, message: string) => void
+  ): Promise<void> {
     if (!this.client) {
       throw new Error('Redis service not initialized');
     }

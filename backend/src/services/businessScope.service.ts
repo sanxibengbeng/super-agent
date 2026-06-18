@@ -10,7 +10,7 @@ import {
   type BusinessScopeEntity,
 } from '../repositories/businessScope.repository.js';
 import { agentRepository, type AgentEntity } from '../repositories/agent.repository.js';
-import { skillRepository, type SkillEntity } from '../repositories/skill.repository.js';
+import { skillRepository } from '../repositories/skill.repository.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import type {
@@ -231,7 +231,11 @@ export class BusinessScopeService {
     // Only conflict within the same scope_type — business and digital_twin scopes are separate namespaces
     if (data.name !== undefined && data.name !== existingScope.name) {
       const scopeWithName = await businessScopeRepository.findByName(organizationId, data.name);
-      if (scopeWithName && scopeWithName.id !== id && scopeWithName.scope_type === existingScope.scope_type) {
+      if (
+        scopeWithName &&
+        scopeWithName.id !== id &&
+        scopeWithName.scope_type === existingScope.scope_type
+      ) {
         throw AppError.conflict(
           `Business scope with name "${data.name}" already exists in this organization`
         );
@@ -417,16 +421,18 @@ export class BusinessScopeService {
     // Get all agents in the scope
     const agents = await agentRepository.findByBusinessScope(organizationId, businessScopeId);
 
-    // Get skills for each agent
-    const agentsWithSkills: AgentWithSkills[] = [];
-    
-    for (const agent of agents) {
-      const skills = await skillRepository.findByAgentId(organizationId, agent.id);
-      
-      agentsWithSkills.push({
+    // Batch-load skills for all agents in a single query (avoids N+1)
+    const skillsByAgent = await skillRepository.findByAgentIds(
+      organizationId,
+      agents.map((a) => a.id)
+    );
+
+    return agents.map((agent) => {
+      const skills = skillsByAgent.get(agent.id) ?? [];
+      return {
         ...agent,
-        skill_ids: skills.map(s => s.id),
-        skills: skills.map(s => ({
+        skill_ids: skills.map((s) => s.id),
+        skills: skills.map((s) => ({
           id: s.id,
           name: s.name,
           description: s.description,
@@ -436,10 +442,8 @@ export class BusinessScopeService {
           version: s.version,
           metadata: s.metadata as Record<string, unknown> | undefined,
         })),
-      });
-    }
-
-    return agentsWithSkills;
+      };
+    });
   }
 
   /**
@@ -461,8 +465,8 @@ export class BusinessScopeService {
     }
 
     const skills = await skillRepository.findByBusinessScope(organizationId, businessScopeId);
-    
-    return skills.map(s => ({
+
+    return skills.map((s) => ({
       id: s.id,
       name: s.name,
       hash_id: s.hash_id,

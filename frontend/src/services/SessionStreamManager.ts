@@ -23,6 +23,7 @@ type Listener = () => void
 class SessionStreamManager {
   private sessions = new Map<string, SessionState>()
   private listeners = new Set<Listener>()
+  private notifyScheduled = false
 
   /**
    * Subscribe to state changes.
@@ -32,9 +33,25 @@ class SessionStreamManager {
     return () => this.listeners.delete(listener)
   }
 
+  /**
+   * Notify subscribers of a state change, coalescing bursts into a single
+   * render per animation frame. High-frequency stream chunks (token deltas)
+   * call notify() many times per frame; without coalescing each one forces a
+   * full re-render of the chat subtree.
+   */
   private notify(): void {
-    for (const listener of this.listeners) {
-      listener()
+    if (this.notifyScheduled) return
+    this.notifyScheduled = true
+    const flush = () => {
+      this.notifyScheduled = false
+      for (const listener of this.listeners) {
+        listener()
+      }
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(flush)
+    } else {
+      setTimeout(flush, 16)
     }
   }
 
@@ -86,11 +103,23 @@ class SessionStreamManager {
   /**
    * Update a specific message in a session by ID.
    */
-  updateMessage(sessionId: string, messageId: string, content: string, speakerAgentName?: string, speakerAgentAvatar?: string | null): void {
+  updateMessage(
+    sessionId: string,
+    messageId: string,
+    content: string,
+    speakerAgentName?: string,
+    speakerAgentAvatar?: string | null
+  ): void {
     const state = this.sessions.get(sessionId)
     if (!state) return
-    state.messages = state.messages.map(m =>
-      m.id === messageId ? { ...m, content, ...(speakerAgentName !== undefined ? { speakerAgentName, speakerAgentAvatar } : {}) } : m
+    state.messages = state.messages.map((m) =>
+      m.id === messageId
+        ? {
+            ...m,
+            content,
+            ...(speakerAgentName !== undefined ? { speakerAgentName, speakerAgentAvatar } : {}),
+          }
+        : m
     )
     this.notify()
   }
@@ -145,7 +174,13 @@ class SessionStreamManager {
         onAssistant: (event) => {
           allBlocks.push(...event.content)
           const serialized = JSON.stringify(allBlocks)
-          this.updateMessage(sessionId, aiMessageId, serialized, event.speakerAgentName, event.speakerAgentAvatar)
+          this.updateMessage(
+            sessionId,
+            aiMessageId,
+            serialized,
+            event.speakerAgentName,
+            event.speakerAgentAvatar
+          )
         },
         onError: (event) => {
           const s = this.sessions.get(sessionId)
@@ -170,7 +205,7 @@ class SessionStreamManager {
             this.notify()
           }
         },
-      },
+      }
     )
 
     state.streamHandle = handle
@@ -206,7 +241,9 @@ class SessionStreamManager {
             const { RestChatService } = await import('@/services/api/restChatService')
             const history = await RestChatService.getSessionHistory(sessionId)
             this.setMessages(sessionId, history)
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
         return false
       }
@@ -227,7 +264,8 @@ class SessionStreamManager {
       this.notify()
 
       // Connect to the reconnect SSE endpoint
-      const token = localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
+      const token =
+        localStorage.getItem('local_auth_token') || localStorage.getItem('cognito_id_token')
       const headers: Record<string, string> = {}
       if (token) headers['Authorization'] = `Bearer ${token}`
 
@@ -278,16 +316,26 @@ class SessionStreamManager {
                     const { RestChatService } = await import('@/services/api/restChatService')
                     const history = await RestChatService.getSessionHistory(sessionId)
                     this.setMessages(sessionId, history)
-                  } catch { /* ignore */ }
+                  } catch {
+                    /* ignore */
+                  }
                   return
                 }
                 try {
                   const parsed = JSON.parse(data)
                   if (parsed.type === 'assistant' && Array.isArray(parsed.content)) {
                     allBlocks.push(...parsed.content)
-                    this.updateMessage(sessionId, aiMessageId, JSON.stringify(allBlocks), parsed.speakerAgentName, parsed.speakerAgentAvatar)
+                    this.updateMessage(
+                      sessionId,
+                      aiMessageId,
+                      JSON.stringify(allBlocks),
+                      parsed.speakerAgentName,
+                      parsed.speakerAgentAvatar
+                    )
                   }
-                } catch { /* ignore non-JSON */ }
+                } catch {
+                  /* ignore non-JSON */
+                }
               }
             }
           }
@@ -304,15 +352,21 @@ class SessionStreamManager {
           // the SSE connection was dropped (network glitch, proxy timeout).
           // Wait briefly then retry.
           try {
-            const statusResp = await fetch(`${baseUrl}/api/chat/sessions/${sessionId}/status`, { headers })
+            const statusResp = await fetch(`${baseUrl}/api/chat/sessions/${sessionId}/status`, {
+              headers,
+            })
             if (statusResp.ok) {
-              const { status } = await statusResp.json() as { status: string }
+              const { status } = (await statusResp.json()) as { status: string }
               if (status === 'generating') {
-                console.log(`[SSM] SSE dropped for ${sessionId} but still generating — reconnecting in 2s`)
+                console.log(
+                  `[SSM] SSE dropped for ${sessionId} but still generating — reconnecting in 2s`
+                )
                 setTimeout(() => this.reconnectStream(sessionId), 2000)
               }
             }
-          } catch { /* offline or server down — online handler will retry */ }
+          } catch {
+            /* offline or server down — online handler will retry */
+          }
         }
       }
 

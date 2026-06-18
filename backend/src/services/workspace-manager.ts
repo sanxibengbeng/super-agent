@@ -122,6 +122,7 @@ export interface WorkspaceManifest {
 }
 
 const MANIFEST_FILENAME = '.workspace-manifest.json';
+const S3_SYNC_STATE_FILENAME = '.s3-sync-state.json';
 
 export class WorkspaceManager {
   private readonly baseDir: string;
@@ -182,7 +183,7 @@ export class WorkspaceManager {
     orgId: string,
     sessionId: string,
     scope: ScopeForWorkspace,
-    selectedAgentId: string | null,
+    selectedAgentId: string | null
   ): Promise<{ workspacePath: string; pluginPaths: string[] }> {
     const workspacePath = this.getScopeWorkspacePath(orgId, scope.id);
 
@@ -192,7 +193,11 @@ export class WorkspaceManager {
 
     // Generate all workspace files
     await this.generateScopeClaudeMd(workspacePath, scope, selectedAgentId);
-    await this.generateAgentSubagentFiles(join(workspacePath, '.claude', 'agents'), scope.agents, join(workspacePath, '.claude', 'skills'));
+    await this.generateAgentSubagentFiles(
+      join(workspacePath, '.claude', 'agents'),
+      scope.agents,
+      join(workspacePath, '.claude', 'skills')
+    );
     await this.generateSettings(workspacePath, scope.mcpServers);
 
     // Write scope memories as files in memories/ directory (not inlined in CLAUDE.md)
@@ -223,7 +228,10 @@ export class WorkspaceManager {
       try {
         await this.downloadSkill(skill, skillsDir);
       } catch (error) {
-        console.error(`Failed to download skill "${skill.name}" for session ${sessionId}:`, error instanceof Error ? error.message : error);
+        console.error(
+          `Failed to download skill "${skill.name}" for session ${sessionId}:`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
     const builtinCopied = await this.copyBuiltinSkills(skillsDir);
@@ -279,9 +287,20 @@ export class WorkspaceManager {
       agentId: selectedAgentId,
       provisionedAt: now,
       lastSyncedAt: now,
-      agents: scope.agents.map(a => ({ id: a.id, name: a.name })),
-      skills: scope.skills.map(s => ({ id: s.id, name: s.name, hashId: s.hashId })),
+      agents: scope.agents.map((a) => ({ id: a.id, name: a.name })),
+      skills: scope.skills.map((s) => ({ id: s.id, name: s.name, hashId: s.hashId })),
     });
+
+    // In agentcore mode, sync provisioned workspace to S3 so the container can see it
+    // via S3 Files mount at /mnt/ws.
+    if (config.agentRuntime === 'agentcore') {
+      await this.syncWorkspaceToS3(orgId, scope.id, workspacePath).catch((err) =>
+        console.warn(
+          '[workspace-manager] S3 workspace sync failed:',
+          err instanceof Error ? err.message : err
+        )
+      );
+    }
 
     return { workspacePath, pluginPaths };
   }
@@ -298,7 +317,7 @@ export class WorkspaceManager {
     orgId: string,
     sessionId: string,
     scope: ScopeForWorkspace,
-    selectedAgentId: string | null,
+    selectedAgentId: string | null
   ): Promise<{ refreshed: boolean; pluginPaths: string[] }> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scope.id, sessionId);
     const manifest = await this.readManifest(workspacePath);
@@ -328,7 +347,7 @@ export class WorkspaceManager {
     workspacePath: string,
     scope: ScopeForWorkspace,
     selectedAgentId: string | null,
-    manifest: WorkspaceManifest,
+    manifest: WorkspaceManifest
   ): Promise<void> {
     // 1. Regenerate CLAUDE.md
     await this.generateScopeClaudeMd(workspacePath, scope, selectedAgentId);
@@ -340,7 +359,11 @@ export class WorkspaceManager {
     const agentsDir = join(workspacePath, '.claude', 'agents');
     await rm(agentsDir, { recursive: true, force: true });
     await mkdir(agentsDir, { recursive: true });
-    await this.generateAgentSubagentFiles(agentsDir, scope.agents, join(workspacePath, '.claude', 'skills'));
+    await this.generateAgentSubagentFiles(
+      agentsDir,
+      scope.agents,
+      join(workspacePath, '.claude', 'skills')
+    );
 
     // 3. Diff and sync skills
     await this.syncSkills(workspacePath, manifest.skills, scope.skills);
@@ -355,7 +378,7 @@ export class WorkspaceManager {
       await mkdir(docsDir, { recursive: true });
 
       // Remove stale symlinks for groups no longer assigned
-      const desiredNames = new Set(docGroups.map(g => g.name.replace(/[/\\:*?"<>|]/g, '-')));
+      const desiredNames = new Set(docGroups.map((g) => g.name.replace(/[/\\:*?"<>|]/g, '-')));
       try {
         const existing = await readdir(docsDir);
         for (const entry of existing) {
@@ -363,7 +386,9 @@ export class WorkspaceManager {
             await rm(join(docsDir, entry), { force: true }).catch(() => {});
           }
         }
-      } catch { /* docsDir may not exist yet */ }
+      } catch {
+        /* docsDir may not exist yet */
+      }
 
       // Create missing symlinks
       for (const group of docGroups) {
@@ -427,8 +452,8 @@ export class WorkspaceManager {
       ...manifest,
       configVersion: scope.configVersion,
       lastSyncedAt: new Date().toISOString(),
-      agents: scope.agents.map(a => ({ id: a.id, name: a.name })),
-      skills: scope.skills.map(s => ({ id: s.id, name: s.name, hashId: s.hashId })),
+      agents: scope.agents.map((a) => ({ id: a.id, name: a.name })),
+      skills: scope.skills.map((s) => ({ id: s.id, name: s.name, hashId: s.hashId })),
     });
   }
 
@@ -440,7 +465,7 @@ export class WorkspaceManager {
   async generateScopeClaudeMd(
     workspacePath: string,
     scope: ScopeForWorkspace,
-    selectedAgentId: string | null,
+    selectedAgentId: string | null
   ): Promise<void> {
     const lines: string[] = [`# ${scope.name}`, ''];
     if (scope.description) {
@@ -456,19 +481,31 @@ export class WorkspaceManager {
     if (scope.agents.length > 0) {
       lines.push('## Available Agents', '');
       lines.push('You have access to specialized subagents for this business scope.');
-      lines.push('When the user\'s request matches a specific agent\'s expertise, delegate to that subagent.');
-      lines.push('**IMPORTANT**: When calling a subagent via the Task tool, you MUST use the agent\'s `name` (the identifier shown in parentheses), NOT the display name.', '');
+      lines.push(
+        "When the user's request matches a specific agent's expertise, delegate to that subagent."
+      );
+      lines.push(
+        "**IMPORTANT**: When calling a subagent via the Task tool, you MUST use the agent's `name` (the identifier shown in parentheses), NOT the display name.",
+        ''
+      );
 
       if (selectedAgentId) {
-        const selected = scope.agents.find(a => a.id === selectedAgentId);
+        const selected = scope.agents.find((a) => a.id === selectedAgentId);
         if (selected) {
-          lines.push(`The user has selected the "${selected.displayName}" agent (name: \`${selected.name}\`). Use this agent's expertise`);
-          lines.push('as your primary mode of operation. You may still delegate to other agents if needed.', '');
+          lines.push(
+            `The user has selected the "${selected.displayName}" agent (name: \`${selected.name}\`). Use this agent's expertise`
+          );
+          lines.push(
+            'as your primary mode of operation. You may still delegate to other agents if needed.',
+            ''
+          );
         }
       }
 
       for (const agent of scope.agents) {
-        lines.push(`- **${agent.displayName}** (name: \`${agent.name}\`): ${agent.role ?? 'General assistant'}`);
+        lines.push(
+          `- **${agent.displayName}** (name: \`${agent.name}\`): ${agent.role ?? 'General assistant'}`
+        );
       }
       lines.push('');
     }
@@ -479,16 +516,26 @@ export class WorkspaceManager {
     lines.push('## Workspace Security', '');
     lines.push('- You must ONLY read, write, and search files within this workspace directory.');
     lines.push('- NEVER use absolute paths or traverse to parent directories using `..`.');
-    lines.push('- NEVER run `find`, `ls`, `cat`, `grep`, or any command targeting paths outside this workspace.');
-    lines.push('- All file operations must use relative paths rooted in the current working directory.');
+    lines.push(
+      '- NEVER run `find`, `ls`, `cat`, `grep`, or any command targeting paths outside this workspace.'
+    );
+    lines.push(
+      '- All file operations must use relative paths rooted in the current working directory.'
+    );
     lines.push(`- The workspace root is: ${workspacePath}`);
-    lines.push('- If a user asks to access files outside this workspace, politely decline and explain the restriction.');
+    lines.push(
+      '- If a user asks to access files outside this workspace, politely decline and explain the restriction.'
+    );
 
     lines.push('');
     lines.push('## Application Code Directory', '');
     lines.push('- All application source code MUST be placed inside the `app/` directory.');
-    lines.push('- The workspace root is reserved for system files (.claude/, documents/, memories/).');
-    lines.push('- When creating new projects or features, always use `app/` as the base directory.');
+    lines.push(
+      '- The workspace root is reserved for system files (.claude/, documents/, memories/).'
+    );
+    lines.push(
+      '- When creating new projects or features, always use `app/` as the base directory.'
+    );
     lines.push('- Example structure: `app/src/`, `app/public/`, `app/package.json`, etc.');
 
     // Inject document groups (Knowledge Base)
@@ -496,29 +543,38 @@ export class WorkspaceManager {
     if (docGroups.length > 0) {
       lines.push('');
       lines.push('## Knowledge Base', '');
-      lines.push('Reference documents are available in the `documents/` directory. These are **READ-ONLY**.');
+      lines.push(
+        'Reference documents are available in the `documents/` directory. These are **READ-ONLY**.'
+      );
       lines.push('- NEVER modify, delete, or create files inside `documents/`.');
-      lines.push('- Use grep or ripgrep to search within these files when you need reference information.');
+      lines.push(
+        '- Use grep or ripgrep to search within these files when you need reference information.'
+      );
 
       // Add RAG instructions if enabled
       const { isRagEnabled: checkRag } = await import('./rag/document-indexer.service.js');
       if (checkRag()) {
-        lines.push('- **Preferred**: Use the `knowledge-search` skill for semantic search — it finds relevant passages much more accurately than grep.');
+        lines.push(
+          '- **Preferred**: Use the `knowledge-search` skill for semantic search — it finds relevant passages much more accurately than grep.'
+        );
       }
 
       lines.push('');
       lines.push('Available document groups:');
       for (const g of docGroups) {
-        lines.push(`- \`documents/${g.name.replace(/[/\\:*?"<>|]/g, '-')}\` (${g.fileCount} file${g.fileCount !== 1 ? 's' : ''})`);
+        lines.push(
+          `- \`documents/${g.name.replace(/[/\\:*?"<>|]/g, '-')}\` (${g.fileCount} file${g.fileCount !== 1 ? 's' : ''})`
+        );
       }
       lines.push('');
     }
 
     // Memory — pinned memories inlined for instant recall, others on-demand
-    const { scopeMemoryRepository: memRepo } = await import('../repositories/scope-memory.repository.js');
-    const pinnedMemories = await memRepo.findForContext(scope.id).then(
-      (all) => all.filter((m) => m.is_pinned),
-    );
+    const { scopeMemoryRepository: memRepo } =
+      await import('../repositories/scope-memory.repository.js');
+    const pinnedMemories = await memRepo
+      .findForContext(scope.id)
+      .then((all) => all.filter((m) => m.is_pinned));
 
     lines.push('');
     lines.push('## Memory');
@@ -545,7 +601,9 @@ export class WorkspaceManager {
     lines.push('- `memories/gaps.md` — Capability gaps and unresolved requests');
     lines.push('');
     lines.push('On your FIRST response, read `memories/lessons.md` to refresh context.');
-    lines.push('Also check `memories/patterns.md` when a task feels familiar, and `memories/gaps.md` when stuck.');
+    lines.push(
+      'Also check `memories/patterns.md` when a task feels familiar, and `memories/gaps.md` when stuck.'
+    );
     lines.push('');
     lines.push('These files are managed by the system — do not edit them.');
     lines.push('');
@@ -595,39 +653,43 @@ export class WorkspaceManager {
 
     const formatMemories = (items: typeof memories): string => {
       if (items.length === 0) return '*No entries yet.*\n';
-      return items.map(m => {
-        const autoLabel = m.tags.includes('auto-distilled') ? ' *(auto)* ' : ' ';
-        const date = m.created_at instanceof Date
-          ? m.created_at.toISOString().split('T')[0]
-          : '';
-        return `### ${date}: ${m.title}\n${autoLabel}\n${m.content}\n`;
-      }).join('\n');
+      return items
+        .map((m) => {
+          const autoLabel = m.tags.includes('auto-distilled') ? ' *(auto)* ' : ' ';
+          const date = m.created_at instanceof Date ? m.created_at.toISOString().split('T')[0] : '';
+          return `### ${date}: ${m.title}\n${autoLabel}\n${m.content}\n`;
+        })
+        .join('\n');
     };
 
     await writeFile(
       join(memoriesDir, 'pinned.md'),
       `# Pinned Knowledge\n\nImportant knowledge pinned by the user. Always check before complex work.\n\n${formatMemories(pinned)}`,
-      'utf-8',
+      'utf-8'
     );
     await writeFile(
       join(memoriesDir, 'lessons.md'),
       `# Lessons Learned\n\nMistakes, corrections, and improvements from past conversations.\n\n${formatMemories(lessons)}`,
-      'utf-8',
+      'utf-8'
     );
     await writeFile(
       join(memoriesDir, 'patterns.md'),
       `# Patterns\n\nRecurring user needs and effective solution paths.\n\n${formatMemories(patterns)}`,
-      'utf-8',
+      'utf-8'
     );
     await writeFile(
       join(memoriesDir, 'gaps.md'),
       `# Capability Gaps\n\nKnown limitations and unresolved requests.\n\n${formatMemories(gaps)}`,
-      'utf-8',
+      'utf-8'
     );
   }
 
   /** Generate .claude/agents/{name}.md subagent files from DB agents. */
-  async generateAgentSubagentFiles(agentsDir: string, agents: AgentForWorkspace[], skillsDir?: string): Promise<void> {
+  async generateAgentSubagentFiles(
+    agentsDir: string,
+    agents: AgentForWorkspace[],
+    skillsDir?: string
+  ): Promise<void> {
     for (const agent of agents) {
       // Collect all skill names (existing + generated)
       const allSkillNames = [...agent.skillNames];
@@ -654,7 +716,9 @@ export class WorkspaceManager {
 
       const lines: string[] = ['---'];
       lines.push(`name: ${agent.name}`);
-      lines.push(`description: ${agent.displayName} — ${agent.role ?? 'General assistant'}. Use when the user needs help with ${agent.role ?? 'this domain'}.`);
+      lines.push(
+        `description: ${agent.displayName} — ${agent.role ?? 'General assistant'}. Use when the user needs help with ${agent.role ?? 'this domain'}.`
+      );
       lines.push('model: inherit');
       lines.push('permissionMode: bypassPermissions');
       if (allSkillNames.length > 0) {
@@ -671,7 +735,10 @@ export class WorkspaceManager {
   }
 
   /** Generate .claude/settings.json with permissions and optional MCP servers. */
-  async generateSettings(workspacePath: string, mcpServers?: McpServerForWorkspace[]): Promise<void> {
+  async generateSettings(
+    workspacePath: string,
+    mcpServers?: McpServerForWorkspace[]
+  ): Promise<void> {
     const settings: Record<string, unknown> = {
       permissions: {
         allow: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill', 'WebFetch'],
@@ -706,7 +773,8 @@ export class WorkspaceManager {
           } else {
             const entry: Record<string, unknown> = { type: 'stdio', command: c.command };
             if (Array.isArray(c.args)) entry.args = c.args;
-            if (c.env && typeof c.env === 'object' && Object.keys(c.env as object).length > 0) entry.env = c.env;
+            if (c.env && typeof c.env === 'object' && Object.keys(c.env as object).length > 0)
+              entry.env = c.env;
             mcpConfig[server.name] = entry;
           }
           continue;
@@ -746,10 +814,10 @@ export class WorkspaceManager {
   async syncSkills(
     workspacePath: string,
     oldSkills: Array<{ id: string; name: string; hashId: string }>,
-    newSkills: SkillForWorkspace[],
+    newSkills: SkillForWorkspace[]
   ): Promise<void> {
-    const oldMap = new Map(oldSkills.map(s => [s.id, s]));
-    const newMap = new Map(newSkills.map(s => [s.id, s]));
+    const oldMap = new Map(oldSkills.map((s) => [s.id, s]));
+    const newMap = new Map(newSkills.map((s) => [s.id, s]));
     const skillsDir = join(workspacePath, '.claude', 'skills');
 
     // Remove deleted skills
@@ -766,7 +834,10 @@ export class WorkspaceManager {
         try {
           await this.downloadSkill(skill, skillsDir);
         } catch (error) {
-          console.error(`Failed to sync skill "${skill.name}":`, error instanceof Error ? error.message : error);
+          console.error(
+            `Failed to sync skill "${skill.name}":`,
+            error instanceof Error ? error.message : error
+          );
         }
       }
     }
@@ -800,7 +871,10 @@ export class WorkspaceManager {
         copied.push(entry.name);
       }
     } catch (error) {
-      console.warn('Could not load built-in skills:', error instanceof Error ? error.message : error);
+      console.warn(
+        'Could not load built-in skills:',
+        error instanceof Error ? error.message : error
+      );
     }
     return copied;
   }
@@ -826,20 +900,28 @@ export class WorkspaceManager {
         await access(targetDir);
         installed.push(targetDir);
         continue;
-      } catch { /* not yet cloned */ }
+      } catch {
+        /* not yet cloned */
+      }
 
       try {
         const { execFile } = await import('child_process');
         const { promisify } = await import('util');
         const execFileAsync = promisify(execFile);
-        await execFileAsync('git', [
-          'clone', '--depth', '1', '--branch', plugin.ref,
-          plugin.gitUrl, targetDir,
-        ], { timeout: 60_000 });
+        await execFileAsync(
+          'git',
+          ['clone', '--depth', '1', '--branch', plugin.ref, plugin.gitUrl, targetDir],
+          { timeout: 60_000 }
+        );
         installed.push(targetDir);
-        console.log(`[installPlugins] Cloned plugin "${plugin.name}" from ${plugin.gitUrl}@${plugin.ref}`);
+        console.log(
+          `[installPlugins] Cloned plugin "${plugin.name}" from ${plugin.gitUrl}@${plugin.ref}`
+        );
       } catch (error) {
-        console.error(`[installPlugins] Failed to clone plugin "${plugin.name}":`, error instanceof Error ? error.message : error);
+        console.error(
+          `[installPlugins] Failed to clone plugin "${plugin.name}":`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
     return installed;
@@ -851,7 +933,7 @@ export class WorkspaceManager {
 
   async downloadSkill(skill: SkillForWorkspace, targetDir: string): Promise<boolean> {
     const skillDir = join(targetDir, skill.name);
-    
+
     // Check for local path first (marketplace-installed skills)
     if (skill.localPath) {
       try {
@@ -861,16 +943,23 @@ export class WorkspaceManager {
         console.log(`[downloadSkill] Copied local skill "${skill.name}" from ${skill.localPath}`);
         return true;
       } catch (error) {
-        console.warn(`[downloadSkill] Local path not accessible for "${skill.name}": ${skill.localPath}, falling back to S3`);
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[downloadSkill] Local path not accessible for "${skill.name}": ${skill.localPath} (${reason}), falling back to S3`
+        );
       }
     }
-    
+
     // Fall back to S3 download
     const s3Key = `${skill.s3Prefix}skill.zip`;
     try {
-      const response = await this.s3Client.send(new GetObjectCommand({ Bucket: skill.s3Bucket, Key: s3Key }));
+      const response = await this.s3Client.send(
+        new GetObjectCommand({ Bucket: skill.s3Bucket, Key: s3Key })
+      );
       if (!response.Body) {
-        console.error(`Empty response body for skill "${skill.name}" from s3://${skill.s3Bucket}/${s3Key}`);
+        console.error(
+          `Empty response body for skill "${skill.name}" from s3://${skill.s3Bucket}/${s3Key}`
+        );
         // Fall through to inline body fallback
       } else {
         await mkdir(skillDir, { recursive: true });
@@ -882,13 +971,20 @@ export class WorkspaceManager {
 
         await this.extractSkillZip(zipPath, skillDir);
 
-        try { await rm(zipPath, { force: true }); } catch { /* non-critical */ }
+        try {
+          await rm(zipPath, { force: true });
+        } catch {
+          /* non-critical */
+        }
         return true;
       }
     } catch (error) {
       // S3 failed — fall through to inline body fallback
       if (!skill.body && !skill.description) {
-        console.error(`S3 download failed for skill "${skill.name}" from s3://${skill.s3Bucket}/${s3Key}:`, error instanceof Error ? error.message : error);
+        console.error(
+          `S3 download failed for skill "${skill.name}" from s3://${skill.s3Bucket}/${s3Key}:`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
 
@@ -961,8 +1057,13 @@ export class WorkspaceManager {
 
     await mkdir(skillsDir, { recursive: true });
     for (const skill of skills) {
-      try { await this.downloadSkill(skill, skillsDir); } catch (error) {
-        console.error(`Failed to download skill "${skill.name}" for agent ${agentId}:`, error instanceof Error ? error.message : error);
+      try {
+        await this.downloadSkill(skill, skillsDir);
+      } catch (error) {
+        console.error(
+          `Failed to download skill "${skill.name}" for agent ${agentId}:`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
     await this.copyBuiltinSkills(skillsDir);
@@ -973,19 +1074,31 @@ export class WorkspaceManager {
     return workspacePath;
   }
 
-  private async canReuseAgentWorkspace(agentId: string, skills: SkillForWorkspace[]): Promise<boolean> {
+  private async canReuseAgentWorkspace(
+    agentId: string,
+    skills: SkillForWorkspace[]
+  ): Promise<boolean> {
     try {
       const manifestPath = join(this.getWorkspacePath(agentId), MANIFEST_FILENAME);
       await access(manifestPath);
       const content = await readFile(manifestPath, 'utf-8');
-      const manifest = JSON.parse(content) as { agentId: string; skills: Array<{ id: string; hashId: string }> };
+      const manifest = JSON.parse(content) as {
+        agentId: string;
+        skills: Array<{ id: string; hashId: string }>;
+      };
       if (!manifest) return false;
 
-      const currentSet = skills.map(s => `${s.id}:${s.hashId}`).sort().join(',');
-      const manifestSet = manifest.skills.map((s: { id: string; hashId: string }) => `${s.id}:${s.hashId}`).sort().join(',');
-      
+      const currentSet = skills
+        .map((s) => `${s.id}:${s.hashId}`)
+        .sort()
+        .join(',');
+      const manifestSet = manifest.skills
+        .map((s: { id: string; hashId: string }) => `${s.id}:${s.hashId}`)
+        .sort()
+        .join(',');
+
       if (currentSet !== manifestSet) return false;
-      
+
       // Also verify skills actually exist on disk
       const skillsDir = join(this.getWorkspacePath(agentId), '.claude', 'skills');
       for (const skill of skills) {
@@ -993,11 +1106,13 @@ export class WorkspaceManager {
         try {
           await access(skillDir);
         } catch {
-          console.log(`[canReuseAgentWorkspace] Skill "${skill.name}" not found on disk, will re-provision`);
+          console.log(
+            `[canReuseAgentWorkspace] Skill "${skill.name}" not found on disk, will re-provision`
+          );
           return false;
         }
       }
-      
+
       return true;
     } catch {
       return false;
@@ -1009,7 +1124,7 @@ export class WorkspaceManager {
     const now = new Date().toISOString();
     const manifest = {
       agentId,
-      skills: skills.map(s => ({ id: s.id, hashId: s.hashId })),
+      skills: skills.map((s) => ({ id: s.id, hashId: s.hashId })),
       createdAt: now,
       updatedAt: now,
     };
@@ -1018,8 +1133,13 @@ export class WorkspaceManager {
 
   async deleteWorkspace(agentId: string): Promise<void> {
     const workspacePath = this.getWorkspacePath(agentId);
-    try { await rm(workspacePath, { recursive: true, force: true }); } catch (error) {
-      console.error(`Failed to delete workspace for agent ${agentId}:`, error instanceof Error ? error.message : error);
+    try {
+      await rm(workspacePath, { recursive: true, force: true });
+    } catch (error) {
+      console.error(
+        `Failed to delete workspace for agent ${agentId}:`,
+        error instanceof Error ? error.message : error
+      );
     }
   }
 
@@ -1039,7 +1159,11 @@ export class WorkspaceManager {
   }
 
   async writeManifest(workspacePath: string, manifest: WorkspaceManifest): Promise<void> {
-    await writeFile(join(workspacePath, MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), 'utf-8');
+    await writeFile(
+      join(workspacePath, MANIFEST_FILENAME),
+      JSON.stringify(manifest, null, 2),
+      'utf-8'
+    );
   }
 
   /**
@@ -1049,7 +1173,7 @@ export class WorkspaceManager {
   async listWorkspaceFiles(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    sessionId: string
   ): Promise<WorkspaceFileNode[] | null> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     try {
@@ -1067,11 +1191,13 @@ export class WorkspaceManager {
   async listWorkspaceFilesFromS3(
     orgId: string,
     scopeId: string,
-    sessionId: string,
-    bucket?: string,
+    _sessionId: string,
+    bucket?: string
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    const prefix = `${orgId}/${scopeId}/${sessionId}/`;
+    // S3 Files mounts /{orgId}/{scopeId}/ as the container's /mnt/ws.
+    // All files (container-written and backend-uploaded) live at {orgId}/{scopeId}/{file}.
+    const prefix = `${orgId}/${scopeId}/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -1079,11 +1205,13 @@ export class WorkspaceManager {
       let continuationToken: string | undefined;
 
       do {
-        const result = await this.s3Client.send(new ListObjectsV2Command({
-          Bucket: s3Bucket,
-          Prefix: prefix,
-          ContinuationToken: continuationToken,
-        }));
+        const result = await this.s3Client.send(
+          new ListObjectsV2Command({
+            Bucket: s3Bucket,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          })
+        );
         for (const obj of result.Contents ?? []) {
           if (obj.Key) {
             const relKey = obj.Key.slice(prefix.length);
@@ -1153,15 +1281,17 @@ export class WorkspaceManager {
   /**
    * List ~/.claude files from S3 (__claude_home__/ prefix).
    * Used as fallback when the AgentCore container is unavailable.
+   * Checks both the scope-level prefix and the legacy workspace/ prefix.
    */
   async listClaudeHomeFromS3(
     orgId: string,
     scopeId: string,
     _sessionId: string,
-    bucket?: string,
+    bucket?: string
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    const prefix = `${orgId}/${scopeId}/workspace/__claude_home__/`;
+    // S3 Files scope root is {orgId}/{scopeId}/, so __claude_home__/ lives there
+    const prefix = `${orgId}/${scopeId}/__claude_home__/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -1169,11 +1299,13 @@ export class WorkspaceManager {
       let continuationToken: string | undefined;
 
       do {
-        const result = await this.s3Client.send(new ListObjectsV2Command({
-          Bucket: s3Bucket,
-          Prefix: prefix,
-          ContinuationToken: continuationToken,
-        }));
+        const result = await this.s3Client.send(
+          new ListObjectsV2Command({
+            Bucket: s3Bucket,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          })
+        );
         for (const obj of result.Contents ?? []) {
           if (obj.Key) {
             const relKey = obj.Key.slice(prefix.length);
@@ -1202,7 +1334,7 @@ export class WorkspaceManager {
     scopeId: string,
     sessionId: string,
     skillName: string,
-    sourcePath: string,
+    sourcePath: string
   ): Promise<void> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     const skillsDir = join(workspacePath, '.claude', 'skills');
@@ -1218,7 +1350,7 @@ export class WorkspaceManager {
   async listWorkspaceSkills(
     orgId: string,
     scopeId: string,
-    sessionId: string,
+    sessionId: string
   ): Promise<Array<{ name: string; hasSkillMd: boolean; description: string | null }>> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     const skillsDir = join(workspacePath, '.claude', 'skills');
@@ -1244,7 +1376,9 @@ export class WorkspaceManager {
           description = trimmed.length > 120 ? trimmed.substring(0, 120) + '…' : trimmed;
           break;
         }
-      } catch { /* no SKILL.md */ }
+      } catch {
+        /* no SKILL.md */
+      }
       skills.push({ name: entry.name, hasSkillMd, description });
     }
     return skills;
@@ -1258,7 +1392,7 @@ export class WorkspaceManager {
     orgId: string,
     scopeId: string,
     sessionId: string,
-    skillName: string,
+    skillName: string
   ): Promise<boolean> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     const skillDir = join(workspacePath, '.claude', 'skills', skillName);
@@ -1270,9 +1404,9 @@ export class WorkspaceManager {
 
       // In agentcore mode, also delete from S3
       if (config.agentRuntime === 'agentcore') {
-        await this.deleteS3Prefix(
-          `${orgId}/${scopeId}/workspace/.claude/skills/${skillName}/`,
-        ).catch(err => console.warn('[workspace-manager] S3 delete failed:', err));
+        await this.deleteS3Prefix(`${orgId}/${scopeId}/.claude/skills/${skillName}/`).catch((err) =>
+          console.warn('[workspace-manager] S3 delete failed:', err)
+        );
       }
 
       return true;
@@ -1290,25 +1424,173 @@ export class WorkspaceManager {
     let continuationToken: string | undefined;
 
     do {
-      const result = await this.s3Client.send(new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: prefix,
-        ContinuationToken: continuationToken,
-      }));
+      const result = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      );
 
       const objects = (result.Contents ?? [])
         .filter((obj): obj is { Key: string } => !!obj.Key)
-        .map(obj => ({ Key: obj.Key }));
+        .map((obj) => ({ Key: obj.Key }));
 
       if (objects.length > 0) {
-        await this.s3Client.send(new DeleteObjectsCommand({
-          Bucket: bucket,
-          Delete: { Objects: objects },
-        }));
+        await this.s3Client.send(
+          new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: objects },
+          })
+        );
       }
 
       continuationToken = result.NextContinuationToken;
     } while (continuationToken);
+  }
+
+  /**
+   * Sync all provisioned workspace files to S3.
+   * Walks the local workspace directory and uploads each file with key
+   * {orgId}/{scopeId}/{relativePath} so S3 Files makes them visible at /mnt/ws/{relativePath}.
+   */
+  private async syncWorkspaceToS3(
+    orgId: string,
+    scopeId: string,
+    workspacePath: string
+  ): Promise<void> {
+    const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const {
+      readdir: readdirAsync,
+      stat: statAsync,
+      readFile: readFileAsync,
+    } = await import('fs/promises');
+    const bucket = config.agentcore.workspaceS3Bucket;
+    if (!bucket) return;
+
+    const SKIP_DIRS = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'build',
+      '.next',
+      '.cache',
+      '.venv',
+      '__pycache__',
+      'plugins',
+    ]);
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    const UPLOAD_CONCURRENCY = 12;
+
+    // Load the previous sync state so we can skip files whose size+mtime are
+    // unchanged (delta sync) — generated workspace files are largely identical
+    // across provisions and should not be re-uploaded every time.
+    const prevState = await this.readS3SyncState(workspacePath);
+    const nextState: Record<string, { size: number; mtimeMs: number }> = {};
+
+    // 1. Walk the tree and collect upload tasks (cheap, sequential stat).
+    const tasks: Array<{ key: string; fullPath: string; relativePath: string }> = [];
+    const walk = async (dir: string): Promise<void> => {
+      let entries: import('fs').Dirent[];
+      try {
+        entries = await readdirAsync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else if (entry.isFile()) {
+          // Don't upload our own internal bookkeeping files.
+          if (
+            dir === workspacePath &&
+            (entry.name === S3_SYNC_STATE_FILENAME || entry.name === MANIFEST_FILENAME)
+          )
+            continue;
+          const relativePath = fullPath.slice(workspacePath.length + 1); // +1 for trailing /
+          try {
+            const fileStat = await statAsync(fullPath);
+            if (fileStat.size > MAX_FILE_SIZE) continue;
+            nextState[relativePath] = { size: fileStat.size, mtimeMs: fileStat.mtimeMs };
+            const prev = prevState[relativePath];
+            if (prev && prev.size === fileStat.size && prev.mtimeMs === fileStat.mtimeMs) {
+              continue; // unchanged — skip upload
+            }
+            tasks.push({ key: `${orgId}/${scopeId}/${relativePath}`, fullPath, relativePath });
+          } catch {
+            // Skip files we can't stat
+          }
+        }
+      }
+    };
+    await walk(workspacePath);
+
+    // 2. Upload changed files with bounded concurrency.
+    let uploaded = 0;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < tasks.length) {
+        const task = tasks[cursor++];
+        if (!task) break;
+        try {
+          const content = await readFileAsync(task.fullPath);
+          await this.s3Client.send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: task.key,
+              Body: content,
+            })
+          );
+          uploaded++;
+        } catch {
+          // A failed upload leaves the file out of nextState so it retries next sync
+          delete nextState[task.relativePath];
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_CONCURRENCY, tasks.length) }, () => worker())
+    );
+
+    await this.writeS3SyncState(workspacePath, nextState);
+
+    if (uploaded > 0) {
+      console.log(
+        `[workspace-manager] Synced ${uploaded}/${Object.keys(nextState).length} workspace files to S3 for scope ${scopeId} (${tasks.length - uploaded} failed, rest unchanged)`
+      );
+    }
+  }
+
+  /** Read the delta-sync state file mapping relativePath → {size, mtimeMs}. */
+  private async readS3SyncState(
+    workspacePath: string
+  ): Promise<Record<string, { size: number; mtimeMs: number }>> {
+    try {
+      const { readFile: readFileAsync } = await import('fs/promises');
+      const content = await readFileAsync(join(workspacePath, S3_SYNC_STATE_FILENAME), 'utf-8');
+      return JSON.parse(content) as Record<string, { size: number; mtimeMs: number }>;
+    } catch {
+      return {};
+    }
+  }
+
+  /** Persist the delta-sync state file. Best-effort. */
+  private async writeS3SyncState(
+    workspacePath: string,
+    state: Record<string, { size: number; mtimeMs: number }>
+  ): Promise<void> {
+    try {
+      const { writeFile: writeFileAsync } = await import('fs/promises');
+      await writeFileAsync(
+        join(workspacePath, S3_SYNC_STATE_FILENAME),
+        JSON.stringify(state),
+        'utf-8'
+      );
+    } catch {
+      // Non-fatal: a missing state file just means the next sync uploads everything
+    }
   }
 
   /**
@@ -1318,7 +1600,7 @@ export class WorkspaceManager {
     orgId: string,
     scopeId: string,
     sessionId: string,
-    filePath: string,
+    filePath: string
   ): Promise<string | null> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     // Prevent path traversal
@@ -1341,21 +1623,24 @@ export class WorkspaceManager {
   /**
    * Read a workspace file from S3 (fallback for agentcore mode when
    * the file only exists in the container and was synced to S3).
+   * Key layout: {orgId}/{scopeId}/{filePath} (maps to container /mnt/ws/{filePath}).
    */
   async readWorkspaceFileFromS3(
     orgId: string,
     scopeId: string,
     _sessionId: string,
-    filePath: string,
+    filePath: string
   ): Promise<string | null> {
     const s3Bucket = config.agentcore.workspaceS3Bucket;
-    const key = `${orgId}/${scopeId}/workspace/${filePath}`;
+    const key = `${orgId}/${scopeId}/${filePath}`;
     try {
       const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const response = await this.s3Client.send(new GetObjectCommand({
-        Bucket: s3Bucket,
-        Key: key,
-      }));
+      const response = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: s3Bucket,
+          Key: key,
+        })
+      );
       if (response.Body && typeof (response.Body as any).transformToString === 'function') {
         return await (response.Body as any).transformToString();
       }
@@ -1373,16 +1658,18 @@ export class WorkspaceManager {
     orgId: string,
     scopeId: string,
     _sessionId: string,
-    filePath: string,
+    filePath: string
   ): Promise<Buffer | null> {
     const s3Bucket = config.agentcore.workspaceS3Bucket;
-    const key = `${orgId}/${scopeId}/workspace/${filePath}`;
+    const key = `${orgId}/${scopeId}/${filePath}`;
     try {
       const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const response = await this.s3Client.send(new GetObjectCommand({
-        Bucket: s3Bucket,
-        Key: key,
-      }));
+      const response = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: s3Bucket,
+          Key: key,
+        })
+      );
       if (response.Body && typeof (response.Body as any).transformToByteArray === 'function') {
         const bytes = await (response.Body as any).transformToByteArray();
         return Buffer.from(bytes);
@@ -1398,7 +1685,7 @@ export class WorkspaceManager {
     orgId: string,
     scopeId: string,
     sessionId: string,
-    filePath: string,
+    filePath: string
   ): string | null {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     const resolved = join(workspacePath, filePath);
@@ -1406,13 +1693,12 @@ export class WorkspaceManager {
     return resolved;
   }
 
-
   async writeWorkspaceFile(
     orgId: string,
     scopeId: string,
     sessionId: string,
     filePath: string,
-    content: string,
+    content: string
   ): Promise<boolean> {
     const workspacePath = this.getSessionWorkspacePath(orgId, scopeId, sessionId);
     const resolved = join(workspacePath, filePath);
@@ -1421,15 +1707,21 @@ export class WorkspaceManager {
       await mkdir(dirname(resolved), { recursive: true });
       await writeFile(resolved, content, 'utf-8');
 
-      // In agentcore mode, also upload to S3 so the container picks it up
+      // In agentcore mode, also upload to S3 so the container picks it up.
+      // S3 Files root = /{orgId}/{scopeId}/, container mount = /mnt/ws,
+      // so key {orgId}/{scopeId}/{file} → container path /mnt/ws/{file}.
       if (config.agentRuntime === 'agentcore') {
         const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-        const key = `${orgId}/${scopeId}/workspace/${filePath}`;
-        await this.s3Client.send(new PutObjectCommand({
-          Bucket: config.agentcore.workspaceS3Bucket,
-          Key: key,
-          Body: content,
-        })).catch(err => console.warn('[workspace-manager] S3 upload failed:', err));
+        const key = `${orgId}/${scopeId}/${filePath}`;
+        await this.s3Client
+          .send(
+            new PutObjectCommand({
+              Bucket: config.agentcore.workspaceS3Bucket,
+              Key: key,
+              Body: content,
+            })
+          )
+          .catch((err) => console.warn('[workspace-manager] S3 upload failed:', err));
       }
 
       return true;
@@ -1448,7 +1740,7 @@ export class WorkspaceManager {
     scopeId: string,
     _sessionId: string,
     filePath: string,
-    content: Buffer,
+    content: Buffer
   ): Promise<boolean> {
     const workspacePath = this.getScopeWorkspacePath(orgId, scopeId);
     const resolved = join(workspacePath, filePath);
@@ -1457,15 +1749,20 @@ export class WorkspaceManager {
       await mkdir(dirname(resolved), { recursive: true });
       await writeFile(resolved, content);
 
-      // In agentcore mode, also upload to S3 so the container picks it up
+      // In agentcore mode, also upload to S3 so the container picks it up.
+      // Key without 'workspace/' — maps directly to container /mnt/ws/{file}.
       if (config.agentRuntime === 'agentcore') {
         const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-        const key = `${orgId}/${scopeId}/workspace/${filePath}`;
-        await this.s3Client.send(new PutObjectCommand({
-          Bucket: config.agentcore.workspaceS3Bucket,
-          Key: key,
-          Body: content,
-        })).catch(err => console.warn('[workspace-manager] S3 upload failed:', err));
+        const key = `${orgId}/${scopeId}/${filePath}`;
+        await this.s3Client
+          .send(
+            new PutObjectCommand({
+              Bucket: config.agentcore.workspaceS3Bucket,
+              Key: key,
+              Body: content,
+            })
+          )
+          .catch((err) => console.warn('[workspace-manager] S3 upload failed:', err));
       }
 
       return true;
@@ -1474,11 +1771,19 @@ export class WorkspaceManager {
     }
   }
 
-
   /** Directories to show in the tree but NOT recurse into (too large / not useful). */
   private static readonly SHALLOW_DIRS = new Set([
-    'node_modules', '.git', '.next', '.nuxt', '.cache', 'dist', 'build',
-    '__pycache__', '.venv', 'venv', '.tox',
+    'node_modules',
+    '.git',
+    '.next',
+    '.nuxt',
+    '.cache',
+    'dist',
+    'build',
+    '__pycache__',
+    '.venv',
+    'venv',
+    '.tox',
   ]);
 
   private async readDirRecursive(dir: string, rootDir: string): Promise<WorkspaceFileNode[]> {

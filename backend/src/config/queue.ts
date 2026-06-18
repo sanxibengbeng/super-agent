@@ -22,6 +22,11 @@ export const NODE_LOCK_TTL_MS = 30000;
 // Execution timeout (30 minutes)
 export const EXECUTION_TIMEOUT_MS = 30 * 60 * 1000;
 
+// Per-node execution timeout (5 minutes). Enforced in the processor via
+// Promise.race — BullMQ's job-level `timeout` option was removed in v5 and is
+// a no-op, so a hung node would otherwise hold a worker slot indefinitely.
+export const NODE_EXECUTION_TIMEOUT_MS = 5 * 60 * 1000;
+
 /**
  * Redis connection configuration for BullMQ
  */
@@ -64,7 +69,9 @@ export const runWorkflowQueueOptions: QueueOptions = {
   defaultJobOptions: {
     ...defaultQueueOptions.defaultJobOptions,
     attempts: 3,
-    timeout: 5 * 60 * 1000, // 5 minute timeout per node execution
+    // Note: per-node timeout is enforced in the processor (Promise.race against
+    // NODE_EXECUTION_TIMEOUT_MS). BullMQ v5 removed the job-level `timeout`
+    // option, so setting it here would do nothing.
   },
 };
 
@@ -76,7 +83,6 @@ export const pollWorkflowQueueOptions: QueueOptions = {
   defaultJobOptions: {
     ...defaultQueueOptions.defaultJobOptions,
     attempts: 1, // Polling jobs should not retry
-    timeout: 10 * 1000, // 10 second timeout for polling
   },
 };
 

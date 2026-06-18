@@ -51,7 +51,11 @@ import {
   endConversationTrace,
   flushLangfuse,
 } from './langfuse.service.js';
-import { processConversationEvent, flushActiveSubAgents, type ConversationHookContext } from './conversation-hooks.js';
+import {
+  processConversationEvent,
+  flushActiveSubAgents,
+  type ConversationHookContext,
+} from './conversation-hooks.js';
 import { sanitizeEvent } from './output-sanitizer.js';
 import { distillationService } from './distillation.service.js';
 
@@ -85,7 +89,7 @@ export class ChatService {
     runtime?: AgentRuntime,
     skillSvc?: SkillService,
     wsMgr?: WorkspaceManager,
-    bsSvc?: BusinessScopeService,
+    bsSvc?: BusinessScopeService
   ) {
     this.agentRuntime = runtime ?? defaultAgentRuntime;
     this.skillService = skillSvc ?? defaultSkillService;
@@ -114,7 +118,7 @@ export class ChatService {
   async getSessionsByScope(
     organizationId: string,
     businessScopeId: string,
-    userId?: string,
+    userId?: string
   ): Promise<ChatSessionEntity[]> {
     return chatSessionRepository.findByBusinessScope(organizationId, businessScopeId, userId);
   }
@@ -128,7 +132,7 @@ export class ChatService {
   async createSession(
     data: CreateChatSessionInput,
     organizationId: string,
-    userId: string,
+    userId: string
   ): Promise<ChatSessionEntity> {
     // Validate business_scope_id belongs to this organization (prevents FK errors)
     if (data.business_scope_id) {
@@ -151,14 +155,14 @@ export class ChatService {
         context: data.context ?? {},
       } as any,
       organizationId,
-      userId,
+      userId
     );
   }
 
   async updateSession(
     sessionId: string,
     data: UpdateChatSessionInput,
-    organizationId: string,
+    organizationId: string
   ): Promise<ChatSessionEntity> {
     const existing = await chatSessionRepository.findById(sessionId, organizationId);
     if (!existing) throw AppError.notFound(`Chat session with ID ${sessionId} not found`);
@@ -193,7 +197,10 @@ export class ChatService {
   // Message Management
   // ==========================================================================
 
-  async getChatHistory(organizationId: string, options: ChatHistoryOptions): Promise<ChatMessageEntity[]> {
+  async getChatHistory(
+    organizationId: string,
+    options: ChatHistoryOptions
+  ): Promise<ChatMessageEntity[]> {
     const session = await chatSessionRepository.findById(options.sessionId, organizationId);
     if (!session) throw AppError.notFound(`Chat session with ID ${options.sessionId} not found`);
 
@@ -210,18 +217,21 @@ export class ChatService {
     sessionId: string,
     type: 'user' | 'ai' | 'agent' | 'system',
     content: string,
-    options?: { agentId?: string; mentionAgentId?: string; metadata?: Record<string, unknown> },
+    options?: { agentId?: string; mentionAgentId?: string; metadata?: Record<string, unknown> }
   ): Promise<ChatMessageEntity> {
     const session = await chatSessionRepository.findById(sessionId, organizationId);
     if (!session) throw AppError.notFound(`Chat session with ID ${sessionId} not found`);
-    return chatMessageRepository.create({
-      session_id: sessionId,
-      type,
-      content,
-      agent_id: options?.agentId ?? null,
-      mention_agent_id: options?.mentionAgentId ?? null,
-      metadata: options?.metadata ?? {},
-    }, organizationId);
+    return chatMessageRepository.create(
+      {
+        session_id: sessionId,
+        type,
+        content,
+        agent_id: options?.agentId ?? null,
+        mention_agent_id: options?.mentionAgentId ?? null,
+        metadata: options?.metadata ?? {},
+      },
+      organizationId
+    );
   }
 
   // ==========================================================================
@@ -244,17 +254,21 @@ export class ChatService {
     /** Execution task ID for workspace event tracking */
     executionTaskId?: string;
   }): Promise<{ text: string; sessionId: string; contentBlocks: ContentBlock[] }> {
-    const result = await this.prepareScopeSession(
-      options.organizationId,
-      options.userId,
-      {
-        businessScopeId: options.businessScopeId,
-        sessionId: options.sessionId,
-        message: options.message,
-      },
-    );
+    const result = await this.prepareScopeSession(options.organizationId, options.userId, {
+      businessScopeId: options.businessScopeId,
+      sessionId: options.sessionId,
+      message: options.message,
+    });
 
-    const { sessionId, agentConfig, skills, claudeSessionId, workspacePath, pluginPaths, mcpServers } = result;
+    const {
+      sessionId,
+      agentConfig,
+      skills,
+      claudeSessionId,
+      workspacePath,
+      pluginPaths,
+      mcpServers,
+    } = result;
 
     // Apply system prompt override if provided (e.g., for Project module)
     if (options.systemPromptOverride) {
@@ -286,7 +300,7 @@ export class ChatService {
         agentConfig,
         skills,
         pluginPaths.length > 0 ? pluginPaths : undefined,
-        Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+        Object.keys(mcpServers).length > 0 ? mcpServers : undefined
       );
 
       const timeoutMs = config.claude.responseTimeoutMs;
@@ -297,13 +311,17 @@ export class ChatService {
         timeoutMs,
         (event: ConversationEvent) => {
           if (event.type === 'session_start' && event.sessionId) {
-            chatSessionRepository.updateClaudeSessionId(sessionId, options.organizationId, event.sessionId).catch(() => {});
+            chatSessionRepository
+              .updateClaudeSessionId(sessionId, options.organizationId, event.sessionId)
+              .catch(() => {});
           }
           if (event.type === 'assistant' && event.content) {
             allContentBlocks.push(...event.content);
           }
         },
-        () => { timedOut = true; },
+        () => {
+          timedOut = true;
+        }
       );
 
       if (timedOut) {
@@ -311,11 +329,21 @@ export class ChatService {
       }
     } finally {
       await agentStatusService.setActive(agentConfig.id, options.organizationId);
-      await chatSessionRepository.updateStatus(sessionId, options.organizationId, 'idle').catch(() => {});
+      await chatSessionRepository
+        .updateStatus(sessionId, options.organizationId, 'idle')
+        .catch(() => {});
 
       if (allContentBlocks.length > 0) {
-        await this.addMessage(options.organizationId, sessionId, 'ai', JSON.stringify(allContentBlocks)).catch((err) => {
-          console.error('[ChatService] Failed to save AI reply:', err instanceof Error ? err.message : err);
+        await this.addMessage(
+          options.organizationId,
+          sessionId,
+          'ai',
+          JSON.stringify(allContentBlocks)
+        ).catch((err) => {
+          console.error(
+            '[ChatService] Failed to save AI reply:',
+            err instanceof Error ? err.message : err
+          );
         });
       }
 
@@ -323,21 +351,23 @@ export class ChatService {
 
       // Auto-distill memories (same as streamChat)
       if (allContentBlocks.length > 0 && options.businessScopeId) {
-        distillationService.enqueue({
-          organizationId: options.organizationId,
-          scopeId: options.businessScopeId,
-          sessionId,
-          agentId: agentConfig.id,
-          contentBlocks: allContentBlocks,
-          userMessage: options.message,
-        }).catch(() => {});
+        distillationService
+          .enqueue({
+            organizationId: options.organizationId,
+            scopeId: options.businessScopeId,
+            sessionId,
+            agentId: agentConfig.id,
+            contentBlocks: allContentBlocks,
+            userMessage: options.message,
+          })
+          .catch(() => {});
       }
     }
 
     // Extract text from content blocks
     const text = allContentBlocks
       .filter((b): b is ContentBlock & { type: 'text' } => b.type === 'text')
-      .map(b => b.text)
+      .map((b) => b.text)
       .join('\n');
 
     return { text: text || '(No response)', sessionId, contentBlocks: allContentBlocks };
@@ -354,7 +384,7 @@ export class ChatService {
   async prepareScopeSessionPublic(
     organizationId: string,
     userId: string,
-    options: ChatStreamOptions,
+    options: ChatStreamOptions
   ) {
     return this.prepareScopeSession(organizationId, userId, options);
   }
@@ -367,33 +397,43 @@ export class ChatService {
    *
    * This is a no-op if the session already has a provisioned workspace.
    */
-  async provisionSessionWorkspace(
-    sessionId: string,
-    organizationId: string,
-  ): Promise<void> {
+  async provisionSessionWorkspace(sessionId: string, organizationId: string): Promise<void> {
     const session = await this.getSessionById(sessionId, organizationId);
     const scopeId = session.business_scope_id;
     if (!scopeId) {
-      console.log(`[provisionSessionWorkspace] Session ${sessionId} has no business_scope_id, skipping`);
+      console.log(
+        `[provisionSessionWorkspace] Session ${sessionId} has no business_scope_id, skipping`
+      );
       return;
     }
 
     const selectedAgentId = session.agent_id ?? null;
-    console.log(`[provisionSessionWorkspace] Building scope workspace data for scope=${scopeId}, agent=${selectedAgentId}`);
+    console.log(
+      `[provisionSessionWorkspace] Building scope workspace data for scope=${scopeId}, agent=${selectedAgentId}`
+    );
 
     // Build the ScopeForWorkspace data (same logic as prepareScopeSession)
     const scopeForWorkspace = await this.buildScopeForWorkspace(
-      scopeId, organizationId, selectedAgentId,
+      scopeId,
+      organizationId,
+      selectedAgentId
     );
 
-    console.log(`[provisionSessionWorkspace] Provisioning workspace for session=${sessionId}, scope=${scopeId}, skills=${scopeForWorkspace.skills.length}, agents=${scopeForWorkspace.agents.length}`);
+    console.log(
+      `[provisionSessionWorkspace] Provisioning workspace for session=${sessionId}, scope=${scopeId}, skills=${scopeForWorkspace.skills.length}, agents=${scopeForWorkspace.agents.length}`
+    );
 
     // Provision workspace (idempotent — ensureWorkspaceUpToDate handles existing ones)
     const result = await this.workspaceManager.ensureSessionWorkspace(
-      organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+      organizationId,
+      sessionId,
+      scopeForWorkspace,
+      selectedAgentId
     );
 
-    console.log(`[provisionSessionWorkspace] Workspace provisioned at ${result.workspacePath}, plugins=${result.pluginPaths.length}`);
+    console.log(
+      `[provisionSessionWorkspace] Workspace provisioned at ${result.workspacePath}, plugins=${result.pluginPaths.length}`
+    );
   }
 
   /**
@@ -403,27 +443,32 @@ export class ChatService {
   private async buildScopeForWorkspace(
     scopeId: string,
     organizationId: string,
-    selectedAgentId: string | null,
+    selectedAgentId: string | null
   ): Promise<ScopeForWorkspace> {
-    const scope = await businessScopeRepository.findById(scopeId, organizationId) as BusinessScopeEntity | null;
+    const scope = (await businessScopeRepository.findById(
+      scopeId,
+      organizationId
+    )) as BusinessScopeEntity | null;
     if (!scope) throw AppError.notFound(`Business scope with ID ${scopeId} not found`);
 
     // Run independent DB queries in parallel
     const { skillService: scopeSkillService } = await import('./skill.service.js');
-    const { documentGroupRepository: docGroupRepo } = await import('../repositories/document-group.repository.js');
+    const { documentGroupRepository: docGroupRepo } =
+      await import('../repositories/document-group.repository.js');
 
-    const [agentsWithSkills, scopeLevelSkills, scopeMcpServers, scopePlugins, rawDocGroups] = await Promise.all([
-      this.businessScopeService.getScopeAgentsWithSkills(scopeId, organizationId),
-      scopeSkillService.getScopeLevelSkills(organizationId, scopeId),
-      this.loadScopeMcpServers(scopeId),
-      this.loadScopePlugins(scopeId),
-      docGroupRepo.getGroupsForScope(scopeId),
-    ]);
+    const [agentsWithSkills, scopeLevelSkills, scopeMcpServers, scopePlugins, rawDocGroups] =
+      await Promise.all([
+        this.businessScopeService.getScopeAgentsWithSkills(scopeId, organizationId),
+        scopeSkillService.getScopeLevelSkills(organizationId, scopeId),
+        this.loadScopeMcpServers(scopeId),
+        this.loadScopePlugins(scopeId),
+        docGroupRepo.getGroupsForScope(scopeId),
+      ]);
 
     // Build skills list
     const skillMap = new Map<string, SkillForWorkspace>();
     const agentsToCollectSkillsFrom = selectedAgentId
-      ? agentsWithSkills.filter(a => a.id === selectedAgentId)
+      ? agentsWithSkills.filter((a) => a.id === selectedAgentId)
       : agentsWithSkills;
 
     for (const agent of agentsToCollectSkillsFrom) {
@@ -461,7 +506,7 @@ export class ChatService {
     }
     const skills = Array.from(skillMap.values());
 
-    const docGroups = rawDocGroups.map(g => ({
+    const docGroups = rawDocGroups.map((g) => ({
       id: g.id,
       name: g.name,
       storagePath: g.storage_path,
@@ -474,25 +519,31 @@ export class ChatService {
       description: scope.description,
       systemPrompt: scope.system_prompt ?? null,
       configVersion: scope.config_version,
-      agents: agentsWithSkills.map(a => {
+      agents: agentsWithSkills.map((a) => {
         const mc = a.model_config as Record<string, unknown> | null;
         const generatedFromConfig = Array.isArray(mc?.generatedSkills)
           ? (mc!.generatedSkills as Array<{ name: string; description: string; body: string }>)
           : [];
 
-        const toolsArray = Array.isArray(a.tools) ? a.tools as Array<{ id?: string; name: string; skillMd?: string }> : [];
+        const toolsArray = Array.isArray(a.tools)
+          ? (a.tools as Array<{ id?: string; name: string; skillMd?: string }>)
+          : [];
         const generatedFromTools = toolsArray
-          .filter(t => t.name && t.skillMd)
-          .map(t => ({
+          .filter((t) => t.name && t.skillMd)
+          .map((t) => ({
             name: t.name,
-            description: t.skillMd!.split('\n').find(line => line.trim() && !line.startsWith('#'))?.trim() || t.name,
+            description:
+              t
+                .skillMd!.split('\n')
+                .find((line) => line.trim() && !line.startsWith('#'))
+                ?.trim() || t.name,
             body: t.skillMd!,
           }));
 
-        const seenNames = new Set(generatedFromConfig.map(s => s.name));
+        const seenNames = new Set(generatedFromConfig.map((s) => s.name));
         const allGenerated = [
           ...generatedFromConfig,
-          ...generatedFromTools.filter(s => !seenNames.has(s.name)),
+          ...generatedFromTools.filter((s) => !seenNames.has(s.name)),
         ];
 
         const includeGeneratedSkills = !selectedAgentId || a.id === selectedAgentId;
@@ -503,8 +554,9 @@ export class ChatService {
           displayName: a.display_name,
           role: a.role,
           systemPrompt: a.system_prompt,
-          skillNames: a.skills.map(s => s.name),
-          generatedSkills: includeGeneratedSkills && allGenerated.length > 0 ? allGenerated : undefined,
+          skillNames: a.skills.map((s) => s.name),
+          generatedSkills:
+            includeGeneratedSkills && allGenerated.length > 0 ? allGenerated : undefined,
         };
       }),
       skills,
@@ -525,7 +577,7 @@ export class ChatService {
     organizationId: string,
     userId: string,
     options: ChatStreamOptions,
-    skillsOverride?: SkillForWorkspace[],
+    skillsOverride?: SkillForWorkspace[]
   ): Promise<void> {
     // Determine which flow to use
     const useScopeFlow = !!options.businessScopeId;
@@ -543,9 +595,7 @@ export class ChatService {
 
     if (useScopeFlow) {
       // ---- Business Scope Flow ----
-      const result = await this.prepareScopeSession(
-        organizationId, userId, options,
-      );
+      const result = await this.prepareScopeSession(organizationId, userId, options);
       sessionId = result.sessionId;
       agentConfig = result.agentConfig;
       skills = result.skills;
@@ -562,7 +612,10 @@ export class ChatService {
         throw AppError.validation('Either agent_id or business_scope_id is required');
       }
       const result = await this.prepareLegacySession(
-        organizationId, userId, options, skillsOverride,
+        organizationId,
+        userId,
+        options,
+        skillsOverride
       );
       sessionId = result.sessionId;
       agentConfig = result.agentConfig;
@@ -615,10 +668,13 @@ export class ChatService {
       'X-Accel-Buffering': 'no',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+      'Access-Control-Allow-Headers':
+        'Content-Type, Authorization, X-Requested-With, Accept, Origin',
     });
 
-    reply.raw.write(formatSSEEvent({ event: 'session', data: JSON.stringify({ session_id: sessionId }) }));
+    reply.raw.write(
+      formatSSEEvent({ event: 'session', data: JSON.stringify({ session_id: sessionId }) })
+    );
 
     let clientDisconnected = false;
     let conversationSessionId: string | undefined;
@@ -634,8 +690,12 @@ export class ChatService {
     const heartbeatInterval = setInterval(() => {
       if (!clientDisconnected) {
         try {
-          reply.raw.write(formatSSEEvent({ data: JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }) }));
-        } catch { /* client disconnected */ }
+          reply.raw.write(
+            formatSSEEvent({ data: JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }) })
+          );
+        } catch {
+          /* client disconnected */
+        }
       }
     }, 15_000);
 
@@ -645,14 +705,17 @@ export class ChatService {
     // even if the frontend disconnects during generation.
     let aiMessageId: string | null = null;
     try {
-      const aiMsg = await chatMessageRepository.create({
-        session_id: sessionId,
-        type: 'ai',
-        content: '',
-        agent_id: null,
-        mention_agent_id: null,
-        metadata: { streaming: true },
-      }, organizationId);
+      const aiMsg = await chatMessageRepository.create(
+        {
+          session_id: sessionId,
+          type: 'ai',
+          content: '',
+          agent_id: null,
+          mention_agent_id: null,
+          metadata: { streaming: true },
+        },
+        organizationId
+      );
       aiMessageId = aiMsg.id;
     } catch (err) {
       console.warn('[chat] Failed to pre-create AI message row:', err);
@@ -661,18 +724,22 @@ export class ChatService {
     let lastFlushedBlockCount = 0;
     const DB_FLUSH_INTERVAL_MS = 5_000;
 
-
     // Track active sub-agent for speaker identity annotation.
     // When a Task tool_use is seen, record the sub-agent info keyed by tool_use_id.
     // When the matching tool_result arrives, clear the current speaker.
-    const activeSubAgentByToolId = new Map<string, { displayName: string; avatar: string | null }>();
+    const activeSubAgentByToolId = new Map<
+      string,
+      { displayName: string; avatar: string | null }
+    >();
     let currentSpeaker: { displayName: string; avatar: string | null } | null = null;
 
     // Build the effective message — inject a routing hint when a specific agent is @mentioned
     let effectiveMessage = options.message;
     if (options.mentionAgentId && useScopeFlow) {
       // Resolve mentionAgentId to the agent's technical name for Task tool routing
-      const mentionedName = [...subAgentNameToId.entries()].find(([, id]) => id === options.mentionAgentId)?.[0];
+      const mentionedName = [...subAgentNameToId.entries()].find(
+        ([, id]) => id === options.mentionAgentId
+      )?.[0];
       if (mentionedName) {
         const mentionedInfo = subAgentInfoMap.get(mentionedName);
         const displayLabel = mentionedInfo?.displayName ?? mentionedName;
@@ -685,21 +752,21 @@ export class ChatService {
       // AgentCore container isolation is handled by the runtime provider itself
       // when AGENT_RUNTIME=openclaw (which runs on AgentCore).
       const conversationGenerator = this.agentRuntime.runConversation(
-            {
-              agentId: agentConfig.id,
-              sessionId: options.sessionId,
-              providerSessionId: claudeSessionId,
-              message: effectiveMessage,
-              organizationId,
-              userId,
-              workspacePath,
-              scopeId: options.businessScopeId,
-            },
-            agentConfig,
-            skills,
-            pluginPaths.length > 0 ? pluginPaths : undefined,
-            Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-          );
+        {
+          agentId: agentConfig.id,
+          sessionId: options.sessionId,
+          providerSessionId: claudeSessionId,
+          message: effectiveMessage,
+          organizationId,
+          userId,
+          workspacePath,
+          scopeId: options.businessScopeId,
+        },
+        agentConfig,
+        skills,
+        pluginPaths.length > 0 ? pluginPaths : undefined,
+        Object.keys(mcpServers).length > 0 ? mcpServers : undefined
+      );
 
       const timeoutMs = config.claude.responseTimeoutMs;
 
@@ -711,9 +778,11 @@ export class ChatService {
             conversationSessionId = event.sessionId;
             // Store the Claude SDK session ID for future resume
             if (sessionId) {
-              chatSessionRepository.updateClaudeSessionId(sessionId, organizationId, event.sessionId).catch((err) => {
-                console.error('Failed to store claude_session_id:', err);
-              });
+              chatSessionRepository
+                .updateClaudeSessionId(sessionId, organizationId, event.sessionId)
+                .catch((err) => {
+                  console.error('Failed to store claude_session_id:', err);
+                });
             }
           }
 
@@ -758,13 +827,19 @@ export class ChatService {
 
           // Periodically flush accumulated content to DB
           const now = Date.now();
-          if (aiMessageId && allContentBlocks.length > lastFlushedBlockCount && now - lastFlushTime >= DB_FLUSH_INTERVAL_MS) {
+          if (
+            aiMessageId &&
+            allContentBlocks.length > lastFlushedBlockCount &&
+            now - lastFlushTime >= DB_FLUSH_INTERVAL_MS
+          ) {
             lastFlushTime = now;
             lastFlushedBlockCount = allContentBlocks.length;
-            prisma.chat_messages.update({
-              where: { id: aiMessageId },
-              data: { content: JSON.stringify(allContentBlocks) },
-            }).catch(err => console.warn('[chat] Failed to flush AI message:', err));
+            prisma.chat_messages
+              .update({
+                where: { id: aiMessageId },
+                data: { content: JSON.stringify(allContentBlocks) },
+              })
+              .catch((err) => console.warn('[chat] Failed to flush AI message:', err));
           }
 
           // Only write to SSE if client is still connected
@@ -775,8 +850,11 @@ export class ChatService {
         () => {
           if (!clientDisconnected) {
             const timeoutEvent: ConversationEvent = {
-              type: 'error', sessionId: conversationSessionId,
-              code: 'AGENT_TIMEOUT', message: 'Agent response timed out', suggestedAction: 'Please try again',
+              type: 'error',
+              sessionId: conversationSessionId,
+              code: 'AGENT_TIMEOUT',
+              message: 'Agent response timed out',
+              suggestedAction: 'Please try again',
             };
             this.writeConversationEventSSE(reply, timeoutEvent);
           }
@@ -785,13 +863,15 @@ export class ChatService {
               console.error('Error disconnecting session on timeout:', err);
             });
           }
-        },
+        }
       );
     } catch (error) {
       if (!clientDisconnected) {
         const errorEvent: ConversationEvent = {
-          type: 'error', sessionId: conversationSessionId,
-          code: 'AGENT_EXECUTION_ERROR', message: error instanceof Error ? error.message : 'Unknown error',
+          type: 'error',
+          sessionId: conversationSessionId,
+          code: 'AGENT_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
           suggestedAction: 'Please try again',
         };
         streamRegistry.push(sessionId, errorEvent);
@@ -816,21 +896,35 @@ export class ChatService {
             const configContent = await rf(pjoin(workspacePath, 'scope-config.json'), 'utf-8');
             const parsed = safeParse(configContent) as Record<string, unknown> | null;
             if (parsed && parsed.scope && Array.isArray(parsed.agents)) {
-              reply.raw.write(formatSSEEvent({
-                data: JSON.stringify({ type: 'scope_config', content: JSON.stringify(parsed) }),
-              }));
+              reply.raw.write(
+                formatSSEEvent({
+                  data: JSON.stringify({ type: 'scope_config', content: JSON.stringify(parsed) }),
+                })
+              );
             }
           } else if (options.source === 'workflow_copilot') {
             const { safeParseJson } = await import('../utils/json-repair.js');
             const rawContent = await rf(pjoin(workspacePath, 'workflow.json'), 'utf-8');
             const parsed = safeParseJson(rawContent);
-            if (parsed && typeof parsed === 'object' && (parsed as any).title && Array.isArray((parsed as any).tasks)) {
-              reply.raw.write(formatSSEEvent({
-                data: JSON.stringify({ type: 'workflow_config', content: JSON.stringify(parsed) }),
-              }));
+            if (
+              parsed &&
+              typeof parsed === 'object' &&
+              (parsed as any).title &&
+              Array.isArray((parsed as any).tasks)
+            ) {
+              reply.raw.write(
+                formatSSEEvent({
+                  data: JSON.stringify({
+                    type: 'workflow_config',
+                    content: JSON.stringify(parsed),
+                  }),
+                })
+              );
             }
           }
-        } catch { /* file not found or invalid — skip */ }
+        } catch {
+          /* file not found or invalid — skip */
+        }
       }
 
       // Send [DONE] immediately so the frontend can stop the loading indicator.
@@ -840,7 +934,9 @@ export class ChatService {
         try {
           reply.raw.write(formatSSEEvent({ data: '[DONE]' }));
           reply.raw.end();
-        } catch { /* client disconnected */ }
+        } catch {
+          /* client disconnected */
+        }
       }
 
       // --- Non-blocking cleanup below (client already received [DONE]) ---
@@ -848,10 +944,14 @@ export class ChatService {
       // Mark agent as active + session as idle + finalize AI message (in parallel)
       const finalContent = allContentBlocks.length > 0 ? JSON.stringify(allContentBlocks) : '';
       const persistAiMessage = aiMessageId
-        ? prisma.chat_messages.update({
-            where: { id: aiMessageId },
-            data: { content: finalContent || 'No response received', metadata: {} },
-          }).catch((err) => { console.error('Failed to finalize AI message:', err); })
+        ? prisma.chat_messages
+            .update({
+              where: { id: aiMessageId },
+              data: { content: finalContent || 'No response received', metadata: {} },
+            })
+            .catch((err) => {
+              console.error('Failed to finalize AI message:', err);
+            })
         : allContentBlocks.length > 0
           ? this.addMessage(organizationId, sessionId, 'ai', finalContent).catch((err) => {
               console.error('Failed to persist assistant response:', err);
@@ -877,15 +977,19 @@ export class ChatService {
 
       // Auto-distill memories from the conversation (fire-and-forget)
       if (useScopeFlow && allContentBlocks.length > 0 && options.businessScopeId) {
-        console.log(`[distillation-debug] Enqueuing: scope=${options.businessScopeId}, session=${sessionId}, blocks=${allContentBlocks.length}`);
-        distillationService.enqueue({
-          organizationId,
-          scopeId: options.businessScopeId,
-          sessionId,
-          agentId: resolvedAgentId,
-          contentBlocks: allContentBlocks,
-          userMessage: options.message,
-        }).catch(() => {});
+        console.log(
+          `[distillation-debug] Enqueuing: scope=${options.businessScopeId}, session=${sessionId}, blocks=${allContentBlocks.length}`
+        );
+        distillationService
+          .enqueue({
+            organizationId,
+            scopeId: options.businessScopeId,
+            sessionId,
+            agentId: resolvedAgentId,
+            contentBlocks: allContentBlocks,
+            userMessage: options.message,
+          })
+          .catch(() => {});
       }
     }
   }
@@ -900,8 +1004,19 @@ export class ChatService {
   private async prepareScopeSession(
     organizationId: string,
     userId: string,
-    options: ChatStreamOptions,
-  ): Promise<{ sessionId: string; workspacePath: string; agentConfig: AgentConfig; skills: SkillForWorkspace[]; claudeSessionId?: string; subAgentNames: string[]; subAgentNameToId: Map<string, string>; subAgentInfoMap: Map<string, { displayName: string; avatar: string | null }>; pluginPaths: string[]; mcpServers: Record<string, import('./claude-agent.service.js').AnyMCPServerConfig> }> {
+    options: ChatStreamOptions
+  ): Promise<{
+    sessionId: string;
+    workspacePath: string;
+    agentConfig: AgentConfig;
+    skills: SkillForWorkspace[];
+    claudeSessionId?: string;
+    subAgentNames: string[];
+    subAgentNameToId: Map<string, string>;
+    subAgentInfoMap: Map<string, { displayName: string; avatar: string | null }>;
+    pluginPaths: string[];
+    mcpServers: Record<string, import('./claude-agent.service.js').AnyMCPServerConfig>;
+  }> {
     const scopeId = options.businessScopeId!;
     // mentionAgentId is NOT used as selectedAgentId — it should not change the orchestrator identity.
     // Instead, it's handled by injecting a routing hint into the message so the orchestrator
@@ -929,20 +1044,28 @@ export class ChatService {
     if (!existingSession) {
       session = await this.createSession(
         {
-          session_id: sessionId,  // use deterministic id if provided
+          session_id: sessionId, // use deterministic id if provided
           business_scope_id: scopeId,
           agent_id: selectedAgentId,
           context: options.context ?? {},
           source: options.source,
         },
         organizationId,
-        userId,
+        userId
       );
       sessionId = session.id;
 
-      // Provision new workspace
-      const provisionResult = await this.workspaceManager.ensureSessionWorkspace(
-        organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+      // Provision workspace. The workspace is scope-level shared, so a new
+      // session in an already-provisioned scope must not re-download skills,
+      // re-copy built-ins, regenerate every file, and re-sync to S3.
+      // ensureWorkspaceUpToDate full-provisions only when no manifest exists
+      // (first session in the scope) and is a near no-op when the scope is
+      // already provisioned at the current config_version.
+      const provisionResult = await this.workspaceManager.ensureWorkspaceUpToDate(
+        organizationId,
+        sessionId,
+        scopeForWorkspace,
+        selectedAgentId
       );
       pluginPaths = provisionResult.pluginPaths;
     } else {
@@ -951,16 +1074,23 @@ export class ChatService {
 
       // Lazy refresh: check if workspace is up-to-date
       const refreshResult = await this.workspaceManager.ensureWorkspaceUpToDate(
-        organizationId, sessionId, scopeForWorkspace, selectedAgentId,
+        organizationId,
+        sessionId,
+        scopeForWorkspace,
+        selectedAgentId
       );
       pluginPaths = refreshResult.pluginPaths;
     }
 
-    const workspacePath = this.workspaceManager.getSessionWorkspacePath(organizationId, scopeId, sessionId);
+    const workspacePath = this.workspaceManager.getSessionWorkspacePath(
+      organizationId,
+      scopeId,
+      sessionId
+    );
 
     // Build agent config — use selected agent's prompt or scope-level
     const selectedAgent = selectedAgentId
-      ? agentsWithSkills.find(a => a.id === selectedAgentId)
+      ? agentsWithSkills.find((a) => a.id === selectedAgentId)
       : null;
 
     const selectedModelConfig = selectedAgent?.model_config as Record<string, unknown> | null;
@@ -970,31 +1100,39 @@ export class ChatService {
       displayName: selectedAgent?.display_name ?? scopeForWorkspace.name,
       systemPrompt: selectedAgent?.system_prompt ?? null,
       organizationId,
-      skillIds: scopeForWorkspace.skills.map(s => s.id),
+      skillIds: scopeForWorkspace.skills.map((s) => s.id),
       mcpServerIds: [],
       model: (selectedModelConfig?.model as string) ?? undefined,
     };
 
-    const subAgentInfoMap = new Map(agentsWithSkills.map(a => {
-      // Resolve avatar S3 key to a full API URL so the frontend can load it directly
-      let avatarUrl: string | null = null;
-      if (a.avatar) {
-        // Strip any leading slashes and build the API path
-        const key = a.avatar.replace(/^\/+/, '');
-        avatarUrl = `/api/avatars/${key}`;
-      }
-      return [a.name, { displayName: a.display_name || a.name, avatar: avatarUrl }];
-    }));
+    const subAgentInfoMap = new Map(
+      agentsWithSkills.map((a) => {
+        // Resolve avatar S3 key to a full API URL so the frontend can load it directly
+        let avatarUrl: string | null = null;
+        if (a.avatar) {
+          // Strip any leading slashes and build the API path
+          const key = a.avatar.replace(/^\/+/, '');
+          avatarUrl = `/api/avatars/${key}`;
+        }
+        return [a.name, { displayName: a.display_name || a.name, avatar: avatarUrl }];
+      })
+    );
     // Build MCP servers from workspace settings
     const baseMcpServers: Record<string, import('./claude-agent.service.js').AnyMCPServerConfig> =
       await this.readSessionMcpServers(workspacePath);
 
     // If this is a twin session, inject project tools as an in-process MCP server
-    if (session?.context && typeof session.context === 'object' && (session.context as Record<string, unknown>).twin_session) {
+    if (
+      session?.context &&
+      typeof session.context === 'object' &&
+      (session.context as Record<string, unknown>).twin_session
+    ) {
       try {
         const twinRecord = await prisma.project_twin_sessions.findFirst({
           where: { session_id: sessionId },
-          include: { project: { select: { id: true, workspace_session_id: true, business_scope_id: true } } },
+          include: {
+            project: { select: { id: true, workspace_session_id: true, business_scope_id: true } },
+          },
         });
         if (twinRecord) {
           const { createProjectToolsMcpServer } = await import('./project-tools-mcp.js');
@@ -1005,7 +1143,7 @@ export class ChatService {
             mainWorkspacePath = this.workspaceManager.getSessionWorkspacePath(
               organizationId,
               twinRecord.project.business_scope_id,
-              twinRecord.project.workspace_session_id,
+              twinRecord.project.workspace_session_id
             );
           }
 
@@ -1019,21 +1157,36 @@ export class ChatService {
           };
           const mcpServer = createProjectToolsMcpServer(twinCtx);
           baseMcpServers[mcpServer.name] = mcpServer;
-          console.log(`[prepareScopeSession] Injected project-tools MCP server for twin session ${sessionId}`);
+          console.log(
+            `[prepareScopeSession] Injected project-tools MCP server for twin session ${sessionId}`
+          );
         }
       } catch (err) {
         console.error('[prepareScopeSession] Failed to inject project tools:', err);
       }
     }
 
-    return { sessionId, workspacePath, agentConfig, skills: scopeForWorkspace.skills, claudeSessionId: session.claude_session_id ?? undefined, subAgentNames: agentsWithSkills.map(a => a.name), subAgentNameToId: new Map(agentsWithSkills.map(a => [a.name, a.id])), subAgentInfoMap, pluginPaths, mcpServers: baseMcpServers };
+    return {
+      sessionId,
+      workspacePath,
+      agentConfig,
+      skills: scopeForWorkspace.skills,
+      claudeSessionId: session.claude_session_id ?? undefined,
+      subAgentNames: agentsWithSkills.map((a) => a.name),
+      subAgentNameToId: new Map(agentsWithSkills.map((a) => [a.name, a.id])),
+      subAgentInfoMap,
+      pluginPaths,
+      mcpServers: baseMcpServers,
+    };
   }
 
   /**
    * Read MCP servers from a session workspace's settings.json and convert to SDK format.
    * This is the single source of truth for which MCP servers are active in a session.
    */
-  private async readSessionMcpServers(workspacePath: string): Promise<Record<string, import('./claude-agent.service.js').MCPServerSDKConfig>> {
+  private async readSessionMcpServers(
+    workspacePath: string
+  ): Promise<Record<string, import('./claude-agent.service.js').MCPServerSDKConfig>> {
     try {
       const { readFile } = await import('fs/promises');
       const { join } = await import('path');
@@ -1053,20 +1206,30 @@ export class ChatService {
    */
   private async loadScopeMcpServers(scopeId: string): Promise<McpServerForWorkspace[]> {
     try {
-      const rows = await prisma.$queryRaw<Array<{ name: string; host_address: string; status: string; config: Record<string, unknown> | null }>>`
+      const rows = await prisma.$queryRaw<
+        Array<{
+          name: string;
+          host_address: string;
+          status: string;
+          config: Record<string, unknown> | null;
+        }>
+      >`
         SELECT ms.name, ms.host_address, ms.status, ms.config
         FROM scope_mcp_servers sms
         JOIN mcp_servers ms ON ms.id = sms.mcp_server_id
         WHERE sms.business_scope_id = ${scopeId}::uuid
           AND ms.status = 'active'
       `;
-      return rows.map(r => ({
+      return rows.map((r) => ({
         name: r.name,
         hostAddress: r.host_address,
         config: r.config,
       }));
     } catch (error) {
-      console.error('Failed to load scope MCP servers:', error instanceof Error ? error.message : error);
+      console.error(
+        'Failed to load scope MCP servers:',
+        error instanceof Error ? error.message : error
+      );
       return [];
     }
   }
@@ -1081,13 +1244,16 @@ export class ChatService {
         FROM scope_plugins
         WHERE business_scope_id = ${scopeId}::uuid
       `;
-      return rows.map(r => ({
+      return rows.map((r) => ({
         name: r.name,
         gitUrl: r.git_url,
         ref: r.ref,
       }));
     } catch (error) {
-      console.error('Failed to load scope plugins:', error instanceof Error ? error.message : error);
+      console.error(
+        'Failed to load scope plugins:',
+        error instanceof Error ? error.message : error
+      );
       return [];
     }
   }
@@ -1099,8 +1265,14 @@ export class ChatService {
     organizationId: string,
     userId: string,
     options: ChatStreamOptions,
-    skillsOverride?: SkillForWorkspace[],
-  ): Promise<{ sessionId: string; workspacePath: string; agentConfig: AgentConfig; skills: SkillForWorkspace[]; claudeSessionId?: string }> {
+    skillsOverride?: SkillForWorkspace[]
+  ): Promise<{
+    sessionId: string;
+    workspacePath: string;
+    agentConfig: AgentConfig;
+    skills: SkillForWorkspace[];
+    claudeSessionId?: string;
+  }> {
     const agent = await agentRepository.findById(options.agentId!, organizationId);
     if (!agent) throw AppError.notFound(`Agent with ID ${options.agentId} not found`);
 
@@ -1114,14 +1286,22 @@ export class ChatService {
     let sessionId = options.sessionId;
     let claudeSessionId: string | undefined;
     if (!sessionId) {
-      const session = await this.createSession({ context: options.context ?? {} }, organizationId, userId);
+      const session = await this.createSession(
+        { context: options.context ?? {} },
+        organizationId,
+        userId
+      );
       sessionId = session.id;
     } else {
       const session = await chatSessionRepository.findById(sessionId, organizationId);
       if (!session) {
         // Session not found (e.g. DB was reset) — create a new one instead of failing
         console.warn(`Chat session ${sessionId} not found, creating a new session`);
-        const newSession = await this.createSession({ context: options.context ?? {} }, organizationId, userId);
+        const newSession = await this.createSession(
+          { context: options.context ?? {} },
+          organizationId,
+          userId
+        );
         sessionId = newSession.id;
       } else {
         claudeSessionId = session.claude_session_id ?? undefined;
@@ -1137,7 +1317,7 @@ export class ChatService {
       displayName: agent.display_name || agent.name,
       systemPrompt: agent.system_prompt,
       organizationId,
-      skillIds: skills.map(s => s.id),
+      skillIds: skills.map((s) => s.id),
       mcpServerIds: [],
       model: (agentModelConfig?.model as string) ?? undefined,
     };
@@ -1145,29 +1325,46 @@ export class ChatService {
     return { sessionId, workspacePath, agentConfig, skills, claudeSessionId };
   }
 
-  private async loadAgentSkills(organizationId: string, agentId: string): Promise<SkillForWorkspace[]> {
+  private async loadAgentSkills(
+    organizationId: string,
+    agentId: string
+  ): Promise<SkillForWorkspace[]> {
     try {
       const skillEntities = await this.skillService.getAgentSkills(organizationId, agentId);
-      return skillEntities.map(skill => ({
-        id: skill.id, name: skill.name, hashId: skill.hash_id,
-        s3Bucket: skill.s3_bucket, s3Prefix: skill.s3_prefix,
+      return skillEntities.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        hashId: skill.hash_id,
+        s3Bucket: skill.s3_bucket,
+        s3Prefix: skill.s3_prefix,
         localPath: (skill.metadata as Record<string, unknown>)?.localPath as string | undefined,
       }));
     } catch (error) {
-      console.error(`Failed to load skills for agent ${agentId}:`, error instanceof Error ? error.message : error);
+      console.error(
+        `Failed to load skills for agent ${agentId}:`,
+        error instanceof Error ? error.message : error
+      );
       return [];
     }
   }
 
   /** Auto-set session title from first user message (truncated). */
-  private async maybeSetTitle(organizationId: string, sessionId: string, message: string): Promise<void> {
+  private async maybeSetTitle(
+    organizationId: string,
+    sessionId: string,
+    message: string
+  ): Promise<void> {
     try {
       const session = await chatSessionRepository.findById(sessionId, organizationId);
       if (session && !session.title) {
         const title = message.length > 80 ? message.substring(0, 77) + '...' : message;
-        await chatSessionRepository.update(sessionId, organizationId, { title } as Partial<ChatSessionEntity>);
+        await chatSessionRepository.update(sessionId, organizationId, {
+          title,
+        } as Partial<ChatSessionEntity>);
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   }
 
   private writeConversationEventSSE(reply: FastifyReply, event: ConversationEvent): void {
@@ -1177,72 +1374,106 @@ export class ChatService {
         case 'session_start':
           break;
         case 'assistant':
-          reply.raw.write(formatSSEEvent({
-            data: JSON.stringify({ type: 'assistant', content: safe.content, model: safe.model, speakerAgentName: safe.speakerAgentName, speakerAgentAvatar: safe.speakerAgentAvatar }),
-          }));
+          reply.raw.write(
+            formatSSEEvent({
+              data: JSON.stringify({
+                type: 'assistant',
+                content: safe.content,
+                model: safe.model,
+                speakerAgentName: safe.speakerAgentName,
+                speakerAgentAvatar: safe.speakerAgentAvatar,
+              }),
+            })
+          );
           break;
         case 'result':
-          reply.raw.write(formatSSEEvent({
-            data: JSON.stringify({ type: 'result', session_id: safe.sessionId, duration_ms: safe.durationMs, num_turns: safe.numTurns }),
-          }));
+          reply.raw.write(
+            formatSSEEvent({
+              data: JSON.stringify({
+                type: 'result',
+                session_id: safe.sessionId,
+                duration_ms: safe.durationMs,
+                num_turns: safe.numTurns,
+              }),
+            })
+          );
           break;
         case 'heartbeat':
-          reply.raw.write(formatSSEEvent({
-            data: JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }),
-          }));
+          reply.raw.write(
+            formatSSEEvent({
+              data: JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }),
+            })
+          );
           break;
         case 'error':
-          reply.raw.write(formatSSEEvent({
-            data: JSON.stringify({ type: 'error', code: safe.code, message: safe.message, suggested_action: safe.suggestedAction }),
-          }));
+          reply.raw.write(
+            formatSSEEvent({
+              data: JSON.stringify({
+                type: 'error',
+                code: safe.code,
+                message: safe.message,
+                suggested_action: safe.suggestedAction,
+              }),
+            })
+          );
           break;
       }
-    } catch { /* client disconnected */ }
+    } catch {
+      /* client disconnected */
+    }
   }
 
   /**
-     * Iterates an async generator with an idle timeout.
-     * The timeout resets on every yielded event, so long-running but
-     * actively-progressing conversations won't be killed prematurely.
-     */
-    private async iterateWithTimeout<T>(
-      generator: AsyncGenerator<T>,
-      timeoutMs: number,
-      onEvent: (event: T) => void,
-      onTimeout: () => void,
-    ): Promise<void> {
-      const timeoutSymbol = Symbol('timeout');
+   * Iterates an async generator with an idle timeout.
+   * The timeout resets on every yielded event, so long-running but
+   * actively-progressing conversations won't be killed prematurely.
+   */
+  private async iterateWithTimeout<T>(
+    generator: AsyncGenerator<T>,
+    timeoutMs: number,
+    onEvent: (event: T) => void,
+    onTimeout: () => void
+  ): Promise<void> {
+    const timeoutSymbol = Symbol('timeout');
 
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      let resolveTimeout: ((v: typeof timeoutSymbol) => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let resolveTimeout: ((v: typeof timeoutSymbol) => void) | null = null;
 
-      const resetTimeout = () => {
-        if (timer) clearTimeout(timer);
-        return new Promise<typeof timeoutSymbol>((resolve) => {
-          resolveTimeout = resolve;
-          timer = setTimeout(() => resolve(timeoutSymbol), timeoutMs);
-        });
-      };
-
-      let timeoutPromise = resetTimeout();
-      let done = false;
-
-      while (!done) {
-        const result = await Promise.race([generator.next(), timeoutPromise]);
-        if (result === timeoutSymbol) {
-          onTimeout();
-          try { await generator.return(undefined as unknown as T); } catch { /* ignore */ }
-          return;
-        }
-        // Event received — reset the idle timer
-        timeoutPromise = resetTimeout();
-        const iterResult = result as IteratorResult<T>;
-        if (iterResult.done) { done = true; } else { onEvent(iterResult.value); }
-      }
-
-      // Clean up timer on normal completion
+    const resetTimeout = () => {
       if (timer) clearTimeout(timer);
+      return new Promise<typeof timeoutSymbol>((resolve) => {
+        resolveTimeout = resolve;
+        timer = setTimeout(() => resolve(timeoutSymbol), timeoutMs);
+      });
+    };
+
+    let timeoutPromise = resetTimeout();
+    let done = false;
+
+    while (!done) {
+      const result = await Promise.race([generator.next(), timeoutPromise]);
+      if (result === timeoutSymbol) {
+        onTimeout();
+        try {
+          await generator.return(undefined as unknown as T);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      // Event received — reset the idle timer
+      timeoutPromise = resetTimeout();
+      const iterResult = result as IteratorResult<T>;
+      if (iterResult.done) {
+        done = true;
+      } else {
+        onEvent(iterResult.value);
+      }
     }
+
+    // Clean up timer on normal completion
+    if (timer) clearTimeout(timer);
+  }
 
   // ==========================================================================
   // Context Management
@@ -1254,7 +1485,11 @@ export class ChatService {
     return session;
   }
 
-  async getSessionMessages(organizationId: string, sessionId: string, limit?: number): Promise<ChatMessageEntity[]> {
+  async getSessionMessages(
+    organizationId: string,
+    sessionId: string,
+    limit?: number
+  ): Promise<ChatMessageEntity[]> {
     return this.getChatHistory(organizationId, { sessionId, limit });
   }
 }

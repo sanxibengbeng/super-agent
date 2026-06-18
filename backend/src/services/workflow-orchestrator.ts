@@ -19,7 +19,11 @@ import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { agentRuntime } from './agent-runtime-factory.js';
 import type { AgentConfig, ConversationEvent } from './agent-runtime.js';
-import { workspaceManager, type ScopeForWorkspace, type SkillForWorkspace } from './workspace-manager.js';
+import {
+  workspaceManager,
+  type ScopeForWorkspace,
+  type SkillForWorkspace,
+} from './workspace-manager.js';
 import { businessScopeService } from './businessScope.service.js';
 import { skillService } from './skill.service.js';
 import { agentRepository } from '../repositories/agent.repository.js';
@@ -144,7 +148,7 @@ export class WorkflowOrchestrator {
     plan: OrchestratorPlan,
     organizationId: string,
     scopeId: string,
-    userId: string,
+    userId: string
   ): AsyncGenerator<OrchestratorEvent> {
     const now = () => new Date().toISOString();
 
@@ -203,7 +207,7 @@ export class WorkflowOrchestrator {
 
     while (ready.size > 0) {
       // Pick the next ready node (deterministic: first by plan order)
-      const nextId = plan.nodes.find(n => ready.has(n.id))?.id;
+      const nextId = plan.nodes.find((n) => ready.has(n.id))?.id;
       if (!nextId) break;
       ready.delete(nextId);
 
@@ -254,13 +258,20 @@ export class WorkflowOrchestrator {
 
         try {
           const result = await this.executeNode(
-            node, nodeOutputs, variables, workspacePath, agentConfig, skillsList,
-            organizationId, userId,
+            node,
+            nodeOutputs,
+            variables,
+            workspacePath,
+            agentConfig,
+            skillsList,
+            organizationId,
+            userId,
             // Progress callback for streaming agent output
             (msg: string) => {
               // We don't yield from inside a callback, so we skip intermediate logs here.
               // The caller gets node_start and node_complete events.
             },
+            parents.get(nextId)
           );
 
           // Handle condition branching
@@ -284,8 +295,14 @@ export class WorkflowOrchestrator {
 
             // Only enqueue the active branch, skip the other
             this.enqueueConditionBranch(
-              nextId, result.activeBranch, children, inDegree,
-              completed, skipped, ready, nodeStatuses,
+              nextId,
+              result.activeBranch,
+              children,
+              inDegree,
+              completed,
+              skipped,
+              ready,
+              nodeStatuses
             );
 
             // Emit skip events for inactive branches
@@ -331,7 +348,6 @@ export class WorkflowOrchestrator {
           this.enqueueChildren(nextId, children, inDegree, completed, skipped, ready);
           success = true;
           break;
-
         } catch (err) {
           lastError = err instanceof Error ? err.message : String(err);
           yield {
@@ -343,7 +359,7 @@ export class WorkflowOrchestrator {
 
           // Wait before retry (exponential backoff: 2s, 4s, 8s...)
           if (attempt < maxRetries) {
-            await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
+            await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
           }
         }
       }
@@ -385,7 +401,6 @@ export class WorkflowOrchestrator {
     };
   }
 
-
   // -------------------------------------------------------------------------
   // Node Execution Dispatch
   // -------------------------------------------------------------------------
@@ -400,12 +415,29 @@ export class WorkflowOrchestrator {
     organizationId: string,
     userId: string,
     onProgress: (msg: string) => void,
+    parentIds?: string[]
   ): Promise<{ output: unknown; activeBranch?: string }> {
     switch (node.type) {
       case 'agent':
       case 'document':
-      case 'codeArtifact':
-        return this.executeAgentNode(node, nodeOutputs, variables, workspacePath, agentConfig, skills, organizationId, userId);
+      case 'codeArtifact': {
+        // Inject only this node's direct parent outputs into the prompt, not
+        // the whole accumulated output map. Keeps the prompt bounded to the
+        // node's actual dependencies and avoids O(K²) token growth.
+        const parentOutputs = parentIds
+          ? new Map([...nodeOutputs].filter(([id]) => parentIds.includes(id)))
+          : nodeOutputs;
+        return this.executeAgentNode(
+          node,
+          parentOutputs,
+          variables,
+          workspacePath,
+          agentConfig,
+          skills,
+          organizationId,
+          userId
+        );
+      }
 
       case 'action':
         return this.executeActionNode(node, nodeOutputs, variables);
@@ -436,7 +468,7 @@ export class WorkflowOrchestrator {
     agentConfig: AgentConfig,
     skills: SkillForWorkspace[],
     organizationId: string,
-    userId: string,
+    userId: string
   ): Promise<{ output: unknown }> {
     // Build focused prompt with context from parent outputs
     const contextParts: string[] = [];
@@ -456,7 +488,8 @@ export class WorkflowOrchestrator {
       for (const [id, output] of nodeOutputs) {
         const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
         // Truncate very large outputs to keep the prompt focused
-        const truncated = outputStr.length > 4000 ? outputStr.slice(0, 4000) + '\n...(truncated)' : outputStr;
+        const truncated =
+          outputStr.length > 4000 ? outputStr.slice(0, 4000) + '\n...(truncated)' : outputStr;
         contextParts.push(`### Output from "${id}":\n${truncated}\n`);
       }
     }
@@ -481,7 +514,7 @@ export class WorkflowOrchestrator {
     await writeFile(
       join(workspacePath, 'CLAUDE.md'),
       `# Current Task: ${node.title}\n\n${prompt}\n\nComplete this task thoroughly.`,
-      'utf-8',
+      'utf-8'
     );
 
     // Run the Claude session for this single node
@@ -495,7 +528,7 @@ export class WorkflowOrchestrator {
         userId,
       },
       agentConfig,
-      skills,
+      skills
     );
 
     for await (const event of generator) {
@@ -505,7 +538,8 @@ export class WorkflowOrchestrator {
       }
 
       if (event.type === 'error') {
-        const errMsg = (event as ConversationEvent & { message?: string }).message || 'Agent execution error';
+        const errMsg =
+          (event as ConversationEvent & { message?: string }).message || 'Agent execution error';
         throw new Error(errMsg);
       }
     }
@@ -527,7 +561,7 @@ export class WorkflowOrchestrator {
   private async executeActionNode(
     node: OrchestratorNode,
     nodeOutputs: Map<string, unknown>,
-    variables: Map<string, string>,
+    variables: Map<string, string>
   ): Promise<{ output: unknown }> {
     const config = node.actionConfig || {};
     const actionType = (config.type as string) || 'custom';
@@ -560,10 +594,16 @@ export class WorkflowOrchestrator {
 
           const responseText = await response.text();
           let responseData: unknown;
-          try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
+          try {
+            responseData = JSON.parse(responseText);
+          } catch {
+            responseData = responseText;
+          }
 
           if (!response.ok) {
-            throw new Error(`API call failed with status ${response.status}: ${responseText.slice(0, 500)}`);
+            throw new Error(
+              `API call failed with status ${response.status}: ${responseText.slice(0, 500)}`
+            );
           }
 
           return { output: responseData };
@@ -615,7 +655,7 @@ export class WorkflowOrchestrator {
   private async executeConditionNode(
     node: OrchestratorNode,
     nodeOutputs: Map<string, unknown>,
-    variables: Map<string, string>,
+    variables: Map<string, string>
   ): Promise<{ output: unknown; activeBranch: string }> {
     const expression = node.conditionExpression || node.prompt || '';
 
@@ -628,10 +668,18 @@ export class WorkflowOrchestrator {
       const [, varName, operator, expected] = varMatch;
       const actual = variables.get(varName) ?? '';
       switch (operator) {
-        case '==': result = actual === expected; break;
-        case '!=': result = actual !== expected; break;
-        case '>': result = Number(actual) > Number(expected); break;
-        case '<': result = Number(actual) < Number(expected); break;
+        case '==':
+          result = actual === expected;
+          break;
+        case '!=':
+          result = actual !== expected;
+          break;
+        case '>':
+          result = Number(actual) > Number(expected);
+          break;
+        case '<':
+          result = Number(actual) < Number(expected);
+          break;
       }
     } else if (expression.toLowerCase().includes('true')) {
       result = true;
@@ -654,7 +702,6 @@ export class WorkflowOrchestrator {
     };
   }
 
-
   // -------------------------------------------------------------------------
   // DAG Traversal Helpers
   // -------------------------------------------------------------------------
@@ -666,7 +713,7 @@ export class WorkflowOrchestrator {
     inDegree: Map<string, number>,
     completed: Set<string>,
     skipped: Set<string>,
-    ready: Set<string>,
+    ready: Set<string>
   ): void {
     for (const edge of children.get(nodeId) || []) {
       const targetDeg = (inDegree.get(edge.target) || 1) - 1;
@@ -686,13 +733,14 @@ export class WorkflowOrchestrator {
     completed: Set<string>,
     skipped: Set<string>,
     ready: Set<string>,
-    nodeStatuses: Map<string, NodeProgress>,
+    nodeStatuses: Map<string, NodeProgress>
   ): void {
     for (const edge of children.get(conditionNodeId) || []) {
       const edgeLabel = (edge.label || edge.sourceHandle || '').toLowerCase();
-      const isActive = edgeLabel === activeBranch.toLowerCase()
-        || (activeBranch === 'yes' && edgeLabel === 'true')
-        || (activeBranch === 'no' && edgeLabel === 'false');
+      const isActive =
+        edgeLabel === activeBranch.toLowerCase() ||
+        (activeBranch === 'yes' && edgeLabel === 'true') ||
+        (activeBranch === 'no' && edgeLabel === 'false');
 
       if (isActive) {
         const targetDeg = (inDegree.get(edge.target) || 1) - 1;
@@ -713,7 +761,7 @@ export class WorkflowOrchestrator {
     children: Map<string, OrchestratorEdge[]>,
     nodeStatuses: Map<string, NodeProgress>,
     completed: Set<string>,
-    skipped: Set<string>,
+    skipped: Set<string>
   ): void {
     if (completed.has(nodeId) || skipped.has(nodeId)) return;
     skipped.add(nodeId);
@@ -734,7 +782,7 @@ export class WorkflowOrchestrator {
     plan: OrchestratorPlan,
     organizationId: string,
     scopeId: string,
-    userId: string,
+    userId: string
   ): Promise<{
     workspacePath: string;
     agentConfig: AgentConfig;
@@ -742,7 +790,7 @@ export class WorkflowOrchestrator {
   }> {
     // Load scope data
     const scopes = await businessScopeService.getBusinessScopes(organizationId);
-    const scope = scopes.find(s => s.id === scopeId);
+    const scope = scopes.find((s) => s.id === scopeId);
     if (!scope) throw new Error('Business scope not found');
 
     // Load agents and their skills
@@ -750,7 +798,10 @@ export class WorkflowOrchestrator {
     const agentSkillsMap = new Map<string, string[]>();
     for (const agent of agents) {
       const agentSkills = await skillRepository.findByAgentId(organizationId, agent.id);
-      agentSkillsMap.set(agent.id, agentSkills.map(s => s.name));
+      agentSkillsMap.set(
+        agent.id,
+        agentSkills.map((s) => s.name)
+      );
     }
 
     // Load scope-level skills
@@ -764,8 +815,11 @@ export class WorkflowOrchestrator {
         if (!skillMap.has(s.id)) {
           const meta = s.metadata as Record<string, unknown> | null;
           skillMap.set(s.id, {
-            id: s.id, name: s.name, hashId: s.hash_id,
-            s3Bucket: s.s3_bucket, s3Prefix: s.s3_prefix,
+            id: s.id,
+            name: s.name,
+            hashId: s.hash_id,
+            s3Bucket: s.s3_bucket,
+            s3Prefix: s.s3_prefix,
             localPath: meta?.localPath as string | undefined,
           });
         }
@@ -775,8 +829,11 @@ export class WorkflowOrchestrator {
       if (!skillMap.has(s.id)) {
         const meta = s.metadata as Record<string, unknown> | null;
         skillMap.set(s.id, {
-          id: s.id, name: s.name, hashId: s.hash_id,
-          s3Bucket: s.s3_bucket, s3Prefix: s.s3_prefix,
+          id: s.id,
+          name: s.name,
+          hashId: s.hash_id,
+          s3Bucket: s.s3_bucket,
+          s3Prefix: s.s3_prefix,
           localPath: meta?.localPath as string | undefined,
         });
       }
@@ -789,7 +846,7 @@ export class WorkflowOrchestrator {
       name: scope.name,
       description: scope.description,
       configVersion: scope.config_version ?? 1,
-      agents: agents.map(a => ({
+      agents: agents.map((a) => ({
         id: a.id,
         name: a.name,
         displayName: a.display_name,
@@ -803,7 +860,10 @@ export class WorkflowOrchestrator {
     };
 
     const { workspacePath } = await workspaceManager.ensureSessionWorkspace(
-      organizationId, sessionId, scopeForWorkspace, null,
+      organizationId,
+      sessionId,
+      scopeForWorkspace,
+      null
     );
 
     const agentConfig: AgentConfig = {

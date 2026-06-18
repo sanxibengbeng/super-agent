@@ -6,7 +6,13 @@
  */
 
 import crypto from 'crypto';
-import { workspaceManager, type ScopeForWorkspace, type SkillForWorkspace, type McpServerForWorkspace, type PluginForWorkspace } from './workspace-manager.js';
+import {
+  workspaceManager,
+  type ScopeForWorkspace,
+  type SkillForWorkspace,
+  type McpServerForWorkspace,
+  type PluginForWorkspace,
+} from './workspace-manager.js';
 import { businessScopeService } from './businessScope.service.js';
 import { skillService } from './skill.service.js';
 import { agentRepository } from '../repositories/agent.repository.js';
@@ -30,7 +36,7 @@ export interface WorkflowWorkspaceResult {
 export async function provisionWorkflowWorkspace(
   organizationId: string,
   scopeId: string,
-  sessionId?: string,
+  sessionId?: string
 ): Promise<WorkflowWorkspaceResult> {
   // Load scope
   const scope = await businessScopeService.getBusinessScopeById(scopeId, organizationId);
@@ -38,11 +44,12 @@ export async function provisionWorkflowWorkspace(
 
   // Load agents, skills, MCP servers, and plugins in parallel
   const agents = await agentRepository.findByBusinessScope(organizationId, scopeId);
-  const agentSkillsMap = new Map<string, string[]>();
-  for (const agent of agents) {
-    const agentSkills = await skillRepository.findByAgentId(organizationId, agent.id);
-    agentSkillsMap.set(agent.id, agentSkills.map(s => s.name));
-  }
+
+  // Batch-load skills for all agents once (was 2 queries per agent before)
+  const skillsByAgent = await skillRepository.findByAgentIds(
+    organizationId,
+    agents.map((a) => a.id)
+  );
 
   const [scopeLevelSkills, mcpServers, plugins] = await Promise.all([
     skillService.getScopeLevelSkills(organizationId, scopeId),
@@ -50,16 +57,24 @@ export async function provisionWorkflowWorkspace(
     loadScopePlugins(scopeId),
   ]);
 
-  // Build combined skills list
+  // Derive both the name map and the full-object map from the single fetch
+  const agentSkillsMap = new Map<string, string[]>();
   const skillMap = new Map<string, SkillForWorkspace>();
   for (const agent of agents) {
-    const agentSkills = await skillRepository.findByAgentId(organizationId, agent.id);
+    const agentSkills = skillsByAgent.get(agent.id) ?? [];
+    agentSkillsMap.set(
+      agent.id,
+      agentSkills.map((s) => s.name)
+    );
     for (const s of agentSkills) {
       if (!skillMap.has(s.id)) {
         const meta = s.metadata as Record<string, unknown> | null;
         skillMap.set(s.id, {
-          id: s.id, name: s.name, hashId: s.hash_id,
-          s3Bucket: s.s3_bucket, s3Prefix: s.s3_prefix,
+          id: s.id,
+          name: s.name,
+          hashId: s.hash_id,
+          s3Bucket: s.s3_bucket,
+          s3Prefix: s.s3_prefix,
           localPath: meta?.localPath as string | undefined,
         });
       }
@@ -69,8 +84,11 @@ export async function provisionWorkflowWorkspace(
     if (!skillMap.has(s.id)) {
       const meta = s.metadata as Record<string, unknown> | null;
       skillMap.set(s.id, {
-        id: s.id, name: s.name, hashId: s.hash_id,
-        s3Bucket: s.s3_bucket, s3Prefix: s.s3_prefix,
+        id: s.id,
+        name: s.name,
+        hashId: s.hash_id,
+        s3Bucket: s.s3_bucket,
+        s3Prefix: s.s3_prefix,
         localPath: meta?.localPath as string | undefined,
       });
     }
@@ -85,7 +103,7 @@ export async function provisionWorkflowWorkspace(
     description: scope.description,
     systemPrompt: scope.system_prompt ?? null,
     configVersion: scope.config_version ?? 1,
-    agents: agents.map(a => ({
+    agents: agents.map((a) => ({
       id: a.id,
       name: a.name,
       displayName: a.display_name,
@@ -99,7 +117,10 @@ export async function provisionWorkflowWorkspace(
   };
 
   const { refreshed, pluginPaths } = await workspaceManager.ensureWorkspaceUpToDate(
-    organizationId, sessionId, scopeForWorkspace, null,
+    organizationId,
+    sessionId,
+    scopeForWorkspace,
+    null
   );
   const workspacePath = workspaceManager.getScopeWorkspacePath(organizationId, scope.id);
   if (refreshed) {
@@ -109,22 +130,29 @@ export async function provisionWorkflowWorkspace(
   return {
     workspacePath,
     pluginPaths,
-    agents: agents.map(a => ({ id: a.id, name: a.name, displayName: a.display_name, role: a.role })),
+    agents: agents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      displayName: a.display_name,
+      role: a.role,
+    })),
     skills: Array.from(skillMap.values()),
-    scopeSkillNames: scopeLevelSkills.map(s => s.name),
+    scopeSkillNames: scopeLevelSkills.map((s) => s.name),
   };
 }
 
 async function loadScopeMcpServers(scopeId: string): Promise<McpServerForWorkspace[]> {
   try {
-    const rows = await prisma.$queryRaw<Array<{ name: string; host_address: string; config: Record<string, unknown> | null }>>`
+    const rows = await prisma.$queryRaw<
+      Array<{ name: string; host_address: string; config: Record<string, unknown> | null }>
+    >`
       SELECT ms.name, ms.host_address, ms.config
       FROM scope_mcp_servers sms
       JOIN mcp_servers ms ON ms.id = sms.mcp_server_id
       WHERE sms.business_scope_id = ${scopeId}::uuid
         AND ms.status = 'active'
     `;
-    return rows.map(r => ({ name: r.name, hostAddress: r.host_address, config: r.config }));
+    return rows.map((r) => ({ name: r.name, hostAddress: r.host_address, config: r.config }));
   } catch {
     return [];
   }
@@ -137,7 +165,7 @@ async function loadScopePlugins(scopeId: string): Promise<PluginForWorkspace[]> 
       FROM scope_plugins
       WHERE business_scope_id = ${scopeId}::uuid
     `;
-    return rows.map(r => ({ name: r.name, gitUrl: r.git_url, ref: r.ref }));
+    return rows.map((r) => ({ name: r.name, gitUrl: r.git_url, ref: r.ref }));
   } catch {
     return [];
   }
