@@ -32,7 +32,22 @@ class IMQueueService {
   private queue: Queue<IMMessageJobData> | null = null;
   private worker: Worker<IMMessageJobData> | null = null;
 
-  /** Initialize the queue (call once at startup). */
+  /** Initialize only the queue (for processes that enqueue but don't process). */
+  async initializeQueue(): Promise<void> {
+    if (this.queue) return;
+    this.queue = new Queue<IMMessageJobData>(QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { count: 500 },
+      },
+    });
+    console.log('✅ IM message queue (producer only) initialized');
+  }
+
+  /** Initialize the queue + worker (call once at startup for worker/all roles). */
   async initialize(): Promise<void> {
     this.queue = new Queue<IMMessageJobData>(QUEUE_NAME, {
       connection: redisConnection,

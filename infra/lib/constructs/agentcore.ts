@@ -143,11 +143,17 @@ export class AgentCoreConstruct extends Construct {
       description: 'Execution role for AgentCore runtime',
     });
 
-    // Grant Bedrock model invocation permissions
+    // Grant Bedrock model invocation permissions (foundation models + cross-region inference profiles)
+    // Wildcard region for foundation models because cross-region inference routes to any US region
     this.executionRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
-        resources: [`arn:aws:bedrock:${props.region}::foundation-model/anthropic.*`],
+        resources: [
+          'arn:aws:bedrock:*::foundation-model/anthropic.*',
+          'arn:aws:bedrock:*::foundation-model/us.anthropic.*',
+          `arn:aws:bedrock:${props.region}:${props.account}:inference-profile/us.anthropic.*`,
+          'arn:aws:bedrock:us:*:inference-profile/us.anthropic.*',
+        ],
       })
     );
 

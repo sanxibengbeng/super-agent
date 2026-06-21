@@ -13,6 +13,7 @@ import { Plus, Trash2, Loader2, ToggleLeft, ToggleRight, MessageSquare, Hash, Co
 import { useIMChannels } from '@/services/useIMChannels'
 import type { CreateIMChannelRequest } from '@/services/useIMChannels'
 import { useTranslation } from '@/i18n'
+import { getAuthToken } from '@/services/api/restClient'
 
 const CHANNEL_TYPES = [
   { value: 'slack', label: 'Slack', icon: '\u{1F4AC}', description: 'Connect a Slack channel via Events API' },
@@ -57,12 +58,43 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [dingtalkMode, setDingtalkMode] = useState<'stream' | 'webhook'>('webhook')
   const [bridgeState, setBridgeState] = useState<BridgeState | null>(null)
+  const [bridgeStatuses, setBridgeStatuses] = useState<Record<string, string>>({})
 
   const apiBase = import.meta.env.VITE_API_BASE_URL || '';
   const getAuthHeaders = () => {
-    const token = localStorage.getItem('token');
+    const token = getAuthToken();
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   };
+
+  // Poll real connection status for bridge bindings
+  useEffect(() => {
+    const bridgeBindings = bindings.filter(b => BRIDGE_TYPES.includes(b.channel_type));
+    if (bridgeBindings.length === 0) return;
+
+    const fetchStatuses = async () => {
+      const results: Record<string, string> = {};
+      for (const b of bridgeBindings) {
+        try {
+          const res = await fetch(`${apiBase}/api/im/bridge/${b.id}/status`, {
+            headers: { Authorization: `Bearer ${getAuthToken()}` },
+          });
+          if (res.ok) {
+            const json = await res.json();
+            results[b.id] = json.data?.status || json.status || 'disconnected';
+          } else {
+            results[b.id] = 'disconnected';
+          }
+        } catch {
+          results[b.id] = 'disconnected';
+        }
+      }
+      setBridgeStatuses(results);
+    };
+
+    fetchStatuses();
+    const interval = setInterval(fetchStatuses, 10000);
+    return () => clearInterval(interval);
+  }, [bindings, apiBase]);
 
   const isBridgeType = (type: string) => BRIDGE_TYPES.includes(type)
 
@@ -112,7 +144,7 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
     try {
       await fetch(`${apiBase}/api/im/bridge/${bindingId}/connect`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
       });
       setBridgeState({ bindingId, channelType, status: 'waiting_for_qr' });
     } catch (err) {
@@ -124,7 +156,7 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
     try {
       await fetch(`${apiBase}/api/im/bridge/${bindingId}/disconnect`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
       });
       if (bridgeState?.bindingId === bindingId) {
         setBridgeState(null);
@@ -143,14 +175,15 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
           headers: getAuthHeaders(),
         });
         if (res.ok) {
-          const data = await res.json();
+          const json = await res.json();
+          const payload = json.data || json;
           setBridgeState(prev => prev ? {
             ...prev,
-            qr: data.qr || prev.qr,
-            authUrl: data.auth_url || prev.authUrl,
-            status: data.status || prev.status,
+            qr: payload.qr || prev.qr,
+            authUrl: payload.auth_url || prev.authUrl,
+            status: payload.status || prev.status,
           } : null);
-          if (data.status === 'connected') {
+          if (payload.status === 'connected') {
             clearInterval(interval);
           }
         }
@@ -584,7 +617,11 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
               : 'Scan with Feishu/Lark to authorize'}
           </p>
           {bridgeState.qr ? (
-            <img src={bridgeState.qr} className="mx-auto w-64 h-64 rounded-lg" alt="QR Code" />
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(bridgeState.qr)}`}
+              className="mx-auto w-64 h-64 rounded-lg"
+              alt="QR Code"
+            />
           ) : bridgeState.authUrl ? (
             <div>
               <img
@@ -618,7 +655,24 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
           {bindings.map(binding => {
             const info = channelTypeInfo(binding.channel_type)
             const isBridge = isBridgeType(binding.channel_type)
-            const bridgeConnected = isBridge && binding.is_enabled
+            const realStatus = isBridge ? (bridgeStatuses[binding.id] || 'checking') : null
+            const bridgeConnected = realStatus === 'connected'
+            const statusColor = bridgeConnected
+              ? 'bg-green-500/20 text-green-400'
+              : realStatus === 'qr_pending'
+                ? 'bg-blue-500/20 text-blue-400'
+                : realStatus === 'checking'
+                  ? 'bg-gray-500/20 text-gray-400'
+                  : 'bg-yellow-500/20 text-yellow-400'
+            const statusDot = bridgeConnected
+              ? 'bg-green-400'
+              : realStatus === 'qr_pending' ? 'bg-blue-400 animate-pulse'
+              : realStatus === 'checking' ? 'bg-gray-400 animate-pulse'
+              : 'bg-yellow-400'
+            const statusLabel = bridgeConnected ? 'Connected'
+              : realStatus === 'qr_pending' ? 'Waiting for QR scan'
+              : realStatus === 'checking' ? 'Checking...'
+              : 'Disconnected'
             return (
               <div
                 key={binding.id}
@@ -639,15 +693,9 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                         {info?.label || binding.channel_type}
                       </span>
                       {isBridge && (
-                        <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
-                          bridgeConnected
-                            ? 'bg-green-500/20 text-green-400'
-                            : 'bg-yellow-500/20 text-yellow-400'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            bridgeConnected ? 'bg-green-400' : 'bg-yellow-400'
-                          }`} />
-                          {bridgeConnected ? 'Connected' : 'Disconnected'}
+                        <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${statusColor}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${statusDot}`} />
+                          {statusLabel}
                         </span>
                       )}
                       {!isBridge && !binding.is_enabled && (
@@ -679,25 +727,30 @@ export function IMChannelsPanel({ scopeId, scopeName }: IMChannelsPanelProps) {
                     </button>
                   )}
 
-                  {/* Bridge types: Connect/Disconnect buttons */}
-                  {isBridge ? (
-                    bridgeConnected ? (
-                      <button
-                        onClick={() => handleBridgeDisconnect(binding.id)}
-                        className="px-2 py-1 text-xs rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                      >
-                        Disconnect
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleBridgeConnect(binding.id, binding.channel_type)}
-                        className="px-2 py-1 text-xs rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
-                      >
-                        Connect
-                      </button>
-                    )
-                  ) : (
-                    /* Toggle enabled/disabled for non-bridge types */
+                  {/* Bridge types: Reconnect / Connect buttons */}
+                  {isBridge && (
+                    <>
+                      {!bridgeConnected && (
+                        <button
+                          onClick={() => handleBridgeConnect(binding.id, binding.channel_type)}
+                          className="px-2 py-1 text-xs rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+                        >
+                          {realStatus === 'disconnected' ? 'Reconnect' : 'Connect'}
+                        </button>
+                      )}
+                      {bridgeConnected && (
+                        <button
+                          onClick={() => handleBridgeDisconnect(binding.id)}
+                          className="px-2 py-1 text-xs rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                        >
+                          Disconnect
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {/* Toggle enabled/disabled for non-bridge types */}
+                  {!isBridge && (
                     <button
                       onClick={() => handleToggle(binding.id, binding.is_enabled)}
                       className="p-1.5 text-gray-400 hover:text-white transition-colors"

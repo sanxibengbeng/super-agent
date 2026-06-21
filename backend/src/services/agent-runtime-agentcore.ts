@@ -78,6 +78,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     }
   }
 
+
   private get runtimeArn(): string {
     const arn = config.agentcore.runtimeArn;
     if (!arn) throw new Error('AGENTCORE_RUNTIME_ARN is not configured');
@@ -98,9 +99,22 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     const scopeId = options.scopeId ?? 'default';
 
     const { s3FilesService } = await import('./s3files.service.js');
-    const accessPoint = await s3FilesService.getOrCreateAccessPoint(
-      options.organizationId, scopeId,
-    );
+    let accessPoint: { arn: string };
+    try {
+      accessPoint = await s3FilesService.getOrCreateAccessPoint(
+        options.organizationId, scopeId,
+      );
+    } catch (err: any) {
+      console.error(`[agentcore-runtime] S3 Files access point error: ${err?.message}`);
+      console.error(`[agentcore-runtime] Stack: ${err?.stack?.split('\n').slice(0, 3).join('\n')}`);
+      // Construct a fallback ARN using convention if the SDK throws parsing errors
+      const fileSystemId = config.agentcore.s3FilesFileSystemId;
+      const apName = `scope-${scopeId.slice(0, 8)}`;
+      // fileSystemId may be a full ARN (arn:aws:s3files:...:file-system/fs-xxx) or just an ID
+      const fsPath = fileSystemId?.startsWith('arn:') ? fileSystemId : `arn:aws:s3files:${config.agentcore.region}:873543029686:file-system/${fileSystemId}`;
+      accessPoint = { arn: `${fsPath}/access-point/${apName}` };
+      console.log(`[agentcore-runtime] Using fallback access point ARN: ${accessPoint.arn}`);
+    }
 
     // Load chat history
     const history = await this.loadChatHistory(options.organizationId, options.sessionId);
@@ -189,7 +203,6 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         console.error(`[agentcore-runtime]   requestId=${err?.$metadata?.requestId}`);
 
         if (isHealthCheckError && attempt < MAX_RETRIES) {
-          // Stop the broken session so AgentCore provisions a fresh microVM
           try {
             await this.runtimeClient.send(new this.StopSessionCommand({
               agentRuntimeArn: this.runtimeArn,
@@ -203,7 +216,6 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
           continue;
         }
 
-        // Non-retryable error or retries exhausted
         console.error(`[agentcore-runtime]   stack=${err?.stack?.split('\n').slice(0, 5).join('\n')}`);
         break;
       }

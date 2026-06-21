@@ -8,6 +8,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { execFileSync } from 'child_process';
+import { existsSync, mkdirSync } from 'fs';
 import type { AgentPayload, AgentEvent, ContentBlock } from './types.js';
 import { ContainerTracer } from './tracing.js';
 
@@ -18,6 +20,8 @@ const DEFAULT_TOOLS = [
 ];
 
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR ?? '/mnt/ws';
+const SESSION_HOME = process.env.HOME ?? '/mnt/session';
+const CLAUDE_HOME = `${SESSION_HOME}/.claude`;
 
 // ---------------------------------------------------------------------------
 // Agent execution
@@ -26,6 +30,10 @@ const WORKSPACE_DIR = process.env.WORKSPACE_DIR ?? '/mnt/ws';
 export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEvent> {
   const model = payload.model || process.env.ANTHROPIC_MODEL;
   const tracer = payload.traceparent ? new ContainerTracer(payload.traceparent) : null;
+  const sessionId = payload.chat_session_id ?? payload.session_id;
+
+  // Restore ~/.claude from persistent S3 Files storage before running
+  restoreClaudeHome(sessionId);
 
   const baseOptions: Record<string, unknown> = {
     systemPrompt: payload.system_prompt ?? undefined,
@@ -55,6 +63,9 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
       coldStartSpan?.setAttribute('resume_success', true);
       coldStartSpan?.end();
 
+      // Persist ~/.claude to S3 Files after run completes
+      persistClaudeHome(sessionId);
+
       // Emit trace before returning (resume path)
       if (tracer && tracer.getSpans().length > 0) {
         yield { type: 'trace', spans: tracer.getSpans() };
@@ -69,6 +80,9 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
   const prompt = buildContextualPrompt(payload);
   yield* runWithOptions(prompt, baseOptions, tracer);
   coldStartSpan?.end();
+
+  // Persist ~/.claude to S3 Files after run completes
+  persistClaudeHome(sessionId);
 
   // Emit trace at the end (fallback path)
   if (tracer && tracer.getSpans().length > 0) {
@@ -182,6 +196,55 @@ async function* runWithOptions(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// ~/.claude persistence via S3 Files (/mnt/ws/__claude_home__/{sessionId}/)
+// ---------------------------------------------------------------------------
+
+function getClaudeHomePersistDir(sessionId?: string): string | null {
+  if (!sessionId) return null;
+  return `${WORKSPACE_DIR}/__claude_home__/${sessionId}`;
+}
+
+function restoreClaudeHome(sessionId?: string): void {
+  const persistDir = getClaudeHomePersistDir(sessionId);
+  if (!persistDir) return;
+
+  if (!existsSync(persistDir)) {
+    console.log(`[agent-runner] No persisted ~/.claude for session ${sessionId}`);
+    return;
+  }
+
+  try {
+    mkdirSync(CLAUDE_HOME, { recursive: true });
+    execFileSync('rsync', ['-a', `${persistDir}/`, `${CLAUDE_HOME}/`], { stdio: 'ignore' });
+    console.log(`[agent-runner] Restored ~/.claude from ${persistDir}`);
+  } catch (err) {
+    console.warn(`[agent-runner] Failed to restore ~/.claude: ${err}`);
+  }
+}
+
+function persistClaudeHome(sessionId?: string): void {
+  const persistDir = getClaudeHomePersistDir(sessionId);
+  if (!persistDir) return;
+
+  if (!existsSync(CLAUDE_HOME)) {
+    console.log(`[agent-runner] No ~/.claude to persist`);
+    return;
+  }
+
+  try {
+    mkdirSync(persistDir, { recursive: true });
+    execFileSync('rsync', ['-a', '--delete', `${CLAUDE_HOME}/`, `${persistDir}/`], { stdio: 'ignore' });
+    console.log(`[agent-runner] Persisted ~/.claude to ${persistDir}`);
+  } catch (err) {
+    console.warn(`[agent-runner] Failed to persist ~/.claude: ${err}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prompt building
+// ---------------------------------------------------------------------------
 
 function buildContextualPrompt(payload: AgentPayload): string {
   const userMessage = payload.prompt;

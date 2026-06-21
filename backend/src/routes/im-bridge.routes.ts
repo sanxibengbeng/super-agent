@@ -34,7 +34,7 @@ export async function imBridgeRoutes(fastify: FastifyInstance): Promise<void> {
 
       if (binding.channel_type === 'whatsapp-bridge') {
         const qr = await whatsappBridgeAdapter.getQRCode(bindingId);
-        const status = whatsappBridgeAdapter.getConnectionStatus(bindingId);
+        const status = await whatsappBridgeAdapter.getConnectionStatus(bindingId);
         return reply.status(200).send({ data: { qr, status } });
       }
 
@@ -64,7 +64,7 @@ export async function imBridgeRoutes(fastify: FastifyInstance): Promise<void> {
 
       let status: string;
       if (binding.channel_type === 'whatsapp-bridge') {
-        status = whatsappBridgeAdapter.getConnectionStatus(bindingId);
+        status = await whatsappBridgeAdapter.getConnectionStatus(bindingId);
       } else if (binding.channel_type === 'lark-bridge') {
         status = larkBridgeAdapter.getConnectionStatus(bindingId);
       } else {
@@ -92,7 +92,7 @@ export async function imBridgeRoutes(fastify: FastifyInstance): Promise<void> {
 
       if (binding.channel_type === 'whatsapp-bridge') {
         await whatsappBridgeAdapter.addBot(binding);
-        const status = whatsappBridgeAdapter.getConnectionStatus(bindingId);
+        const status = await whatsappBridgeAdapter.getConnectionStatus(bindingId);
         return reply.status(200).send({ data: { status } });
       }
 

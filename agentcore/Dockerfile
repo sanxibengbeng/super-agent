@@ -7,7 +7,7 @@ WORKDIR /app
 
 # System dependencies for Claude Code CLI + Python for AgentCore MCP tools
 RUN apt-get update && apt-get install -y \
-    curl git unzip python3 python3-pip python3-venv \
+    curl git unzip python3 python3-pip python3-venv rsync \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv/uvx for running AgentCore MCP server (Browser + Code Interpreter tools)

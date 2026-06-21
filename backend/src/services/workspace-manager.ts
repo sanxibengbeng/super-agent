@@ -1279,19 +1279,19 @@ export class WorkspaceManager {
   }
 
   /**
-   * List ~/.claude files from S3 (__claude_home__/ prefix).
+   * List ~/.claude files from S3 (__claude_home__/{sessionId}/ prefix).
    * Used as fallback when the AgentCore container is unavailable.
-   * Checks both the scope-level prefix and the legacy workspace/ prefix.
+   * Each session has its own persisted ~/.claude directory.
    */
   async listClaudeHomeFromS3(
     orgId: string,
     scopeId: string,
-    _sessionId: string,
+    sessionId: string,
     bucket?: string
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    // S3 Files scope root is {orgId}/{scopeId}/, so __claude_home__/ lives there
-    const prefix = `${orgId}/${scopeId}/__claude_home__/`;
+    // S3 Files scope root is {orgId}/{scopeId}/, claude home is per-session
+    const prefix = `${orgId}/${scopeId}/__claude_home__/${sessionId}/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');

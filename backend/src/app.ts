@@ -278,10 +278,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     await distillationService.initializeQueue();
     // Schedule: only init queue (no worker) so schedule CRUD can manage repeatable jobs
     await initializeScheduleQueue();
+    // IM queue: needed for bridge adapters to enqueue incoming messages
+    await imQueueService.initializeQueue();
   }
 
   // ── IM Gateways (gateway + all) ──
   if (role === 'gateway' || role === 'all') {
+    await redisService.initialize();
+    await imQueueService.initializeQueue();
     imService.startGateways().catch((err) => {
       app.log.error({ err }, 'Failed to start IM gateways');
     });

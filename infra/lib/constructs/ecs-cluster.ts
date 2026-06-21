@@ -145,6 +145,35 @@ export class EcsClusterConstruct extends Construct {
       })
     );
 
+    // AgentCore invoke permissions (API service calls AgentCore for chat)
+    // Resource needs wildcard suffix — SDK requests include /runtime-endpoint/DEFAULT subpath
+    if (props.agentCoreRuntimeArn) {
+      apiTaskDefinition.addToTaskRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            'bedrock-agentcore:InvokeAgentRuntime',
+            'bedrock-agentcore:StopRuntimeSession',
+          ],
+          resources: [props.agentCoreRuntimeArn, `${props.agentCoreRuntimeArn}/*`],
+        })
+      );
+    }
+
+    // S3 Files access point management (for AgentCore workspace mounts)
+    if (props.s3FilesFileSystemId) {
+      apiTaskDefinition.addToTaskRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            's3files:CreateAccessPoint',
+            's3files:GetAccessPoint',
+            's3files:DeleteAccessPoint',
+            's3files:ListAccessPoints',
+          ],
+          resources: [`arn:aws:s3files:${props.region}:${props.account}:file-system/*`],
+        })
+      );
+    }
+
     // Workspace bucket: full access (read, write, delete, list)
     apiTaskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({
@@ -253,6 +282,7 @@ export class EcsClusterConstruct extends Construct {
     );
 
     // Set task role with AgentCore, S3 Files, and S3 workspace access
+    // Resource needs wildcard suffix — SDK requests include /runtime-endpoint/DEFAULT subpath
     if (props.agentCoreRuntimeArn) {
       workerTaskDefinition.addToTaskRolePolicy(
         new iam.PolicyStatement({
@@ -262,7 +292,7 @@ export class EcsClusterConstruct extends Construct {
             'bedrock-agentcore:GetAgentRuntimeSession',
             'bedrock-agentcore:DeleteAgentRuntimeSession',
           ],
-          resources: [props.agentCoreRuntimeArn],
+          resources: [props.agentCoreRuntimeArn, `${props.agentCoreRuntimeArn}/*`],
         })
       );
     }

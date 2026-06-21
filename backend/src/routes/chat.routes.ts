@@ -142,6 +142,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     '/stream',
     {
       preHandler: [authenticate],
+      attachValidation: true,
       schema: {
         description: 'Stream a chat response using Server-Sent Events',
         tags: ['Chat'],
@@ -175,6 +176,13 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     async (request: FastifyRequest<StreamChatRequest>, reply: FastifyReply) => {
+      // With attachValidation: true, schema validation errors are deferred
+      // so that the authenticate preHandler runs first (returns 401 for
+      // unauthenticated requests before leaking validation details).
+      if (request.validationError) {
+        throw AppError.validation('Validation failed', request.validationError.validation);
+      }
+
       const data = validateSchema(chatStreamRequestSchema, request.body);
 
       // Enforce scope access if a business_scope_id is provided

@@ -8,6 +8,8 @@
  * - Async processing via BullMQ (messages enqueued by webhooks/gateways)
  * - replyContext for platform-specific reply metadata (e.g. DingTalk sessionWebhook)
  * - Extended IMAdapter interface with optional gateway lifecycle methods
+ * - Per-thread serialization: messages from the same thread are processed sequentially
+ *   to avoid concurrent Claude SDK session resume conflicts
  */
 
 import {
@@ -54,6 +56,7 @@ export interface IMAdapter {
 
 class IMService {
   private adapters = new Map<string, IMAdapter>();
+  private threadLocks = new Map<string, Promise<unknown>>();
 
   registerAdapter(channelType: string, adapter: IMAdapter): void {
     this.adapters.set(channelType, adapter);
@@ -103,9 +106,36 @@ class IMService {
    * 3. Call ChatService.processMessage (same as web UI)
    * 4. Send response back via adapter
    *
+   * Messages from the same thread are serialized to prevent concurrent Claude SDK
+   * session resume conflicts (the SDK only supports one turn at a time per session).
+   *
    * @param replyContext - Platform-specific context for replies (e.g. DingTalk sessionWebhook)
    */
   async handleMessage(
+    msg: NormalizedIMMessage,
+    replyContext?: Record<string, unknown>,
+  ): Promise<{ text: string; sessionId: string }> {
+    const threadKey = `${msg.channelType}:${msg.channelId}:${msg.threadId}`;
+    const previous = this.threadLocks.get(threadKey) ?? Promise.resolve();
+
+    const settled = previous.then(
+      () => this.processMessageInternal(msg, replyContext),
+      () => this.processMessageInternal(msg, replyContext),
+    );
+
+    const suppressed = settled.catch(() => {});
+    this.threadLocks.set(threadKey, suppressed);
+
+    suppressed.then(() => {
+      if (this.threadLocks.get(threadKey) === suppressed) {
+        this.threadLocks.delete(threadKey);
+      }
+    });
+
+    return settled;
+  }
+
+  private async processMessageInternal(
     msg: NormalizedIMMessage,
     replyContext?: Record<string, unknown>,
   ): Promise<{ text: string; sessionId: string }> {
@@ -127,6 +157,7 @@ class IMService {
     // 3. Process message through ChatService (same code path as web UI)
     // Use binding's creator as the system userId (IM platform user IDs are not UUIDs)
     const systemUserId = binding.created_by || 'system';
+    console.log(`[IM] Processing message for thread ${msg.threadId} session ${sessionId}`);
     const response = await chatService.processMessage({
       sessionId,
       businessScopeId: binding.business_scope_id,
@@ -141,6 +172,7 @@ class IMService {
       await adapter.sendReply(binding, msg.threadId, response.text, replyContext);
     }
 
+    console.log(`[IM] Reply sent for thread ${msg.threadId} session ${sessionId}`);
     return { text: response.text, sessionId: response.sessionId };
   }
 
