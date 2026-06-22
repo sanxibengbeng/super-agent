@@ -4,6 +4,11 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { CfnFileSystem, CfnAccessPoint, CfnMountTarget } from 'aws-cdk-lib/aws-s3files';
 import { CfnRuntime } from 'aws-cdk-lib/aws-bedrockagentcore';
+import {
+  AwsCustomResource,
+  AwsCustomResourcePolicy,
+  PhysicalResourceId,
+} from 'aws-cdk-lib/custom-resources';
 
 export interface AgentCoreConstructProps {
   workspaceBucket: s3.IBucket;
@@ -228,6 +233,38 @@ export class AgentCoreConstruct extends Construct {
     );
 
     // AgentCore Runtime
+    //
+    // filesystemConfigurations and environmentVariables are shared with the
+    // post-deploy reconciler below. The AWS::BedrockAgentCore::Runtime CFN
+    // resource has been observed to silently DROP these two fields on
+    // create/update (the live runtime ends up with both null), so we re-apply
+    // them via the control-plane UpdateAgentRuntime API after every deploy.
+    const subnetIds = props.vpc
+      .selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS })
+      .subnetIds;
+    const networkConfiguration = {
+      networkMode: 'VPC',
+      networkModeConfig: {
+        subnets: subnetIds,
+        securityGroups: [props.ecsSecurityGroup.securityGroupId],
+      },
+    };
+    const filesystemConfigurations = [
+      { sessionStorage: { mountPath: '/mnt/session' } },
+      {
+        s3FilesAccessPoint: {
+          accessPointArn: this.accessPoint.attrAccessPointArn,
+          mountPath: '/mnt/ws',
+        },
+      },
+    ];
+    const environmentVariables = {
+      WORKSPACE_DIR: '/mnt/ws',
+      HOME: '/mnt/session',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      ANTHROPIC_MODEL: 'us.anthropic.claude-sonnet-4-6',
+    };
+
     this.runtime = new CfnRuntime(this, 'Runtime', {
       // agentRuntimeName must match [a-zA-Z][a-zA-Z0-9_]{0,47} — no hyphens.
       agentRuntimeName: 'super_agent_runtime',
@@ -237,32 +274,9 @@ export class AgentCoreConstruct extends Construct {
           containerUri: props.containerUri,
         },
       },
-      networkConfiguration: {
-        networkMode: 'VPC',
-        networkModeConfig: {
-          subnets: props.vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
-          securityGroups: [props.ecsSecurityGroup.securityGroupId],
-        },
-      },
-      filesystemConfigurations: [
-        {
-          sessionStorage: {
-            mountPath: '/mnt/session',
-          },
-        },
-        {
-          s3FilesAccessPoint: {
-            accessPointArn: this.accessPoint.attrAccessPointArn,
-            mountPath: '/mnt/ws',
-          },
-        },
-      ],
-      environmentVariables: {
-        WORKSPACE_DIR: '/mnt/ws',
-        HOME: '/mnt/session',
-        CLAUDE_CODE_USE_BEDROCK: '1',
-        ANTHROPIC_MODEL: 'us.anthropic.claude-sonnet-4-6',
-      },
+      networkConfiguration,
+      filesystemConfigurations,
+      environmentVariables,
       lifecycleConfiguration: {
         idleRuntimeSessionTimeout: 900,
         maxLifetime: 28800,
@@ -273,5 +287,55 @@ export class AgentCoreConstruct extends Construct {
     this.runtime.node.addDependency(this.fileSystem);
     this.runtime.node.addDependency(this.accessPoint);
     mountTargets.forEach(mt => this.runtime.node.addDependency(mt));
+
+    // --- Post-deploy reconciler -------------------------------------------
+    // Re-apply filesystem + env via the control-plane API to defend against
+    // the CFN resource dropping them. Runs on every deploy (the access point
+    // ARN is embedded in the call parameters, so a replaced AP re-triggers it).
+    const reconcileParams = {
+      agentRuntimeId: this.runtime.attrAgentRuntimeId,
+      agentRuntimeArtifact: {
+        containerConfiguration: { containerUri: props.containerUri },
+      },
+      roleArn: this.executionRole.roleArn,
+      networkConfiguration,
+      filesystemConfigurations,
+      environmentVariables,
+      lifecycleConfiguration: {
+        idleRuntimeSessionTimeout: 900,
+        maxLifetime: 28800,
+      },
+    };
+    const reconciler = new AwsCustomResource(this, 'RuntimeFilesystemReconciler', {
+      onCreate: {
+        service: '@aws-sdk/client-bedrock-agentcore-control',
+        action: 'UpdateAgentRuntimeCommand',
+        parameters: reconcileParams,
+        physicalResourceId: PhysicalResourceId.of(`${this.runtime.attrAgentRuntimeId}-fs-reconcile`),
+      },
+      onUpdate: {
+        service: '@aws-sdk/client-bedrock-agentcore-control',
+        action: 'UpdateAgentRuntimeCommand',
+        parameters: reconcileParams,
+        physicalResourceId: PhysicalResourceId.of(`${this.runtime.attrAgentRuntimeId}-fs-reconcile`),
+      },
+      policy: AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: ['bedrock-agentcore:UpdateAgentRuntime'],
+          resources: [
+            this.runtime.attrAgentRuntimeArn,
+            `${this.runtime.attrAgentRuntimeArn}/*`,
+          ],
+        }),
+        // UpdateAgentRuntime requires passing the execution role.
+        new iam.PolicyStatement({
+          actions: ['iam:PassRole'],
+          resources: [this.executionRole.roleArn],
+        }),
+      ]),
+      installLatestAwsSdk: true,
+    });
+    reconciler.node.addDependency(this.runtime);
+    reconciler.node.addDependency(this.accessPoint);
   }
 }
