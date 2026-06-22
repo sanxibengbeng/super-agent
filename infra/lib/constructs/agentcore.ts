@@ -113,9 +113,22 @@ export class AgentCoreConstruct extends Construct {
       acceptBucketWarning: true,
     });
 
-    // S3 Files Access Point (required for AgentCore filesystem mount)
+    // S3 Files Access Point (required for AgentCore filesystem mount).
+    //
+    // The container process runs as uid=1000 (node). The filesystem root "/" is
+    // owned root:root 0755 and cannot be chown'd, so a root-mounted access point
+    // is NOT writable by uid=1000. We instead expose a non-root rootDirectory
+    // (/workspaces) and have S3 Files create it owned by 1000:1000 via
+    // creationPermissions, with posixUser enforcing that identity. The container
+    // isolates scopes under /mnt/ws/{org}/{scope}. (See the agent-runner and
+    // workspace-manager for the matching S3 key layout: workspaces/{org}/{scope}.)
     this.accessPoint = new CfnAccessPoint(this, 'AccessPoint', {
       fileSystemId: this.fileSystem.ref,
+      posixUser: { uid: '1000', gid: '1000' },
+      rootDirectory: {
+        path: '/workspaces',
+        creationPermissions: { ownerUid: '1000', ownerGid: '1000', permissions: '0755' },
+      },
     });
     this.accessPoint.addDependency(this.fileSystem);
 
@@ -185,11 +198,18 @@ export class AgentCoreConstruct extends Construct {
       })
     );
 
-    // Grant S3 Files permissions (required for filesystem mount in AgentCore)
+    // Grant S3 Files permissions (required for filesystem mount in AgentCore).
+    // Mounting via an access point authorizes against the access-point ARN
+    // (file-system/<fs>/access-point/<ap>), which is NOT matched by
+    // file-system/* — both resource forms are required or the mount fails with
+    // "S3 Files mount failed: access denied".
     this.executionRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['s3files:*'],
-        resources: [`arn:aws:s3files:${props.region}:${props.account}:file-system/*`],
+        resources: [
+          `arn:aws:s3files:${props.region}:${props.account}:file-system/*`,
+          `arn:aws:s3files:${props.region}:${props.account}:file-system/*/access-point/*`,
+        ],
       })
     );
 

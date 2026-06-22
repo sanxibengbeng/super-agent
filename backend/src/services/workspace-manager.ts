@@ -142,6 +142,47 @@ export class WorkspaceManager {
     return join(this.baseDir, orgId, scopeId, 'workspace');
   }
 
+  // =========================================================================
+  // S3 Files key layout (agentcore mode)
+  // =========================================================================
+  //
+  // The AgentCore runtime mounts a single shared S3 Files access point whose
+  // rootDirectory is `/workspaces` at the container's /mnt/ws. The container
+  // isolates per scope by working under /mnt/ws/{orgId}/{scopeId}. S3 object
+  // keys therefore carry a `workspaces/` prefix:
+  //   s3://{bucket}/workspaces/{orgId}/{scopeId}/{file}  ⇄  /mnt/ws/{orgId}/{scopeId}/{file}
+  //
+  // Files the agent writes through the mount round-trip their POSIX ownership
+  // via S3 object user-metadata. Objects we PutObject directly (provisioning)
+  // carry NO such metadata and would import as root:root — which the uid=1000
+  // container cannot write into. We therefore stamp POSIX metadata on every
+  // provisioning PutObject so the imported file/dir is owned by uid=1000.
+
+  /** S3 key prefix for a scope's workspace (with trailing slash). */
+  private s3ScopePrefix(orgId: string, scopeId: string): string {
+    return `workspaces/${orgId}/${scopeId}/`;
+  }
+
+  /** Full S3 key for a workspace-relative file path. */
+  private s3WorkspaceKey(orgId: string, scopeId: string, relativePath: string): string {
+    return `${this.s3ScopePrefix(orgId, scopeId)}${relativePath}`;
+  }
+
+  /**
+   * POSIX ownership metadata recognized by S3 Files on import, so a file
+   * PutObject'd by the backend is owned by the container's node user (uid=1000)
+   * rather than root. `permissions` is an octal string including the file-type
+   * bits: 0100644 for a regular file, 040755 for a directory.
+   */
+  private static readonly S3_POSIX_UID = '1000';
+  private s3PosixMetadata(isDirectory = false): Record<string, string> {
+    return {
+      'file-owner': WorkspaceManager.S3_POSIX_UID,
+      'file-group': WorkspaceManager.S3_POSIX_UID,
+      'file-permissions': isDirectory ? '040755' : '0100644',
+    };
+  }
+
   /** Legacy per-session workspace path. */
   private getLegacySessionPath(orgId: string, scopeId: string, sessionId: string): string {
     return join(this.baseDir, orgId, scopeId, 'sessions', sessionId);
@@ -1195,9 +1236,9 @@ export class WorkspaceManager {
     bucket?: string
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    // S3 Files mounts /{orgId}/{scopeId}/ as the container's /mnt/ws.
-    // All files (container-written and backend-uploaded) live at {orgId}/{scopeId}/{file}.
-    const prefix = `${orgId}/${scopeId}/`;
+    // All files (container-written and backend-uploaded) live under
+    // workspaces/{orgId}/{scopeId}/ — see s3ScopePrefix.
+    const prefix = this.s3ScopePrefix(orgId, scopeId);
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -1290,8 +1331,8 @@ export class WorkspaceManager {
     bucket?: string
   ): Promise<WorkspaceFileNode[] | null> {
     const s3Bucket = bucket ?? config.agentcore.workspaceS3Bucket;
-    // S3 Files scope root is {orgId}/{scopeId}/, claude home is per-session
-    const prefix = `${orgId}/${scopeId}/__claude_home__/${sessionId}/`;
+    // claude home is per-session, under the scope's workspace prefix
+    const prefix = `${this.s3ScopePrefix(orgId, scopeId)}__claude_home__/${sessionId}/`;
 
     try {
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -1404,9 +1445,9 @@ export class WorkspaceManager {
 
       // In agentcore mode, also delete from S3
       if (config.agentRuntime === 'agentcore') {
-        await this.deleteS3Prefix(`${orgId}/${scopeId}/.claude/skills/${skillName}/`).catch((err) =>
-          console.warn('[workspace-manager] S3 delete failed:', err)
-        );
+        await this.deleteS3Prefix(
+          `${this.s3ScopePrefix(orgId, scopeId)}.claude/skills/${skillName}/`
+        ).catch((err) => console.warn('[workspace-manager] S3 delete failed:', err));
       }
 
       return true;
@@ -1518,7 +1559,11 @@ export class WorkspaceManager {
             if (prev && prev.size === fileStat.size && prev.mtimeMs === fileStat.mtimeMs) {
               continue; // unchanged — skip upload
             }
-            tasks.push({ key: `${orgId}/${scopeId}/${relativePath}`, fullPath, relativePath });
+            tasks.push({
+              key: this.s3WorkspaceKey(orgId, scopeId, relativePath),
+              fullPath,
+              relativePath,
+            });
           } catch {
             // Skip files we can't stat
           }
@@ -1527,7 +1572,24 @@ export class WorkspaceManager {
     };
     await walk(workspacePath);
 
-    // 2. Upload changed files with bounded concurrency.
+    // 2. Ensure the scope-root directory exists in the filesystem owned by the
+    // container's node user (uid=1000). Without this, S3 Files imports the dir
+    // as root:root and the uid=1000 container cannot write into it. Idempotent.
+    try {
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: this.s3ScopePrefix(orgId, scopeId), // trailing-slash dir marker
+          Body: '',
+          Metadata: this.s3PosixMetadata(true),
+        })
+      );
+    } catch (err) {
+      console.warn('[workspace-manager] Failed to create scope dir marker in S3:', err);
+    }
+
+    // 3. Upload changed files with bounded concurrency, stamping POSIX
+    // ownership metadata so each imports owned by uid=1000 (writable by the agent).
     let uploaded = 0;
     let cursor = 0;
     const worker = async (): Promise<void> => {
@@ -1541,6 +1603,7 @@ export class WorkspaceManager {
               Bucket: bucket,
               Key: task.key,
               Body: content,
+              Metadata: this.s3PosixMetadata(false),
             })
           );
           uploaded++;
@@ -1632,7 +1695,7 @@ export class WorkspaceManager {
     filePath: string
   ): Promise<string | null> {
     const s3Bucket = config.agentcore.workspaceS3Bucket;
-    const key = `${orgId}/${scopeId}/${filePath}`;
+    const key = this.s3WorkspaceKey(orgId, scopeId, filePath);
     try {
       const { GetObjectCommand } = await import('@aws-sdk/client-s3');
       const response = await this.s3Client.send(
@@ -1661,7 +1724,7 @@ export class WorkspaceManager {
     filePath: string
   ): Promise<Buffer | null> {
     const s3Bucket = config.agentcore.workspaceS3Bucket;
-    const key = `${orgId}/${scopeId}/${filePath}`;
+    const key = this.s3WorkspaceKey(orgId, scopeId, filePath);
     try {
       const { GetObjectCommand } = await import('@aws-sdk/client-s3');
       const response = await this.s3Client.send(
@@ -1708,17 +1771,18 @@ export class WorkspaceManager {
       await writeFile(resolved, content, 'utf-8');
 
       // In agentcore mode, also upload to S3 so the container picks it up.
-      // S3 Files root = /{orgId}/{scopeId}/, container mount = /mnt/ws,
-      // so key {orgId}/{scopeId}/{file} → container path /mnt/ws/{file}.
+      // Key workspaces/{orgId}/{scopeId}/{file} → container /mnt/ws/{orgId}/{scopeId}/{file}.
+      // POSIX metadata makes the imported file owned by the uid=1000 node user.
       if (config.agentRuntime === 'agentcore') {
         const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-        const key = `${orgId}/${scopeId}/${filePath}`;
+        const key = this.s3WorkspaceKey(orgId, scopeId, filePath);
         await this.s3Client
           .send(
             new PutObjectCommand({
               Bucket: config.agentcore.workspaceS3Bucket,
               Key: key,
               Body: content,
+              Metadata: this.s3PosixMetadata(false),
             })
           )
           .catch((err) => console.warn('[workspace-manager] S3 upload failed:', err));
@@ -1750,16 +1814,18 @@ export class WorkspaceManager {
       await writeFile(resolved, content);
 
       // In agentcore mode, also upload to S3 so the container picks it up.
-      // Key without 'workspace/' — maps directly to container /mnt/ws/{file}.
+      // Key workspaces/{orgId}/{scopeId}/{file} → container /mnt/ws/{orgId}/{scopeId}/{file}.
+      // POSIX metadata makes the imported file owned by the uid=1000 node user.
       if (config.agentRuntime === 'agentcore') {
         const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-        const key = `${orgId}/${scopeId}/${filePath}`;
+        const key = this.s3WorkspaceKey(orgId, scopeId, filePath);
         await this.s3Client
           .send(
             new PutObjectCommand({
               Bucket: config.agentcore.workspaceS3Bucket,
               Key: key,
               Body: content,
+              Metadata: this.s3PosixMetadata(false),
             })
           )
           .catch((err) => console.warn('[workspace-manager] S3 upload failed:', err));

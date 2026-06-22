@@ -13,7 +13,13 @@
 
 import { config } from '../config/index.js';
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
-import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig, AnyMCPServerConfig } from './claude-agent.service.js';
+import type {
+  ConversationEvent,
+  AgentConfig,
+  ContentBlock,
+  MCPServerSDKConfig,
+  AnyMCPServerConfig,
+} from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
 import { trace, context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 
@@ -68,16 +74,19 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       // to ensure the client targets the correct region regardless of AWS_REGION.
       const arnRegion = config.agentcore.runtimeArn?.split(':')[3];
       const region = arnRegion || config.agentcore.region;
-      console.log(`[agentcore-runtime] SDK region=${region} (from ARN: ${arnRegion}, config: ${config.agentcore.region})`);
+      console.log(
+        `[agentcore-runtime] SDK region=${region} (from ARN: ${arnRegion}, config: ${config.agentcore.region})`
+      );
       this.runtimeClient = new mod.BedrockAgentCoreClient({ region });
       this.InvokeCommand = mod.InvokeAgentRuntimeCommand;
       this.StopSessionCommand = mod.StopRuntimeSessionCommand;
       this.sdkLoaded = true;
     } catch (err) {
-      throw new Error(`AgentCore SDK not available. Install @aws-sdk/client-bedrock-agentcore. Error: ${err}`);
+      throw new Error(
+        `AgentCore SDK not available. Install @aws-sdk/client-bedrock-agentcore. Error: ${err}`
+      );
     }
   }
-
 
   private get runtimeArn(): string {
     const arn = config.agentcore.runtimeArn;
@@ -90,31 +99,18 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     agentConfig: AgentConfig,
     _skills: SkillForWorkspace[],
     _pluginPaths?: string[],
-    mcpServers?: Record<string, AnyMCPServerConfig>,
+    mcpServers?: Record<string, AnyMCPServerConfig>
   ): AsyncGenerator<ConversationEvent> {
     await this.ensureSDK();
 
-    // --- Get or create S3 Files access point for this scope ---
     const chatSessionId = options.sessionId;
     const scopeId = options.scopeId ?? 'default';
 
-    const { s3FilesService } = await import('./s3files.service.js');
-    let accessPoint: { arn: string };
-    try {
-      accessPoint = await s3FilesService.getOrCreateAccessPoint(
-        options.organizationId, scopeId,
-      );
-    } catch (err: any) {
-      console.error(`[agentcore-runtime] S3 Files access point error: ${err?.message}`);
-      console.error(`[agentcore-runtime] Stack: ${err?.stack?.split('\n').slice(0, 3).join('\n')}`);
-      // Construct a fallback ARN using convention if the SDK throws parsing errors
-      const fileSystemId = config.agentcore.s3FilesFileSystemId;
-      const apName = `scope-${scopeId.slice(0, 8)}`;
-      // fileSystemId may be a full ARN (arn:aws:s3files:...:file-system/fs-xxx) or just an ID
-      const fsPath = fileSystemId?.startsWith('arn:') ? fileSystemId : `arn:aws:s3files:${config.agentcore.region}:873543029686:file-system/${fileSystemId}`;
-      accessPoint = { arn: `${fsPath}/access-point/${apName}` };
-      console.log(`[agentcore-runtime] Using fallback access point ARN: ${accessPoint.arn}`);
-    }
+    // Workspace filesystem mounting is handled by the AgentCore runtime itself:
+    // it mounts a single shared S3 Files access point (rootDirectory=/workspaces)
+    // at /mnt/ws. The container isolates this scope under /mnt/ws/{org}/{scope}
+    // (see agent-runner.resolveScopeDir). No per-invocation access point is
+    // created or passed here — AgentCore does not honor a payload-supplied ARN.
 
     // Load chat history
     const history = await this.loadChatHistory(options.organizationId, options.sessionId);
@@ -148,24 +144,20 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       system_prompt: agentConfig.systemPrompt ?? undefined,
       model: agentConfig.model ?? undefined,
       mcp_servers: serializableMcpServers,
-      workspace_access_point_arn: accessPoint.arn,
       execution_task_id: options.executionTaskId ?? undefined,
       traceparent: traceCarrier.traceparent,
       tracestate: traceCarrier.tracestate,
     });
 
-    console.log(`[agentcore-runtime] S3 Files access point: ${accessPoint.arn}`);
+    console.log(`[agentcore-runtime] scope workspace: ${options.organizationId}/${scopeId}`);
     console.log(`[agentcore-runtime] History count: ${history.length}`);
 
     // Use the chat session ID as runtimeSessionId so the same conversation
     // always routes to the same AgentCore microVM. This keeps Claude Code's
     // session data (~/.claude/projects/) alive between invocations.
     // Falls back to org_user if no chat session ID is available.
-    const rawSessionId = options.sessionId
-      ?? `${options.organizationId}_${options.userId}`;
-    const sessionId = rawSessionId.length >= 33
-      ? rawSessionId
-      : rawSessionId.padEnd(33, '_');
+    const rawSessionId = options.sessionId ?? `${options.organizationId}_${options.userId}`;
+    const sessionId = rawSessionId.length >= 33 ? rawSessionId : rawSessionId.padEnd(33, '_');
 
     console.log(`[agentcore-runtime] Invoking session=${sessionId} agent=${agentConfig.id}`);
     console.log(`[agentcore-runtime] runtimeArn=${this.runtimeArn}`);
@@ -178,7 +170,10 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       payload,
       qualifier: 'DEFAULT',
     };
-    console.log(`[agentcore-runtime] command input:`, JSON.stringify({ ...commandInput, payload: '(omitted)' }));
+    console.log(
+      `[agentcore-runtime] command input:`,
+      JSON.stringify({ ...commandInput, payload: '(omitted)' })
+    );
 
     const MAX_RETRIES = 2;
     let response: any;
@@ -192,11 +187,14 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         break;
       } catch (err: any) {
         lastError = err;
-        const isHealthCheckError = err?.name === 'RuntimeClientError'
-          && typeof err?.message === 'string'
-          && err.message.includes('health check');
+        const isHealthCheckError =
+          err?.name === 'RuntimeClientError' &&
+          typeof err?.message === 'string' &&
+          err.message.includes('health check');
 
-        console.error(`[agentcore-runtime] INVOKE ERROR (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`);
+        console.error(
+          `[agentcore-runtime] INVOKE ERROR (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`
+        );
         console.error(`[agentcore-runtime]   name=${err?.name}`);
         console.error(`[agentcore-runtime]   message=${err?.message}`);
         console.error(`[agentcore-runtime]   code=${err?.$metadata?.httpStatusCode}`);
@@ -204,19 +202,25 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
 
         if (isHealthCheckError && attempt < MAX_RETRIES) {
           try {
-            await this.runtimeClient.send(new this.StopSessionCommand({
-              agentRuntimeArn: this.runtimeArn,
-              runtimeSessionId: sessionId,
-            }));
-            console.log(`[agentcore-runtime] Stopped stale session ${sessionId}, retrying in 3s...`);
+            await this.runtimeClient.send(
+              new this.StopSessionCommand({
+                agentRuntimeArn: this.runtimeArn,
+                runtimeSessionId: sessionId,
+              })
+            );
+            console.log(
+              `[agentcore-runtime] Stopped stale session ${sessionId}, retrying in 3s...`
+            );
           } catch (stopErr: any) {
             console.warn(`[agentcore-runtime] Failed to stop session: ${stopErr?.message}`);
           }
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          await new Promise((resolve) => setTimeout(resolve, 3000));
           continue;
         }
 
-        console.error(`[agentcore-runtime]   stack=${err?.stack?.split('\n').slice(0, 5).join('\n')}`);
+        console.error(
+          `[agentcore-runtime]   stack=${err?.stack?.split('\n').slice(0, 5).join('\n')}`
+        );
         break;
       }
     }
@@ -245,19 +249,33 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       console.log(`[agentcore-runtime] Total events received: ${eventCount}`);
     } else {
       const body = await this.readBody(response.response);
-      console.log(`[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`);
+      console.log(
+        `[agentcore-runtime] Non-SSE response body (first 500 chars): ${body.slice(0, 500)}`
+      );
       try {
         yield this.mapEvent(JSON.parse(body));
       } catch {
-        yield { type: 'error', code: 'PARSE_ERROR', message: `Failed to parse response: ${body.slice(0, 200)}` };
+        yield {
+          type: 'error',
+          code: 'PARSE_ERROR',
+          message: `Failed to parse response: ${body.slice(0, 200)}`,
+        };
       }
     }
   }
 
-  async disconnectSession(_sessionId: string): Promise<void> { /* managed by AgentCore */ }
-  async disconnectAll(): Promise<number> { return 0; }
-  get activeSessionCount(): number { return 0; }
-  hasSession(_sessionId: string): boolean { return false; }
+  async disconnectSession(_sessionId: string): Promise<void> {
+    /* managed by AgentCore */
+  }
+  async disconnectAll(): Promise<number> {
+    return 0;
+  }
+  get activeSessionCount(): number {
+    return 0;
+  }
+  hasSession(_sessionId: string): boolean {
+    return false;
+  }
 
   // ---------------------------------------------------------------------------
   // Chat history loading
@@ -265,7 +283,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
 
   private async loadChatHistory(
     organizationId: string,
-    sessionId?: string,
+    sessionId?: string
   ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
     if (!sessionId) return [];
     // Only query DB if sessionId is a valid UUID (system tasks like scope-gen use non-UUID IDs)
@@ -285,13 +303,16 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       // Drop the last user message (it's the current prompt being sent)
       let lastUserIdx = -1;
       for (let i = reversed.length - 1; i >= 0; i--) {
-        if (reversed[i]!.type === 'user') { lastUserIdx = i; break; }
+        if (reversed[i]!.type === 'user') {
+          lastUserIdx = i;
+          break;
+        }
       }
       if (lastUserIdx >= 0) {
         reversed.splice(lastUserIdx, 1);
       }
       return reversed.map((m: { type: string; content: string }) => ({
-        role: m.type === 'ai' ? 'assistant' as const : 'user' as const,
+        role: m.type === 'ai' ? ('assistant' as const) : ('user' as const),
         content: this.extractTextFromContent(m.content),
       }));
     } catch (err) {
@@ -320,7 +341,9 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
     let buffer = '';
     const iterable = stream[Symbol.asyncIterator]
       ? stream
-      : stream.transformToByteArray ? [await stream.transformToByteArray()] : [stream];
+      : stream.transformToByteArray
+        ? [await stream.transformToByteArray()]
+        : [stream];
 
     for await (const chunk of iterable) {
       buffer += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
@@ -331,7 +354,11 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (!data || data === '[DONE]') continue;
-          try { yield this.mapEvent(JSON.parse(data)); } catch { /* skip */ }
+          try {
+            yield this.mapEvent(JSON.parse(data));
+          } catch {
+            /* skip */
+          }
         }
       }
     }
@@ -340,7 +367,11 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6).trim();
         if (!data || data === '[DONE]') continue;
-        try { yield this.mapEvent(JSON.parse(data)); } catch { /* skip */ }
+        try {
+          yield this.mapEvent(JSON.parse(data));
+        } catch {
+          /* skip */
+        }
       }
     }
   }
@@ -350,26 +381,47 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       case 'session_start':
         return { type: 'session_start', sessionId: event.session_id };
       case 'assistant':
-        return { type: 'assistant', sessionId: event.session_id, content: (event.content ?? []) as ContentBlock[] };
+        return {
+          type: 'assistant',
+          sessionId: event.session_id,
+          content: (event.content ?? []) as ContentBlock[],
+        };
       case 'result': {
         // Map token_usage from AgentCore container format to backend format
         const tu = (event as any).token_usage;
-        const tokenUsage = tu ? {
-          inputTokens: tu.input_tokens ?? 0,
-          outputTokens: tu.output_tokens ?? 0,
-          cacheReadInputTokens: tu.cache_read_input_tokens ?? 0,
-          cacheCreationInputTokens: tu.cache_creation_input_tokens ?? 0,
-          totalCostUsd: tu.total_cost_usd ?? 0,
-        } : undefined;
-        return { type: 'result', sessionId: event.session_id, durationMs: event.duration_ms, numTurns: event.num_turns, tokenUsage };
+        const tokenUsage = tu
+          ? {
+              inputTokens: tu.input_tokens ?? 0,
+              outputTokens: tu.output_tokens ?? 0,
+              cacheReadInputTokens: tu.cache_read_input_tokens ?? 0,
+              cacheCreationInputTokens: tu.cache_creation_input_tokens ?? 0,
+              totalCostUsd: tu.total_cost_usd ?? 0,
+            }
+          : undefined;
+        return {
+          type: 'result',
+          sessionId: event.session_id,
+          durationMs: event.duration_ms,
+          numTurns: event.num_turns,
+          tokenUsage,
+        };
       }
       case 'error':
-        return { type: 'error', sessionId: event.session_id, code: event.code ?? 'AGENTCORE_ERROR', message: event.message ?? 'Unknown error' };
+        return {
+          type: 'error',
+          sessionId: event.session_id,
+          code: event.code ?? 'AGENTCORE_ERROR',
+          message: event.message ?? 'Unknown error',
+        };
       case 'trace':
         this.rehydrateContainerSpans(event.spans);
         return { type: 'assistant', content: [] };
       default:
-        return { type: 'error', code: 'UNKNOWN_EVENT', message: `Unknown event type: ${(event as any).type}` };
+        return {
+          type: 'error',
+          code: 'UNKNOWN_EVENT',
+          message: `Unknown event type: ${(event as any).type}`,
+        };
     }
   }
 

@@ -107,6 +107,15 @@ export class VpcConstruct extends Construct {
       ec2.Port.tcp(3000),
       'Allow traffic from ALB on port 3000'
     );
+    // S3 Files (EFS-backed) NFS mount: AgentCore microVMs and the S3 Files
+    // mount targets share this SG, so the microVM must reach the mount target
+    // on NFS/2049. Self-referencing ingress allows the mount to succeed
+    // (without it, mounts fail with "S3 Files mount timed out").
+    this.ecsSecurityGroup.addIngressRule(
+      this.ecsSecurityGroup,
+      ec2.Port.tcp(2049),
+      'Allow NFS (S3 Files mount) from AgentCore microVMs in this SG'
+    );
 
     // DB Security Group - ingress from ECS on 5432
     this.dbSecurityGroup = new ec2.SecurityGroup(this, 'DbSecurityGroup', {

@@ -32,13 +32,20 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
   const tracer = payload.traceparent ? new ContainerTracer(payload.traceparent) : null;
   const sessionId = payload.chat_session_id ?? payload.session_id;
 
+  // The shared S3 Files access point (rootDirectory=/workspaces) is mounted at
+  // WORKSPACE_DIR. Each scope is isolated under {org}/{scope}; the agent's cwd
+  // is that per-scope directory so its file artifacts persist to
+  // s3://{bucket}/workspaces/{org}/{scope}/. Falls back to the mount root if
+  // org/scope are absent (e.g. system tasks).
+  const scopeDir = resolveScopeDir(payload.org_id, payload.scope_id);
+
   // Restore ~/.claude from persistent S3 Files storage before running
-  restoreClaudeHome(sessionId);
+  restoreClaudeHome(scopeDir, sessionId);
 
   const baseOptions: Record<string, unknown> = {
     systemPrompt: payload.system_prompt ?? undefined,
     allowedTools: payload.allowed_tools ?? DEFAULT_TOOLS,
-    cwd: WORKSPACE_DIR,
+    cwd: scopeDir,
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     settingSources: ['project'],
@@ -49,8 +56,7 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
     baseOptions.mcpServers = payload.mcp_servers;
   }
 
-  console.log(`[agent-runner] Working directory: ${WORKSPACE_DIR}`);
-  console.log(`[agent-runner] Access point: ${payload.workspace_access_point_arn?.slice(0, 60)}...`);
+  console.log(`[agent-runner] Working directory: ${scopeDir}`);
 
   // Strategy: try Claude Code session resume first (fast, native history).
   // If resume fails (microVM was recycled), fallback to history-injected prompt.
@@ -64,7 +70,7 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
       coldStartSpan?.end();
 
       // Persist ~/.claude to S3 Files after run completes
-      persistClaudeHome(sessionId);
+      persistClaudeHome(scopeDir, sessionId);
 
       // Emit trace before returning (resume path)
       if (tracer && tracer.getSpans().length > 0) {
@@ -82,7 +88,7 @@ export async function* runAgent(payload: AgentPayload): AsyncGenerator<AgentEven
   coldStartSpan?.end();
 
   // Persist ~/.claude to S3 Files after run completes
-  persistClaudeHome(sessionId);
+  persistClaudeHome(scopeDir, sessionId);
 
   // Emit trace at the end (fallback path)
   if (tracer && tracer.getSpans().length > 0) {
@@ -198,16 +204,39 @@ async function* runWithOptions(
 }
 
 // ---------------------------------------------------------------------------
-// ~/.claude persistence via S3 Files (/mnt/ws/__claude_home__/{sessionId}/)
+// Per-scope working directory ({mount}/{org}/{scope})
 // ---------------------------------------------------------------------------
 
-function getClaudeHomePersistDir(sessionId?: string): string | null {
-  if (!sessionId) return null;
-  return `${WORKSPACE_DIR}/__claude_home__/${sessionId}`;
+/**
+ * The shared access point is mounted at WORKSPACE_DIR with rootDirectory
+ * /workspaces, so the agent works under {mount}/{org}/{scope}. The directory
+ * is provisioned (owned by uid=1000) by the backend before invocation, but we
+ * also mkdir it defensively for first-run/system-task cases. Falls back to the
+ * mount root when org/scope are absent.
+ */
+function resolveScopeDir(orgId?: string, scopeId?: string): string {
+  if (!orgId || !scopeId) return WORKSPACE_DIR;
+  const dir = `${WORKSPACE_DIR}/${orgId}/${scopeId}`;
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    console.warn(`[agent-runner] Could not create scope dir ${dir}: ${err}`);
+    return WORKSPACE_DIR;
+  }
+  return dir;
 }
 
-function restoreClaudeHome(sessionId?: string): void {
-  const persistDir = getClaudeHomePersistDir(sessionId);
+// ---------------------------------------------------------------------------
+// ~/.claude persistence via S3 Files ({scopeDir}/__claude_home__/{sessionId}/)
+// ---------------------------------------------------------------------------
+
+function getClaudeHomePersistDir(scopeDir: string, sessionId?: string): string | null {
+  if (!sessionId) return null;
+  return `${scopeDir}/__claude_home__/${sessionId}`;
+}
+
+function restoreClaudeHome(scopeDir: string, sessionId?: string): void {
+  const persistDir = getClaudeHomePersistDir(scopeDir, sessionId);
   if (!persistDir) return;
 
   if (!existsSync(persistDir)) {
@@ -224,8 +253,8 @@ function restoreClaudeHome(sessionId?: string): void {
   }
 }
 
-function persistClaudeHome(sessionId?: string): void {
-  const persistDir = getClaudeHomePersistDir(sessionId);
+function persistClaudeHome(scopeDir: string, sessionId?: string): void {
+  const persistDir = getClaudeHomePersistDir(scopeDir, sessionId);
   if (!persistDir) return;
 
   if (!existsSync(CLAUDE_HOME)) {
